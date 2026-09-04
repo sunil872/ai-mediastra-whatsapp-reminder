@@ -166,7 +166,7 @@ if uploaded_file is not None:
     phone_number = "7659935016"
     store_name = "PHARMA HUBB"
     normalized_phone = "917659935016"
-    template_name = "reminder_refill_followup_v2"
+    template_name = "reminder_refill_followup_v3"
 
     st.write(f"Customer: {customer_name}")
     st.write(f"Phone: {phone_number}")
