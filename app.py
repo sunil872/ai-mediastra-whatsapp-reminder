@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from utils.validators import (
     check_required_columns,
     missing_columns_message,
+    normalize_columns,
     validate_customers,
     build_preview_table,
     WHATSAPP_TEMPLATE_NAME,
@@ -90,7 +91,6 @@ st.caption(
 
 # --- Upload ---
 st.subheader("Upload customer file")
-st.caption("Required columns: Name, Phone number. Extra columns are ignored.")
 uploaded_file = st.file_uploader(
     "Upload a CSV or XLSX customer list",
     type=["csv", "xlsx"],
@@ -106,6 +106,7 @@ if uploaded_file is not None:
         st.error("Failed to read file. Please upload a valid CSV or XLSX file.")
         st.stop()
 
+    df = normalize_columns(df)
     missing = check_required_columns(df)
     if missing:
         st.error(missing_columns_message(missing))

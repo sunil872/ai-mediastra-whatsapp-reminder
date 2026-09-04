@@ -16,8 +16,38 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 
-# Required columns in the uploaded file
+# Required columns (canonical names after alias normalization)
 REQUIRED_COLUMNS = ["Name", "Phone number"]
+
+# Accepted upload header aliases → canonical REQUIRED_COLUMNS names
+COLUMN_ALIASES: Dict[str, List[str]] = {
+    "Name": [
+        "name",
+        "customer",
+        "customer_name",
+        "customer name",
+        "full_name",
+        "full name",
+        "fullname",
+        "patient_name",
+        "patient name",
+    ],
+    "Phone number": [
+        "phone number",
+        "phone",
+        "phone_number",
+        "mobile",
+        "mobile number",
+        "mobile_number",
+        "mobile no",
+        "mobile no.",
+        "contact",
+        "contact number",
+        "whatsapp",
+        "whatsapp number",
+        "whatsapp_number",
+    ],
+}
 
 # Confirmed working Xinno template (Phase 4+)
 WHATSAPP_TEMPLATE_NAME = "reminder_refill_followup_v3"
@@ -44,6 +74,36 @@ MESSAGE_TEMPLATE = (
 )
 
 INVALID_INDIAN_MOBILE_MSG = "Invalid Indian mobile number"
+
+
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rename common header aliases to canonical columns: Name, Phone number.
+
+    Matching is case-insensitive and strips surrounding whitespace.
+    Extra columns are left unchanged. First matching alias wins per canonical name.
+    """
+    if df is None or len(df.columns) == 0:
+        return df
+
+    lower_cols = {str(c).strip().lower(): c for c in df.columns}
+    rename_map: Dict[str, str] = {}
+
+    for canonical, aliases in COLUMN_ALIASES.items():
+        # Prefer exact canonical header if already present
+        if canonical.lower() in lower_cols:
+            original = lower_cols[canonical.lower()]
+            if original != canonical:
+                rename_map[original] = canonical
+            continue
+        for alias in aliases:
+            if alias in lower_cols:
+                rename_map[lower_cols[alias]] = canonical
+                break
+
+    if not rename_map:
+        return df
+    return df.rename(columns=rename_map)
 
 
 def check_required_columns(df: pd.DataFrame) -> List[str]:

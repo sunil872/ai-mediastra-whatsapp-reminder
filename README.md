@@ -1,106 +1,187 @@
-# AI Mediastra — Bulk WhatsApp Medicine Refill Reminder
+# PHARMA HUBB WhatsApp Campaign Center
 
-A production-ready **bulk WhatsApp messaging** application for pharmacy medicine refill follow-ups.
+A Streamlit application for bulk WhatsApp medicine refill reminders. Operators upload customer lists, validate recipients, send an approved Xinno template, and track per-customer results.
 
-Business: **AI Mediastra / PHARMA HUBB**  
-Channel: **Xinno WhatsApp CPaaS**  
-Template: **`reminder_refill_followup_v3`** (language `en`)
+Built for **AI Mediastra / PHARMA HUBB**.
 
 ---
 
-## Purpose
+## Overview
 
-Operators upload a customer list (CSV or Excel). The system validates and normalizes phones, shows a bulk preview, and — only after explicit confirmation — sends the approved refill template to **all eligible (Valid) customers**, sequentially. Every attempt is audited and exportable as CSV.
+Pharmacy teams need a controlled way to message refill follow-ups without sending from spreadsheets manually. This app provides a single bulk workflow:
 
-This is a **bulk messaging system only**. There is no single-customer send workflow.
+1. Upload a CSV or Excel customer list  
+2. Validate names and Indian mobile numbers  
+3. Preview eligible recipients and template variables  
+4. Confirm, then send sequentially through Xinno  
+5. Review results and export an audit CSV  
 
----
-
-## Final workflow
-
-```
-Upload customer file (CSV / XLSX)
-        ↓
-Validate customer data
-        ↓
-Normalize phone numbers
-        ↓
-Identify Valid / Invalid / Duplicate
-        ↓
-Bulk send preview + eligible recipient count
-        ↓
-Explicit bulk send confirmation
-        ↓
-Send to all Valid customers (sequential)
-        ↓
-Track each message result
-        ↓
-Bulk send summary
-        ↓
-Download audit / results CSV
-```
-
-Upload and validation **never** send messages automatically. Real sends use `dry_run=False` only on the confirmed bulk-send button.
+Upload and validation never send messages. Live sends require an explicit confirmation checkbox.
 
 ---
 
 ## Key features
 
-1. **Bulk-only WhatsApp sending** — all Valid customers in one confirmed operation  
-2. **Validation & deduplication** — missing data, invalid mobiles, duplicates after normalization  
-3. **Indian phone normalization** → `91XXXXXXXXXX`  
-4. **Dynamic personalization** — `{{1}}` = each customer’s Name; `{{2}}`/`{{3}}` = PHARMA HUBB  
-5. **Explicit confirmation** before any live send  
-6. **Sequential sending** — continue on failure; no automatic retries  
-7. **Bulk attempt ID** — protects against Streamlit reruns / double-clicks  
-8. **Per-message audit** + masked CSV export  
-9. **Secrets stay in `.env`** — never shown in UI, logs, or exports  
+- CSV and XLSX customer uploads  
+- Flexible column headers (e.g. `customer_name` / `mobile` map to `Name` / `Phone number`)  
+- Name and phone validation  
+- Indian mobile normalization to `91XXXXXXXXXX`  
+- Duplicate detection after normalization  
+- Eligible-recipient filtering (`Status = Valid` only)  
+- Dynamic template preview per customer  
+- Xinno WhatsApp CPaaS integration  
+- Bulk sequential sending (no parallel fan-out, no auto-retry)  
+- Bulk attempt IDs with Streamlit re-run / double-click protection  
+- Per-customer audit records (masked phones, no API keys)  
+- Session send history and CSV result export  
+- Environment-based configuration (`.env`)  
+- Automated pytest suite (mocked Xinno; no live sends in tests)
 
 ---
 
-## Input file format
+## Workflow
 
-### Supported
-- CSV (`.csv`)
-- Excel (`.xlsx`)
-
-### Required columns
-| Column | Description |
-|--------|-------------|
-| `Name` | Customer full name |
-| `Phone number` | Indian mobile in common formats |
-
-Extra columns are allowed and ignored for messaging.
-
-### Example phone formats (all normalize to `91…`)
-- `7659935016`
-- `+91 76599 35016`
-- `+917659935016`
-- `9176599 35016`
-- `917659935016`
-
-Duplicate detection runs **after** normalization. Only `Status = Valid` customers are eligible.
+```text
+Upload Customer List (CSV / XLSX)
+        ↓
+Normalize Column Headers
+        ↓
+Validate Data
+        ↓
+Normalize Phone Numbers
+        ↓
+Identify Eligible Customers
+        ↓
+Preview Template & Samples
+        ↓
+Confirm Campaign
+        ↓
+Bulk WhatsApp Send (sequential)
+        ↓
+Track Results
+        ↓
+Export Report / View Session History
+```
 
 ---
 
-## WhatsApp template (do not change)
+## How the system works
+
+### Customer data
+
+Files must provide a name column and a phone column. Canonical headers are `Name` and `Phone number`. Common aliases are accepted automatically, for example:
+
+| Role | Accepted headers (examples) |
+|------|-----------------------------|
+| Name | `Name`, `customer_name`, `full_name`, `fullname` |
+| Phone | `Phone number`, `phone`, `mobile`, `whatsapp number` |
+
+Extra columns are ignored for messaging.
+
+### Validation
+
+Rows are classified as:
+
+- **Valid** — usable name + valid Indian mobile  
+- **Invalid** — missing name/phone or bad number  
+- **Duplicate** — same normalized phone as an earlier valid row  
+
+Only **Valid** customers are eligible to send.
+
+### Phone normalization
+
+Indian mobiles are cleaned and normalized before Xinno:
+
+| Input | Normalized |
+|-------|------------|
+| `7659935016` | `917659935016` |
+| `+91 76599 35016` | `917659935016` |
+| `9176599 35016` | `917659935016` |
+
+Duplicate checks run **after** normalization.
+
+### WhatsApp messaging
+
+Messages are sent through the existing Xinno REST client (`services/xinno_whatsapp.py`) using the approved template. Credentials come from environment variables. API keys are masked in UI/logs and never written to audit exports.
+
+Default send mode for the service is `dry_run=True`. Live production bulk send uses `dry_run=False` only after the operator confirms in the UI.
+
+### Bulk campaigns
+
+Eligible customers are processed one at a time. Each customer gets an independent payload (name + phone from the same row). Failures are recorded and the batch continues. The same bulk attempt ID cannot execute twice in a Streamlit session.
+
+**Note:** Streamlit “Accepted” means Xinno/Meta accepted the API request (`wamid`). Phone delivery is confirmed in the Xinno/Meta dashboard or webhooks.
+
+---
+
+## WhatsApp template
 
 | Setting | Value |
 |---------|--------|
 | Template | `reminder_refill_followup_v3` |
 | Language | `en` (policy: deterministic) |
-| Pharmacy | `PHARMA HUBB` |
-| `{{1}}` | Customer Name (from file) |
-| `{{2}}` | PHARMA HUBB |
-| `{{3}}` | PHARMA HUBB |
+| `{{1}}` | Customer name |
+| `{{2}}` | Medical store name (default `PHARMA HUBB`) |
+| `{{3}}` | Medical store name (default `PHARMA HUBB`) |
 
 ---
 
-## Xinno configuration
+## Technology stack
 
-Keep credentials in `.env` (never commit secrets):
+- Python 3.10+  
+- Streamlit  
+- Pandas  
+- Requests  
+- python-dotenv  
+- openpyxl (XLSX)  
+- pytest  
+- Xinno WhatsApp CPaaS  
 
+---
+
+## Project structure
+
+```text
+ai-mediastra-whatsapp-reminder/
+├── app.py                 # Streamlit UI (bulk workflow)
+├── services/
+│   └── xinno_whatsapp.py  # Xinno API client
+├── utils/
+│   ├── validators.py      # Columns, validation, normalization
+│   ├── bulk_send.py       # Bulk eligibility & sequential send
+│   └── audit.py           # Audit records, history, CSV export
+├── tests/                 # Automated tests (mocked Xinno)
+├── assets/                # UI assets
+├── data/                  # Sample datasets
+├── docs/                  # Xinno API reference material
+├── logs/                  # Local send logs (gitignored)
+├── .env.example
+├── pytest.ini
+├── requirements.txt
+└── README.md
 ```
+
+---
+
+## Setup
+
+```bash
+cd ai-mediastra-whatsapp-reminder
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Edit `.env` with real Xinno credentials (never commit `.env`):
+
+```env
 XINNO_API_URL=https://whatsapp.xinno.in/REST/directApi/message
 XINNO_API_KEY=your_xinno_api_key_here
 XINNO_WABA_NUMBER=919515473474
@@ -109,17 +190,11 @@ WHATSAPP_TEMPLATE_LANGUAGE=en
 MEDICAL_STORE_NAME=PHARMA HUBB
 ```
 
-Copy from `.env.example`. The app reuses `services/xinno_whatsapp.py` (`send_template_message`). Default `dry_run=True` except the confirmed bulk path.
-
 ---
 
-## Running the application
+## Run the application
 
 ```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-# Create .env from .env.example and set real credentials
 streamlit run app.py
 ```
 
@@ -127,61 +202,28 @@ streamlit run app.py
 
 ## Testing
 
-All automated tests **mock** Xinno. They do **not** send real WhatsApp messages.
+All automated tests mock Xinno. They do not send real WhatsApp messages.
 
 ```bash
 pytest -v
-# or explicitly:
-pytest tests -v
 ```
 
-Coverage includes validation, normalization, duplicates, bulk payloads, failure isolation, confirmation, attempt-ID protection, audit/export, masking, and Streamlit bulk-only UI checks.
-
----
-
-## Project layout
-
-```
-ai-mediastra-whatsapp-reminder/
-├── app.py                 # Bulk-only Streamlit UI
-├── pytest.ini             # Pytest config (tests/ + project path)
-├── requirements.txt
-├── .env.example
-├── README.md
-├── assets/                # UI assets (e.g. WhatsApp icon)
-├── data/                  # Sample CSV / XLSX datasets
-├── docs/                  # API reference docs
-├── logs/                  # Local send logs (gitignored)
-├── services/
-│   └── xinno_whatsapp.py  # Xinno REST client
-├── utils/
-│   ├── validators.py      # Validation & normalization
-│   ├── bulk_send.py       # Bulk send helpers
-│   └── audit.py           # Audit records & CSV export
-└── tests/                 # All automated tests (mocked Xinno)
-    ├── conftest.py
-    ├── test_bulk_send.py
-    ├── test_dynamic_preview.py
-    ├── test_phase5_validation.py
-    ├── test_phase7_audit.py
-    ├── test_phase8_prelive.py
-    ├── test_phone_normalization.py
-    └── test_xinno.py
-```
+Current suite: **154+ tests** covering validation, normalization, column aliases, bulk send, audit, and UI safety checks.
 
 ---
 
 ## Security
 
-- `.env` is gitignored; `.env.example` has placeholders only  
-- API keys never appear in UI, logs, audit, or CSV  
-- Phones are masked in results and exports (e.g. `919******688`)  
-- No automatic retries; no parallel/unbounded send fan-out  
+- Secrets live in `.env` (gitignored); `.env.example` has placeholders only  
+- API keys are masked in logs and never stored in audit CSV exports  
+- Phone numbers are masked in session history and downloads  
+- No automatic retries or uncontrolled parallel sends  
 
 ---
 
-## Important notes
+## Limitations
 
-- **API “Accepted” ≠ phone delivery.** Meta may still drop marketing messages later (e.g. per-user frequency limits).  
-- Do not hard-code customer names or phones in the production workflow — all data comes from the uploaded file.  
-`
+- Bulk send is sequential (by design)  
+- Session history is in-memory for the current Streamlit session (not a database)  
+- API acceptance is not the same as handset delivery; check Xinno/Meta for delivery status  
+- Streamlit Community Cloud needs secrets configured separately from local `.env`  

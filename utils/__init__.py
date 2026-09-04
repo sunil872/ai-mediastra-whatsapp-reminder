@@ -8,6 +8,7 @@ from utils.validators import (
     NORMALIZED_PHONE_LABEL,
     check_required_columns,
     missing_columns_message,
+    normalize_columns,
     validate_name,
     validate_phone,
     normalize_to_whatsapp_number,

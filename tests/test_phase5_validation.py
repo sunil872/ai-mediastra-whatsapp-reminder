@@ -14,6 +14,7 @@ import pytest
 from utils.validators import (
     check_required_columns,
     missing_columns_message,
+    normalize_columns,
     validate_name,
     validate_phone,
     validate_customers,
@@ -47,6 +48,45 @@ def test_valid_customer_csv():
 # ---------------------------------------------------------------------------
 # 2–3. Missing columns
 # ---------------------------------------------------------------------------
+def test_normalize_columns_customer_and_mobile_no():
+    """Accepts spreadsheet headers: Customer, MOBILE NO."""
+    df = pd.DataFrame({
+        "Customer": ["Upendra"],
+        "MOBILE NO.": ["9390292688"],
+    })
+    normalized = normalize_columns(df)
+    assert check_required_columns(normalized) == []
+    assert "Name" in normalized.columns
+    assert "Phone number" in normalized.columns
+    valid_df, invalid_df, _ = validate_customers(normalized)
+    assert invalid_df.empty
+    assert valid_df.iloc[0]["Name"] == "Upendra"
+    assert valid_df.iloc[0]["Normalized Phone"] == "919390292688"
+
+
+def test_normalize_columns_case_insensitive():
+    df = pd.DataFrame({
+        "Customer_Name": ["Tarun"],
+        "PHONE": ["8688504571"],
+    })
+    normalized = normalize_columns(df)
+    assert check_required_columns(normalized) == []
+    valid_df, _, _ = validate_customers(normalized)
+    assert valid_df.iloc[0]["Name"] == "Tarun"
+    assert valid_df.iloc[0]["Normalized Phone"] == "918688504571"
+
+
+def test_normalize_columns_keeps_canonical_names():
+    df = pd.DataFrame({
+        "Name": ["Ram"],
+        "Phone number": ["7661087360"],
+        "Age": ["40"],
+    })
+    normalized = normalize_columns(df)
+    assert check_required_columns(normalized) == []
+    assert "Age" in normalized.columns
+
+
 def test_missing_name_column():
     df = pd.DataFrame({"Phone number": ["7659935016"]})
     missing = check_required_columns(df)
