@@ -1,0 +1,22 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment secrets
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+
+# Data files (uploaded CSVs, exports)
+data/*.csv
+data/*.xlsx
+
+# IDE settings
+.vscode/
+.idea/

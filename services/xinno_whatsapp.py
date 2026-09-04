@@ -52,32 +52,48 @@ load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
 DEFAULT_API_URL = "https://cpaasreseller.notify24x7.com/REST/directApi/message"
 
 
+def _mask_phone_for_log(phone: str) -> str:
+    """Mask middle digits for safe logging (e.g. 917659935016 -> 91******5016)."""
+    digits = "".join(c for c in str(phone) if c.isdigit())
+    if len(digits) < 6:
+        return "***"
+    return f"{digits[:2]}{'*' * (len(digits) - 6)}{digits[-4:]}"
+
+
 def get_config_diagnostic() -> Dict[str, str]:
     """
-    Safe configuration diagnostic reporting configuration status for required env vars.
-    Reports ONLY 'configured' or 'not configured'. NEVER exposes secret values or credentials.
+    Safe configuration diagnostic.
+    Shows non-secret values (URL, WABA, template, language, store).
+    NEVER exposes API key — only 'configured' / 'not configured'.
     """
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent
     _DOTENV_PATH = _PROJECT_ROOT / ".env"
     load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
 
-    env_keys = [
-        "XINNO_API_URL",
-        "XINNO_API_KEY",
-        "XINNO_WABA_NUMBER",
-        "WHATSAPP_TEMPLATE_NAME",
-        "MEDICAL_STORE_NAME",
-    ]
+    api_key_set = bool(os.getenv("XINNO_API_KEY", "").strip())
     return {
-        key: ("configured" if bool(os.getenv(key, "").strip()) else "not configured")
-        for key in env_keys
+        "XINNO_API_URL": os.getenv("XINNO_API_URL", "").strip() or "not configured",
+        "XINNO_API_KEY": "configured" if api_key_set else "not configured",
+        "XINNO_WABA_NUMBER": os.getenv("XINNO_WABA_NUMBER", "").strip() or "not configured",
+        "WHATSAPP_TEMPLATE_NAME": os.getenv("WHATSAPP_TEMPLATE_NAME", "").strip() or "not configured",
+        "WHATSAPP_TEMPLATE_LANGUAGE": os.getenv("WHATSAPP_TEMPLATE_LANGUAGE", "en").strip() or "en",
+        "MEDICAL_STORE_NAME": os.getenv("MEDICAL_STORE_NAME", "").strip() or "not configured",
     }
 
 
-def _log_send_attempt(customer_name: str, phone: str, template_name: str, success: bool, status_code: Optional[int], message: str):
+def _log_send_attempt(
+    customer_name: str,
+    phone: str,
+    template_name: str,
+    success: bool,
+    status_code: Optional[int],
+    message: str,
+    message_id: Optional[str] = None,
+    xinno_status: Optional[str] = None,
+):
     """
     Log send attempt details safely to logs/whatsapp_send.log.
-    Guarantees NO credentials or API keys are logged.
+    Guarantees NO credentials or API keys are logged. Phone is masked.
     """
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,7 +111,14 @@ def _log_send_attempt(customer_name: str, phone: str, template_name: str, succes
             log_inst.addHandler(file_handler)
 
         status_str = "SUCCESS" if success else "FAILED"
-        log_inst.info(f"[{status_str}] Customer='{customer_name}', Phone='{phone}', Template='{template_name}', Status={status_code}, Message='{message}'")
+        masked_phone = _mask_phone_for_log(phone)
+        xinno_status = xinno_status or ("accepted" if success else "failed")
+        mid = message_id or "-"
+        log_inst.info(
+            f"[{status_str}] Customer='{customer_name}', Phone='{masked_phone}', "
+            f"Template='{template_name}', Status={status_code}, "
+            f"XinnoStatus='{xinno_status}', MessageId='{mid}', Message='{message}'"
+        )
     except Exception as log_err:
         logger.warning(f"Failed to write to log file: {log_err}")
 
@@ -106,8 +129,8 @@ def normalize_phone_number(phone_number: str, country_code: str = "91") -> str:
     as required by the Xinno API (ToMobile parameter).
 
     NOTE: Indian 10-digit mobile numbers are prepended with country code '91'.
-    Verification with a controlled single test on your Xinno account is recommended
-    before live sending to confirm account-specific format requirements.
+    Verification with a controlled test on your Xinno account is recommended
+    before live bulk sending to confirm account-specific format requirements.
 
     Args:
         phone_number: Raw phone number string.
@@ -375,6 +398,14 @@ def send_template_message(
         else:
             msg_text = f"API returned status {http_response.status_code}"
 
+        # Best-effort message id for safe logging (never logs API key)
+        message_id = None
+        if isinstance(resp_data, dict):
+            messages = resp_data.get("messages")
+            if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+                message_id = messages[0].get("id")
+            message_id = message_id or resp_data.get("messageId") or resp_data.get("id")
+
         # Safe File Logging (NO credentials logged)
         _log_send_attempt(
             customer_name=customer_name,
@@ -382,7 +413,9 @@ def send_template_message(
             template_name=template_name,
             success=is_success,
             status_code=http_response.status_code,
-            message=msg_text
+            message=msg_text,
+            message_id=str(message_id) if message_id else None,
+            xinno_status="accepted" if is_success else "failed",
         )
 
         return {

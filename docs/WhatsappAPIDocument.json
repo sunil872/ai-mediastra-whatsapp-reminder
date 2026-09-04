@@ -1,0 +1,882 @@
+{
+	"info": {
+		"_postman_id": "b94f470f-f73e-48ca-89cd-d02158b664f3",
+		"name": "Whatsapp API Information",
+		"description": "# 🚀 Get started here\n\nThis template guides you through CRUD operations (GET, POST, PUT, DELETE), variables, and tests.\n\n## 🔖 **How to use this template**\n\n#### **Step 1: Send requests**\n\nRESTful APIs allow you to perform CRUD operations using the POST, GET, PUT, and DELETE HTTP methods.\n\nThis collection contains each of these [request](https://learning.postman.com/docs/sending-requests/requests/) types. Open each request and click \"Send\" to see what happens.\n\n#### **Step 2: View responses**\n\nObserve the response tab for status code (200 OK), response time, and size.\n\n#### **Step 3: Send new Body data**\n\nUpdate or add new data in \"Body\" in the POST request. Typically, Body data is also used in PUT request.\n\n```\n{\n    \"name\": \"Add your name in the body\"\n}\n\n ```\n\n#### **Step 4: Update the variable**\n\nVariables enable you to store and reuse values in Postman. We have created a [variable](https://learning.postman.com/docs/sending-requests/variables/) called `base_url` with the sample request [https://postman-api-learner.glitch.me](https://postman-api-learner.glitch.me). Replace it with your API endpoint to customize this collection.\n\n#### **Step 5: Add tests in the \"Scripts\" tab**\n\nAdding tests to your requests can help you confirm that your API is working as expected. You can write test scripts in JavaScript and view the output in the \"Test Results\" tab.\n\n<img src=\"https://content.pstmn.io/fa30ea0a-373d-4545-a668-e7b283cca343/aW1hZ2UucG5n\" alt=\"\" height=\"1530\" width=\"2162\">\n\n## 💪 Pro tips\n\n- Use folders to group related requests and organize the collection.\n    \n- Add more [scripts](https://learning.postman.com/docs/writing-scripts/intro-to-scripts/) to verify if the API works as expected and execute workflows.\n    \n\n## 💡Related templates\n\n[API testing basics](https://go.postman.co/redirect/workspace?type=personal&collectionTemplateId=e9a37a28-055b-49cd-8c7e-97494a21eb54&sourceTemplateId=ddb19591-3097-41cf-82af-c84273e56719)  \n[API documentation](https://go.postman.co/redirect/workspace?type=personal&collectionTemplateId=e9c28f47-1253-44af-a2f3-20dce4da1f18&sourceTemplateId=ddb19591-3097-41cf-82af-c84273e56719)  \n[Authorization methods](https://go.postman.co/redirect/workspace?type=personal&collectionTemplateId=31a9a6ed-4cdf-4ced-984c-d12c9aec1c27&sourceTemplateId=ddb19591-3097-41cf-82af-c84273e56719)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "34792025"
+	},
+	"item": [
+		{
+			"name": "Text Message",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "\n{\n    \"to\": \"{{ToMobile}}\",\n   \"type\": \"text\",\n   \"recipient_type\":\"individual\",\n   \"text\": {\n     \"body\": \"Your text message here\"\n   }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Image Message",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "\n{\n   \"to\": \"{{ToMobile}}\",\n   \"type\": \"image\",\n   \"image\": {\n     \"caption\": \"Your image caption here\",\n     \"link\": \"Your image link here\"\n   }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Video Message",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"to\": \"{{ToMobile}}\",\n    \"type\": \"video\",\n    \"video\": {\n     \"caption\": \"Your video caption here\",\n      \"link\": \"Your video link here\"\n  }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Document Message",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"to\": \"{{ToMobile}}\",\n    \"type\": \"document\",\n    \"document\": {\n     \"caption\": \"Your document caption here\",\n     \"link\": \"Your document link here\",\n     \"filename\": \"Your document name here\"\n  }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Interactive Message- List Message",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "\n{\n    \"messaging_product\": \"whatsapp\",\n   \"recipient_type\": \"individual\",\n   \"to\": \"{{ToMobile}}\",\n   \"type\": \"interactive\",\n    \"interactive\": {\n     \"type\": \"list\",\n     \"header\": {\n       \"type\": \"text\",\n       \"text\": \"HEADER_TEXT\"\n   },\n    \"body\": {\n      \"text\": \"BODY_TEXT\"\n   },\n   \"footer\": {\n      \"text\": \"FOOTER_TEXT\" },\n     \"action\": {\n       \"button\": \"BUTTON_TEXT\",\n       \"sections\": [\n         {\n           \"title\": \"SECTION_1_TITLE\",\n           \"rows\": [\n             {\n               \"id\": \"SECTION_1_ROW_1_ID\",\n                \"title\": \"SECTION_1_ROW_1_TITLE\",\n                \"description\": \"SECTION_1_ROW_1_DESCRIPTION\"\n             },\n              {\n               \"id\": \"SECTION_1_ROW_2_ID\",\n               \"title\": \"SECTION_1_ROW_2_TITLE\",\n               \"description\": \"SECTION_1_ROW_2_DESCRIPTION\"\n             }\n           ]\n          },\n          {\n           \"title\": \"SECTION_2_TITLE\",\n           \"rows\": [\n             {\n               \"id\": \"SECTION_2_ROW_1_ID\",\n               \"title\": \"SECTION_2_ROW_1_TITLE\",\n                \"description\": \"SECTION_2_ROW_1_DESCRIPTION\"\n              },\n              {\n                \"id\": \"SECTION_2_ROW_2_ID\",\n                \"title\": \"SECTION_2_ROW_2_TITLE\",\n               \"description\": \"SECTION_2_ROW_2_DESCRIPTION\"\n              }\n            ]\n          }\n        ]\n     }\n   }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Interactive Message- Reply Button",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"messaging_product\": \"whatsapp\",\n   \"recipient_type\": \"individual\",\n  \"to\": \"{{ToMobile}}\",\n   \"type\": \"interactive\",\n   \"interactive\": {\n     \"type\": \"button\",\n     \"body\": {\n       \"text\": \"BUTTON_TEXT\"\n     },\n      \"action\": {\n       \"buttons\": [\n         {\n           \"type\": \"reply\",\n           \"reply\": {\n              \"id\": \"UNIQUE_BUTTON_ID_1\",\n             \"title\": \"BUTTON_TITLE_1\"\n           }\n         },\n         {\n           \"type\": \"reply\",\n           \"reply\": {\n             \"id\": \"UNIQUE_BUTTON_ID_2\",\n             \"title\": \"BUTTON_TITLE_2\"\n            }\n         }\n       ]\n      }\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Audio Message",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\"to\": \"{{ToMobile}}\",\n   \"type\": \"audio\",\n   \"audio\": {\n     \"link\": \"Your audio link here\"\n  }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- Text",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"to\": \"{{ToMobile}}\",\n   \"type\": \"template\",\n   \"template\": {\n      \"language\": {\n       \"policy\": \"deterministic\",\n       \"code\": \"en\"\n      },\n      \"name\": \"Your template name here\",\n      \"components\": [\n       {\n         \"type\": \"body\",\n         \"parameters\": [\n           {\n             \"type\": \"text\",\n             \"text\": \"6-7\"\n           }\n          ]\n        }\n      ]\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- Image",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"to\": \"{{ToMobile}}\",\n   \"type\": \"template\",\n   \"template\": {\n     \"language\": {\n       \"policy\": \"deterministic\",\n        \"code\": \"en\"\n      },\n      \"name\": \"Your template name here\",\n     \"components\": [\n       {\n         \"type\": \"header\",\n         \"parameters\": [\n           {\n             \"type\": \"image\",\n              \"image\": {\n                \"link\": \"Your image link here\"\n            }\n         }\n       ]\n      }\n     ,{\n       \"type\": \"body\",\n       \"parameters\": [\n          {\n             \"type\": \"text\",\n             \"text\": \"Romit\"\n            }, {\n             \"type\": \"text\",\n             \"text\": \"test\"\n            }\n          ]\n        }\n     ]\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- Video",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n     \"to\": \"{{ToMobile}}\",\n   \"type\": \"template\",\n   \"template\": {\n     \"language\": {\n        \"policy\": \"deterministic\",\n       \"code\": \"en\"\n      },\n      \"name\":\"Your template name here\",\n      \"components\": [\n        {\n          \"type\": \"header\",\n         \"parameters\": [\n           {\n              \"type\": \"video\",\n             \"video\": {\n               \"link\": \"Your video link here\"\n            }\n          }\n        ]\n     },\n      {\n       \"type\": \"body\",\n        \"parameters\": [\n         {\n             \"type\": \"text\",\n              \"text\": \"Romit\"\n           }\n          ]\n        }\n     ]\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- Document",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"to\": \"{{ToMobile}}\",\n   \"type\": \"template\",\n    \"template\": {\n      \"language\": {\n        \"policy\": \"deterministic\",\n       \"code\": \"en\"\n      },\n      \"name\": \"Your template name here\",\n     \"components\": [\n        {\n         \"type\": \"header\",\n          \"parameters\": [\n           {\n             \"type\": \"document\",\n             \"document\": {\n               \"link\": \"Your document link here\",\n                \"filename\": \"qwerty\"\n           }\n         }\n       ]\n     },\n      {\n       \"type\": \"body\",\n       \"parameters\": [\n          {\n             \"type\": \"text\",\n             \"text\": \"Romit\"\n         }\n       ]\n     }\n   ]\n }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- Header & Footer",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"to\": \"{{ToMobile}}\",\n   \"type\": \"template\",\n   \"template\": {\n     \"language\": {\n       \"policy\": \"deterministic\",\n        \"code\": \"en\"\n      },\n      \"name\": \"header\",\n     \"components\": []\n   }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- Call To Action Button",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "\n{\n   \"to\": \"{{ToMobile}}\",\n    \"type\": \"template\",\n    \"template\": {\n     \"language\": {\n       \"policy\": \"deterministic\",\n        \"code\": \"en\"\n     },\n     \"name\": \"Your template name here\",\n     \"components\": [\n        {\n         \"type\": \"button\",\n          \"sub_type\": \"url\",\n          \"index\": \"1\",\n         \"parameters\": [\n            {\n             \"type\": \"text\",\n              \"text\": \"part-of-the-url\"\n           }\n         ]\n        }\n      ]\n   }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		},
+		{
+			"name": "Template- QuickReply Button",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Successful POST request\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "wabaNumber",
+						"value": "{{wabaNumber}}"
+					},
+					{
+						"key": "Key",
+						"value": "{{key}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"to\": \"{{ToMobile}}\",\n    \"type\": \"template\",\n    \"template\": {\n      \"language\": {\n       \"policy\": \"deterministic\",\n       \"code\": \"en\"\n     },\n      \"name\": \"Your template name here\",\n     \"components\": []\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "cpaasreseller.notify24x7.com/REST/directApi/message",
+					"host": [
+						"cpaasreseller",
+						"notify24x7",
+						"com"
+					],
+					"path": [
+						"REST",
+						"directApi",
+						"message"
+					]
+				},
+				"description": "This is a POST request, submitting data to an API via the request body. This request submits JSON data, and the data is reflected in the response.\n\nA successful POST request typically returns a `200 OK` or `201 Created` response code."
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "id",
+			"value": "1"
+		},
+		{
+			"key": "base_url",
+			"value": "https://postman-rest-api-learner.glitch.me/"
+		},
+		{
+			"key": "ToMobile",
+			"value": "mobile number with countrycode",
+			"type": "string"
+		},
+		{
+			"key": "wabaNumber",
+			"value": "waba number with country code",
+			"type": "string"
+		},
+		{
+			"key": "key",
+			"value": "API KEY",
+			"type": "string"
+		}
+	]
+}
