@@ -1,229 +1,222 @@
 # PHARMA HUBB WhatsApp Campaign Center
 
-A Streamlit application for bulk WhatsApp medicine refill reminders. Operators upload customer lists, validate recipients, send an approved Xinno template, and track per-customer results.
+A production-grade Streamlit application for bulk WhatsApp medicine refill reminders, built for **AI Mediastra / PHARMA HUBB**.
 
-Built for **AI Mediastra / PHARMA HUBB**.
-
----
-
-## Overview
-
-Pharmacy teams need a controlled way to message refill follow-ups without sending from spreadsheets manually. This app provides a single bulk workflow:
-
-1. Upload a CSV or Excel customer list  
-2. Validate names and Indian mobile numbers  
-3. Preview eligible recipients and template variables  
-4. Confirm, then send sequentially through Xinno  
-5. Review results and export an audit CSV  
-
-Upload and validation never send messages. Live sends require an explicit confirmation checkbox.
+This repository provides two dedicated, independent bulk messaging campaign applications:
+1. **Text-Only Campaign** (`app.py`): Standard medicine refill reminders.
+2. **Image + Text Campaign** (`app_image_campaign.py`): Rich media medicine refill reminders featuring dynamic customer medicine lists, store branch contacts, manager helplines, and an image header.
 
 ---
 
-## Key features
-
-- CSV and XLSX customer uploads  
-- Flexible column headers (e.g. `customer_name` / `mobile` map to `Name` / `Phone number`)  
-- Name and phone validation  
-- Indian mobile normalization to `91XXXXXXXXXX`  
-- Duplicate detection after normalization  
-- Eligible-recipient filtering (`Status = Valid` only)  
-- Dynamic template preview per customer  
-- Xinno WhatsApp CPaaS integration  
-- Bulk sequential sending (no parallel fan-out, no auto-retry)  
-- Bulk attempt IDs with Streamlit re-run / double-click protection  
-- Per-customer audit records (masked phones, no API keys)  
-- Session send history and CSV result export  
-- Environment-based configuration (`.env`)  
-- Automated pytest suite (mocked Xinno; no live sends in tests)
-
----
-
-## Workflow
-
-```text
-Upload Customer List (CSV / XLSX)
-        ↓
-Normalize Column Headers
-        ↓
-Validate Data
-        ↓
-Normalize Phone Numbers
-        ↓
-Identify Eligible Customers
-        ↓
-Preview Template & Samples
-        ↓
-Confirm Campaign
-        ↓
-Bulk WhatsApp Send (sequential)
-        ↓
-Track Results
-        ↓
-Export Report / View Session History
-```
-
----
-
-## How the system works
-
-### Customer data
-
-Files must provide a name column and a phone column. Canonical headers are `Name` and `Phone number`. Common aliases are accepted automatically, for example:
-
-| Role | Accepted headers (examples) |
-|------|-----------------------------|
-| Name | `Name`, `customer_name`, `full_name`, `fullname` |
-| Phone | `Phone number`, `phone`, `mobile`, `whatsapp number` |
-
-Extra columns are ignored for messaging.
-
-### Validation
-
-Rows are classified as:
-
-- **Valid** — usable name + valid Indian mobile  
-- **Invalid** — missing name/phone or bad number  
-- **Duplicate** — same normalized phone as an earlier valid row  
-
-Only **Valid** customers are eligible to send.
-
-### Phone normalization
-
-Indian mobiles are cleaned and normalized before Xinno:
-
-| Input | Normalized |
-|-------|------------|
-| `7659935016` | `917659935016` |
-| `+91 76599 35016` | `917659935016` |
-| `9176599 35016` | `917659935016` |
-
-Duplicate checks run **after** normalization.
-
-### WhatsApp messaging
-
-Messages are sent through the existing Xinno REST client (`services/xinno_whatsapp.py`) using the approved template. Credentials come from environment variables. API keys are masked in UI/logs and never written to audit exports.
-
-Default send mode for the service is `dry_run=True`. Live production bulk send uses `dry_run=False` only after the operator confirms in the UI.
-
-### Bulk campaigns
-
-Eligible customers are processed one at a time. Each customer gets an independent payload (name + phone from the same row). Failures are recorded and the batch continues. The same bulk attempt ID cannot execute twice in a Streamlit session.
-
-**Note:** Streamlit “Accepted” means Xinno/Meta accepted the API request (`wamid`). Phone delivery is confirmed in the Xinno/Meta dashboard or webhooks.
-
----
-
-## WhatsApp template
-
-| Setting | Value |
-|---------|--------|
-| Template | `reminder_refill_followup_v3` |
-| Language | `en` (policy: deterministic) |
-| `{{1}}` | Customer name |
-| `{{2}}` | Medical store name (default `PHARMA HUBB`) |
-| `{{3}}` | Medical store name (default `PHARMA HUBB`) |
-
----
-
-## Technology stack
-
-- Python 3.10+  
-- Streamlit  
-- Pandas  
-- Requests  
-- python-dotenv  
-- openpyxl (XLSX)  
-- pytest  
-- Xinno WhatsApp CPaaS  
-
----
-
-## Project structure
+## Project Structure
 
 ```text
 ai-mediastra-whatsapp-reminder/
-├── app.py                 # Streamlit UI (bulk workflow)
+├── app.py                          # Streamlit UI: Existing Text-Only Campaign
+├── app_image_campaign.py           # Streamlit UI: Production Image + Text Campaign
 ├── services/
-│   └── xinno_whatsapp.py  # Xinno API client
+│   ├── xinno_whatsapp.py           # Xinno API Client for Text Campaign
+│   ├── xinno_image_template.py     # Xinno API Client for Image + Text Campaign
+│   └── cloudinary_image.py         # Cloudinary Image Upload & URL Generator
 ├── utils/
-│   ├── validators.py      # Columns, validation, normalization
-│   ├── bulk_send.py       # Bulk eligibility & sequential send
-│   └── audit.py           # Audit records, history, CSV export
-├── tests/                 # Automated tests (mocked Xinno)
-├── assets/                # UI assets
-├── data/                  # Sample datasets
-├── docs/                  # Xinno API reference material
-├── logs/                  # Local send logs (gitignored)
-├── .env.example
-├── pytest.ini
-├── requirements.txt
-└── README.md
+│   ├── column_aliases.py           # Centralized CSV Alias Resolution & Canonical Normalization
+│   ├── image_campaign.py           # Grouping, Medicine List Building, Variable Generation
+│   ├── validators.py               # Phone Normalization & Validation Logic
+│   ├── bulk_send.py                # Sequential Bulk Sending Engine & Idempotency
+│   └── audit.py                    # Masked Audit Logging & Export Helpers
+├── tests/                          # 271+ Automated Unit & Integration Tests (100% Mocked)
+├── assets/                         # Brand and UI Assets
+├── data/                           # Sample Datasets for Testing & Dry-Runs
+├── docs/                           # WhatsApp/Xinno API Specifications & Postman References
+├── logs/                           # Local Audit Logs (gitignored)
+├── scripts/                        # Dry-Run & Verification Runners
+├── .env.example                    # Safe Environment Configuration Template
+├── pytest.ini                      # Pytest Configuration
+├── requirements.txt                # Python Dependencies
+└── README.md                       # Complete Project Documentation
 ```
 
 ---
 
-## Setup
+## Setup & Installation
 
+### 1. Prerequisites
+- Python 3.10, 3.11, 3.12, or 3.13
+- Git
+
+### 2. Clone & Environment Setup
 ```bash
+# Navigate to workspace
 cd ai-mediastra-whatsapp-reminder
+
+# Create virtual environment
 python -m venv .venv
 
-# Windows
+# Activate virtual environment
+# On Windows (PowerShell / Command Prompt):
 .venv\Scripts\activate
-
-# macOS / Linux
+# On Linux / macOS:
 source .venv/bin/activate
 
+# Install dependencies
 pip install -r requirements.txt
+```
+
+### 3. Environment Configuration
+Copy `.env.example` to `.env` and fill in your credentials (never commit `.env`):
+
+```bash
 cp .env.example .env
 ```
 
-Edit `.env` with real Xinno credentials (never commit `.env`):
-
+Key environment variables in `.env`:
 ```env
+# --- Xinno CPaaS Gateway ---
 XINNO_API_URL=https://whatsapp.xinno.in/REST/directApi/message
 XINNO_API_KEY=your_xinno_api_key_here
 XINNO_WABA_NUMBER=919515473474
-WHATSAPP_TEMPLATE_NAME=reminder_refill_followup_v3
 WHATSAPP_TEMPLATE_LANGUAGE=en
+
+# --- Text Campaign ---
+WHATSAPP_TEMPLATE_NAME=reminder_refill_followup_v3
+
+# --- Image Campaign ---
+XINNO_IMAGE_TEMPLATE_NAME=refill_reminder_image
+XINNO_IMAGE_URL=https://res.cloudinary.com/troli5kq/image/upload/f_auto,q_auto/PHARMA_HUBB_-_medicine_Refill_Reminder_Image_Template
+
+# --- Cloudinary (For uploading image files from device) ---
+CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+
+# --- Business Details ---
 MEDICAL_STORE_NAME=PHARMA HUBB
 ```
 
 ---
 
-## Run the application
+## Local Run
 
+### Launching the Applications
+Each campaign runs independently on its own Streamlit server:
+
+- **Run Image + Text Campaign (Production Refill Reminder)**:
+  ```bash
+  streamlit run app_image_campaign.py
+  ```
+
+- **Run Text-Only Campaign**:
+  ```bash
+  streamlit run app.py
+  ```
+
+---
+
+## Flexible CSV Column Alias System
+
+The Image Campaign features a production-grade CSV alias resolution engine (`utils/column_aliases.py`). Clients do **not** need to manually rename columns if they use common pharmacy or CRM headers.
+
+### Supported Canonical Fields & Example Aliases
+
+| Canonical Field | Internal Name | Accepted Header Variations (167+ aliases supported) | Required? |
+|---|---|---|---|
+| `customer_name` | `Name` | `Name`, `Customer Name`, `customer_name`, `Patient Name`, `Full Name`, `Client Name` | **Yes** |
+| `phone` | `Phone number` | `Phone`, `Phone Number`, `phone_number`, `Mobile`, `Mobile Number`, `WhatsApp Number`, `Contact Number` | **Yes** |
+| `medicine` | `Medicine` | `Medicine`, `Medicine Name`, `Medication`, `Drug`, `Product`, `Customer Medication List`, `Refill Medicine` | **Yes** |
+| `branch` | `Branch` | `Branch`, `Branch Name`, `Location`, `Outlet`, `Store Branch`, `Branch / Location` | **Yes** |
+| `store_name` | `Store Name` | `Store`, `Store Name`, `Pharmacy`, `Shop Name`, `Business Name` | Optional (falls back to `.env`) |
+| `contact_no` | `Contact No.` | `Contact No.`, `Store Contact`, `Store Phone`, `Pharmacy Phone`, `Store Contact Number` | Optional |
+| `manager_contact` | `Manager Contact` | `Manager Contact`, `Manager Phone`, `Manager Mobile`, `Manager Number`, `Manager Contact No` | Optional |
+
+### Ambiguity & Safety Protections
+- **Ambiguity Detection**: If two uploaded columns both alias to the same field (e.g. both `Mobile` and `WhatsApp Number`), the system flags an ambiguity error and will not guess.
+- **Missing Required Fields**: If any required field (`customer_name`, `phone`, `medicine`, `branch`) is missing, execution is blocked with clear instructions and examples.
+- **Unmapped Extra Columns**: Additional columns (e.g. `Doctor Name`, `Notes`) are safely ignored without causing validation failure.
+
+---
+
+## Customer Grouping & Medicine Aggregation
+
+1. **Identity Grouping**: Rows are grouped by **(normalized customer name + normalized Indian mobile number)**.
+2. **Multi-Row Aggregation**: When a customer has multiple medications across separate rows, all medications are combined into a single, clean **comma-separated single-line string** (e.g. `METFORMIN 500 MG, TELMISARTAN 40 MG, ATORVASTATIN 10 MG`).
+3. **Parameter Compliance**: To comply with Meta WhatsApp Cloud API rules, all parameters are sanitized to remove newlines, carriage returns, tabs, and excessive whitespace.
+4. **Data Conflict Detection**: If rows sharing the same customer identity contain conflicting Branch, Store Contact, or Manager Contact values, the customer is flagged as invalid rather than guessing.
+
+---
+
+## WhatsApp Image Template
+
+- **Template Name**: `refill_reminder_image`
+- **Language**: `en` (deterministic)
+- **Header Component**: `image` containing a public HTTPS link (Cloudinary or custom HTTPS URL).
+- **Body Component**: Exactly **8 parameters** in strict order:
+  1. `{{1}}`: Customer Name
+  2. `{{2}}`: Store Name (`PHARMA HUBB`)
+  3. `{{3}}`: Store Branch (`Chadargatt`)
+  4. `{{4}}`: Dynamic Medicine List (`METFORMIN 500 MG, TELMISARTAN 40 MG, ATORVASTATIN 10 MG`)
+  5. `{{5}}`: Store Contact Number (`9581473474`)
+  6. `{{6}}`: Manager Contact Number (`9885473474`)
+  7. `{{7}}`: Store Name (`PHARMA HUBB`)
+  8. `{{8}}`: Store Branch (`Chadargatt`)
+
+---
+
+## Campaign Modes & Safety Controls
+
+### Dry-Run Mode (Default)
+- **Default State**: Dry-Run is always enabled by default.
+- **Zero Real Requests**: Constructs, inspects, and validates the exact JSON payloads without making HTTP calls to WhatsApp/Xinno.
+- **Visual Confidence**: Visual preview shows full customer count, medicine counts, and variable substitutions.
+
+### Live Send Mode
+- Requires explicitly switching the toggle to **Live Send** and checking the confirmation checkbox.
+- Sends sequentially to eligible customers with distinct attempt IDs.
+- Double-click and page-rerun duplicate protection guarantees each recipient is messaged at most once.
+
+---
+
+## Audit Logging & Security
+
+- **Masked Phone Numbers**: All audit records and log entries mask customer phone numbers (`91******5016`).
+- **Zero Secrets Logged**: API keys, Cloudinary secrets, and authentication tokens are strictly stripped and masked in all log outputs.
+- **Log Location**: Written to `logs/whatsapp_send.log` (gitignored).
+
+---
+
+## Automated Test Suite
+
+The project includes **271 automated unit and integration tests** covering phone normalization, alias matching, grouping, medicine aggregation, template safety, dry-run simulation, and audit logging.
+
+To run the full test suite:
 ```bash
-streamlit run app.py
+python -m pytest ai-mediastra-whatsapp-reminder -v
 ```
 
----
-
-## Testing
-
-All automated tests mock Xinno. They do not send real WhatsApp messages.
-
-```bash
-pytest -v
-```
-
-Current suite: **154+ tests** covering validation, normalization, column aliases, bulk send, audit, and UI safety checks.
+All tests are 100% mocked and make **zero** real network or WhatsApp requests.
 
 ---
 
-## Security
+## Production Deployment
 
-- Secrets live in `.env` (gitignored); `.env.example` has placeholders only  
-- API keys are masked in logs and never stored in audit CSV exports  
-- Phone numbers are masked in session history and downloads  
-- No automatic retries or uncontrolled parallel sends  
+### Option A: Streamlit Community Cloud
+1. Push the repository to a private GitHub repository.
+2. In Streamlit Cloud, create a new app and set the Main file path to `app_image_campaign.py`.
+3. Under **App Settings → Secrets**, add all variables from `.env.example`:
+   ```toml
+   XINNO_API_URL = "https://whatsapp.xinno.in/REST/directApi/message"
+   XINNO_API_KEY = "your_actual_key"
+   XINNO_WABA_NUMBER = "919515473474"
+   XINNO_IMAGE_TEMPLATE_NAME = "refill_reminder_image"
+   XINNO_IMAGE_URL = "https://res.cloudinary.com/..."
+   CLOUDINARY_CLOUD_NAME = "your_cloud_name"
+   CLOUDINARY_API_KEY = "your_api_key"
+   CLOUDINARY_API_SECRET = "your_api_secret"
+   MEDICAL_STORE_NAME = "PHARMA HUBB"
+   ```
 
----
-
-## Limitations
-
-- Bulk send is sequential (by design)  
-- Session history is in-memory for the current Streamlit session (not a database)  
-- API acceptance is not the same as handset delivery; check Xinno/Meta for delivery status  
-- Streamlit Community Cloud needs secrets configured separately from local `.env`  
+### Option B: Linux VPS / Docker / Cloud Run
+1. Deploy as a container or systemd service using:
+   ```bash
+   streamlit run app_image_campaign.py --server.port 8501 --server.address 0.0.0.0
+   ```
+2. Configure environment variables via your container management or `.env` file.
