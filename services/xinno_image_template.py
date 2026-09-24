@@ -5,7 +5,7 @@ Handles payload construction, validation, and message delivery
 for Image + Text template messages via the Xinno WhatsApp API.
 
 DOCUMENTATION SOURCE OF TRUTH:
-docs/WhatsappAPIDocument.json  (Request: "Template- Image")
+docs/whatsapp_api_postman_collection.json  (Request: "Template- Image")
 
 API Endpoint:  POST /REST/directApi/message
 Headers:       wabaNumber, Key, Content-Type: application/json
@@ -184,7 +184,7 @@ def send_image_template_message(
     """
     Construct and send an Image + Text template message via the Xinno API.
 
-    Payload follows docs/WhatsappAPIDocument.json "Template- Image".
+    Payload follows docs/whatsapp_api_postman_collection.json "Template- Image".
 
     The 8 body variables (in order):
         1. customer_name  2. store_name  3. branch
@@ -281,7 +281,7 @@ def send_image_template_message(
     }
     body_parameters = build_image_template_variables(customer_dict, store_name)
 
-    # 6. Construct JSON payload per docs/WhatsappAPIDocument.json "Template- Image"
+    # 6. Construct JSON payload per docs/whatsapp_api_postman_collection.json "Template- Image"
     payload = {
         "to": normalized_phone,
         "type": "template",

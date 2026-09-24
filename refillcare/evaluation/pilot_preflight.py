@@ -471,7 +471,10 @@ def run_comprehensive_pilot_preflight(
         ))
 
     # 19. Frozen Legacy Files Verification
-    frozen_files = ["app.py", "app_image_campaign.py"]
+    frozen_files = [
+        "whatsapp_campaigns/app.py" if (PROJECT_ROOT / "whatsapp_campaigns" / "app.py").exists() else "app.py",
+        "whatsapp_campaigns/app_image_campaign.py" if (PROJECT_ROOT / "whatsapp_campaigns" / "app_image_campaign.py").exists() else "app_image_campaign.py",
+    ]
     missing_frozen = [f for f in frozen_files if not (PROJECT_ROOT / f).exists()]
     if not missing_frozen:
         checks.append(PreflightCheckItem(

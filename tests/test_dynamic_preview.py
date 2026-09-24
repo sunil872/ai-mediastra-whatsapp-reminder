@@ -64,7 +64,8 @@ def test_send_payload_uses_each_customer_independently():
 
 @pytest.fixture
 def loaded_app():
-    at = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+    app_file = (PROJECT_ROOT / "whatsapp_campaigns" / "app.py") if (PROJECT_ROOT / "whatsapp_campaigns" / "app.py").exists() else (PROJECT_ROOT / "app.py")
+    at = AppTest.from_file(str(app_file))
     at.run(timeout=15)
     uploaders = at.get("file_uploader")
     if uploaders and hasattr(uploaders[0], "upload"):

@@ -5,7 +5,7 @@ Handles payload construction, phone number normalization, and message delivery
 via the Xinno WhatsApp API (Template- Text format).
 
 DOCUMENTATION SOURCE OF TRUTH:
-docs/WhatsappAPIDocument.json (Request: "Template- Text")
+docs/whatsapp_api_postman_collection.json (Request: "Template- Text")
 
 API Endpoint: POST /REST/directApi/message
 Headers: wabaNumber, Key, Content-Type: application/json
@@ -48,7 +48,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DOTENV_PATH = _PROJECT_ROOT / ".env"
 load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
 
-# Default API URL from Postman collection in docs/WhatsappAPIDocument.json
+# Default API URL from Postman collection in docs/whatsapp_api_postman_collection.json
 DEFAULT_API_URL = "https://cpaasreseller.notify24x7.com/REST/directApi/message"
 
 

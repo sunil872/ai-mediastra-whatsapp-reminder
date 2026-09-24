@@ -3,29 +3,25 @@
 venv/
 env/
 
-# Environment secrets
+# Environment secrets (STRICTLY IGNORED — NEVER COMMIT SENSITIVE API KEYS)
 .env
 
-# Python cache
+# Python cache & compiled bytecode
 __pycache__/
 *.pyc
 
-# Logs
-logs/
+# Logs (transient operational output)
+logs/whatsapp_send.log
 
-# Data files (uploaded CSVs, exports, RefillCare raw/processed datasets)
-data/*.csv
-data/*.xlsx
-data/**/*.csv
-data/**/*.xlsx
-data/**/*.parquet
-data/**/*.json
-data/**/*.db
-data/*.db
-data/refillcare/
-*.db
+# Temporary & Scratch Files
+scratch/
+*.tmp
+*.temp
+*.bak
 
-
-# IDE settings
+# IDE & OS settings
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+

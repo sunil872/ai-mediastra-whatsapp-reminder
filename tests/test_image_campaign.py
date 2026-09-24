@@ -361,7 +361,7 @@ class TestDynamicMedicineList:
 
 class TestImageTemplatePayload:
     def test_dry_run_payload_structure(self):
-        """Verify the full payload matches docs/WhatsappAPIDocument.json Template-Image."""
+        """Verify the full payload matches docs/whatsapp_api_postman_collection.json Template-Image."""
         with patch("services.xinno_image_template.load_dotenv"), \
              patch.dict(os.environ, _ENV_PATCH, clear=False):
             result = send_image_template_message(

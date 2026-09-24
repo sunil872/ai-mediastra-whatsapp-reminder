@@ -238,8 +238,9 @@ def test_correct_template_name_v3():
 def test_old_template_name_v2_not_in_project_sources():
     """Scan active project source files for the retired template name."""
     banned = "reminder_refill_followup_v2"
+    app_path = (PROJECT_ROOT / "whatsapp_campaigns" / "app.py") if (PROJECT_ROOT / "whatsapp_campaigns" / "app.py").exists() else (PROJECT_ROOT / "app.py")
     roots = [
-        PROJECT_ROOT / "app.py",
+        app_path,
         PROJECT_ROOT / "utils" / "validators.py",
         PROJECT_ROOT / "services" / "xinno_whatsapp.py",
         PROJECT_ROOT / "tests" / "test_xinno.py",

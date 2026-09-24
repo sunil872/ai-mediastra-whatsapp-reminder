@@ -383,7 +383,8 @@ def test_phase8_template_and_defaults():
 
 def test_phase8_no_uncontrolled_bulk_in_app_source():
     """App must not embed an uncontrolled for-loop send; bulk lives in utils.bulk_send."""
-    app_src = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
+    app_file = (PROJECT_ROOT / "whatsapp_campaigns" / "app.py") if (PROJECT_ROOT / "whatsapp_campaigns" / "app.py").exists() else (PROJECT_ROOT / "app.py")
+    app_src = app_file.read_text(encoding="utf-8")
     tree = ast.parse(app_src)
     for node in ast.walk(tree):
         if isinstance(node, ast.For):
@@ -406,7 +407,8 @@ def test_phase8_dry_run_false_occurrences_are_explicit_only():
     Inventory dry_run=False: only intentional confirmed bulk UI path.
     Normal startup must not auto-send.
     """
-    app_src = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
+    app_file = (PROJECT_ROOT / "whatsapp_campaigns" / "app.py") if (PROJECT_ROOT / "whatsapp_campaigns" / "app.py").exists() else (PROJECT_ROOT / "app.py")
+    app_src = app_file.read_text(encoding="utf-8")
     assert "bulk_understand" in app_src
     assert "legacy_sunil_confirm" not in app_src
     assert "dry_run=False" in app_src
@@ -425,7 +427,8 @@ def test_phase8_dry_run_false_occurrences_are_explicit_only():
 
 def test_phase8_banned_old_template_not_in_active_sources():
     banned = "reminder_refill_followup_v2"
-    for rel in ["app.py", "utils/validators.py", "services/xinno_whatsapp.py", ".env.example"]:
+    app_rel = "whatsapp_campaigns/app.py" if (PROJECT_ROOT / "whatsapp_campaigns" / "app.py").exists() else "app.py"
+    for rel in [app_rel, "utils/validators.py", "services/xinno_whatsapp.py", ".env.example"]:
         text = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
         assert banned not in text
 

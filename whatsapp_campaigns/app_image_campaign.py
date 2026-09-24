@@ -13,8 +13,14 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Ensure repository root is on sys.path before importing local packages
+PROJECT_ROOT = Path(__file__).resolve().parent.parent if Path(__file__).resolve().parent.name == "whatsapp_campaigns" else Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 import streamlit as st
@@ -49,7 +55,6 @@ from services.xinno_image_template import send_image_template_message
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent
 DOTENV_PATH = PROJECT_ROOT / ".env"
 LOG_FILE = PROJECT_ROOT / "logs" / "whatsapp_send.log"
 WHATSAPP_ICON = PROJECT_ROOT / "assets" / "whatsapp.svg"

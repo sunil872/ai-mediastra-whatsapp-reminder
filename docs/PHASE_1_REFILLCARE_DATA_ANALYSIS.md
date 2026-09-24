@@ -91,7 +91,7 @@ ai-mediastra-whatsapp-reminder/
       phase8_sample_customers.csv
 
     docs/                                 # API documentation
-      WhatsappAPIDocument.json
+      whatsapp_api_postman_collection.json
 
     assets/                               # Static assets
       whatsapp.svg

@@ -47,26 +47,31 @@ def main():
 
     # Build 10-column delivery CSV
     csv_bytes = RefillReminderEngine.build_10_column_export_csv(due_today)
-    candidate_files = [
-        PROJECT_ROOT / f"reminder_list_{today_str}.csv",
-        PROJECT_ROOT / f"reminder_list_{today_str}_validated.csv",
-        PROJECT_ROOT / f"reminder_list_{today_str}_export.csv",
-        PROJECT_ROOT / f"reminder_list_{today_str}_latest.csv",
-    ]
-    
+    exports_dir = PROJECT_ROOT / "exports"
+    exports_dir.mkdir(exist_ok=True)
+
+    export_file = exports_dir / f"reminder_list_{today_str}.csv"
     saved = False
-    for candidate in candidate_files:
+    try:
+        with open(export_file, "wb") as f:
+            f.write(csv_bytes)
+        print(f"[OK] Exported delivery CSV: exports/{export_file.name}")
+        saved = True
+    except PermissionError:
+        # If open in Excel, fallback to timestamped file in exports/
+        from datetime import datetime
+        ts = datetime.now().strftime("%H%M%S")
+        fallback_file = exports_dir / f"reminder_list_{today_str}_{ts}.csv"
         try:
-            with open(candidate, "wb") as f:
+            with open(fallback_file, "wb") as f:
                 f.write(csv_bytes)
-            print(f"[OK] Exported delivery CSV: {candidate.name}")
+            print(f"[OK] Exported delivery CSV (fallback): exports/{fallback_file.name}")
             saved = True
-            break
-        except PermissionError:
-            continue
-            
+        except Exception as e:
+            print(f"[WARNING] Could not save export CSV to exports/: {e}")
+
     if not saved:
-        print("[WARNING] Could not overwrite open CSV files. Please close Excel and re-run.")
+        print("[WARNING] Could not write CSV file. Please close any open files and re-run.")
 
 
 if __name__ == "__main__":

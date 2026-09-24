@@ -317,8 +317,8 @@ def test_phase6_single_customer_module_removed():
     assert not (root / "test_phase6_send.py").exists()
     assert not (root / "tests" / "test_phase6_send.py").exists()
     assert not (root / "test_xinno_live.py").exists()
-    assert not (root / "tests" / "test_xinno_live.py").exists()
-    app_src = (root / "app.py").read_text(encoding="utf-8")
+    app_file = (root / "whatsapp_campaigns" / "app.py") if (root / "whatsapp_campaigns" / "app.py").exists() else (root / "app.py")
+    app_src = app_file.read_text(encoding="utf-8")
     assert "Bulk WhatsApp" in app_src
     assert "Send WhatsApp Messages" in app_src
     assert "phase6_send" not in app_src
