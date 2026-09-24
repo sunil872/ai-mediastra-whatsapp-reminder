@@ -1,6 +1,7 @@
 # RefillCare™ Platform — Complete End-to-End System Implementation & Roadmap (V1 → V2 → V3)
 
-> **Document Version:** 1.0.0  
+> **Document Version:** 1.2.0  
+> **Last Updated:** 2026-09-24  
 > **Status:** Production-Ready V1 Deployed  
 > **Target Audience:** Engineering Team, Data Science Team, Product Managers, Pharmacy Operations Stakeholders  
 > **Repository:** `ai-mediastra-whatsapp-reminder`
@@ -23,8 +24,11 @@ RefillCare solves these clinical and behavioral failure modes through:
 - **Longitudinal Patient Identity Resolution:** Disambiguating shared family phone numbers and tracking exact patient-item purchase histories.
 - **Dual-Path Clinical Decision Routing (Path A vs. Path B):** Segmenting high-stability chronic regular patients from developing or irregular buyers.
 - **Dynamic Quantity Scaling & Days of Supply (DOS) Protection:** Scaling refill cadences based on units purchased ($U_{\text{latest}} / U_{\text{typical}}$) and capping short partial purchases.
-- **Stateful 6-Stage Lifecycle Tracking:** Managing active reminder stages (`Day -7`, `Day -3`, `Day -1`, `Day 0`, `Day +2`, `Day +5`) with automated cycle supersession upon repurchase.
-- **Pharmacist-in-the-Loop Governance:** Providing an interactive review dashboard before any automated WhatsApp messages are dispatched.
+- **Stateful 6-Stage Lifecycle Tracking:** Managing active reminder stages (`Day -7`, `Day -3`, `Day -1`, `Day 0`, `Day +2`, `Day +5`, `Day +40`) with automated cycle supersession upon repurchase.
+- **Multi-Interface Clinical Governance:**
+  - **Pharmacist Operations UI (Streamlit):** [app_refillcare.py](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/app_refillcare.py) with 346+ daily records, multi-stage filtering, and 10-column delivery export.
+  - **FastAPI Enterprise REST API:** [api/main.py](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/api/main.py) with OpenAPI Swagger docs (`/docs`), automated CORS, and review queue endpoints.
+  - **Modern SPA Web Portal:** [frontend/](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/frontend/) with real-time review actions, pre-flight file upload diagnostics, and live KPI dashboards.
 
 ---
 
@@ -58,14 +62,16 @@ flowchart TD
         PathA --> Sched[6-Stage Lifecycle Scheduler]
         PathB --> Sched
         Sched --> Lifecycle["Lifecycle State Machine<br/>(PENDING, DELIVERED, SUPERSEDED)"]
-        Lifecycle --> DB[(Enterprise Database<br/>SQLite / PostgreSQL)]
+        Lifecycle --> DB[(Enterprise Database<br/>enterprise.db / PostgreSQL)]
     end
 
-    subgraph Ops_Layer ["5. Daily Operations & Delivery"]
-        DB --> TodayQueue["Today's Due Queue<br/>(run_reminder.py)"]
-        TodayQueue --> ExportCSV["Export Canonical CSV<br/>(exports/reminder_list_YYYY-MM-DD.csv)"]
-        TodayQueue --> UI["Pharmacist Review Dashboard<br/>(app_refillcare.py)"]
-        TodayQueue --> Dispatch["WhatsApp Gateway Simulation/Send<br/>(run_message.py / Xinno API)"]
+    subgraph API_and_UI_Layer ["5. Enterprise Delivery & User Interfaces"]
+        DB --> PM[RefillPersistenceManager]
+        PM --> API["FastAPI REST Backend<br/>(api/main.py :8000)"]
+        PM --> Streamlit["Streamlit Operations UI<br/>(app_refillcare.py :8501)"]
+        API --> SPA["Single Page App<br/>(frontend/ :8000)"]
+        API --> ExportCSV["10-Column Canonical CSV<br/>(exports/reminder_list_YYYY-MM-DD.csv)"]
+        API --> Dispatch["Xinno WhatsApp Gateway<br/>(Dry-Run & Production Send)"]
     end
 ```
 
@@ -116,7 +122,7 @@ The Unified Decision Engine (`refillcare/engine/unified_engine.py`) executes dua
 - **Quantity Multi-Pack Scaling:**
   - If a patient typically buys 30 tablets ($U_{\text{typical}} = 30$) with a 30-day cadence, but in their latest visit buys 60 tablets ($U_{\text{latest}} = 60$), the engine calculates:
     $$\text{Quantity Ratio} = \frac{60}{30} = 2.0 \implies \text{Scaled Cadence} = 30 \times 2.0 = 60\text{ days}$$
-  - Corroborated with Days of Supply (DOS) to ensure the patient is never messaged prematurely (e.g. Murlikrishna case study).
+  - Corroborated with Days of Supply (DOS) to ensure the patient is never messaged prematurely (e.g. Murlikrishna case study: 58-day scaled cadence prevented premature Day +5 notification on 24-Sep-2026).
 - **Partial Purchase Safety Cap:**
   - If a chronic patient who usually buys 30 tablets buys an emergency 10-pack, the cadence is capped at the 10-day DOS rather than waiting their typical 30 days (e.g. Narasimulu case study).
 
@@ -145,15 +151,48 @@ Instead of a single message, RefillCare generates a structured 6-stage lifecycle
 | **Day +40** | Churn Audit | Audit flag to assess long-term discontinuation. | Operational report |
 
 #### 4. Automated Repurchase Supersession (Anti-Spam Guarantee)
-If a patient repurchases their medication while an active cycle has pending future stages (e.g. patient purchases on Day -2 when Day -1, Day 0, Day +2, and Day +5 are pending):
+If a patient repurchases their medication while an active cycle has pending future stages:
 - The `RefillPersistenceManager` automatically detects the new purchase invoice.
-- It updates the previous cycle's pending stages to `SUPERSEDED`.
+- It updates the previous cycle's pending stages to `SUPERSEDED_BY_PURCHASE`.
 - It creates a brand-new cycle with updated stages starting from the new purchase date.
 - **Result:** Zero duplicate or irrelevant messages sent to patients.
 
 ---
 
-## 4. Daily Operational Workflow & Running Pipelines
+## 4. Multi-Interface Synchronization (Streamlit, FastAPI, SPA)
+
+In the latest release, all presentation layers are bound directly to `enterprise.db` via `RefillPersistenceManager`:
+
+### 1. Streamlit Operations Dashboard ([app_refillcare.py](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/app_refillcare.py))
+- **346 Rows Loaded for 24-09-2026:** Resolved previous 3-row display limitation (which occurred because the UI had read from a 700-row test slice).
+- **Interactive Multi-Stage Filtering:**
+  - View all stages or isolate: `-7d`, `-3d`, `-1d`, `0d`, `+2d`, `+5d`, `+40d`.
+  - Filter by Clinical Path: `Path A (Chronic Adherence)` vs `Path B (Developing Adherence)`.
+  - Filter by Mobile Status: `Valid`, `Missing`, `Invalid format`.
+  - Search by Patient Name or Medication Name.
+- **10-Column Canonical CSV Download:**
+  - Generates the exact 10-column delivery file matching [reminder_list_2026-09-24_export.csv](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/reminder_list_2026-09-24_export.csv).
+- **Updated Explainer Copy:**
+  - Replaced legacy Phase 5 copy with the full V1 Unified Engine Architecture Guide.
+
+### 2. FastAPI Enterprise REST API ([api/](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/api/))
+- **Endpoints:**
+  - `GET /api/v1/reminders/daily?target_date=YYYY-MM-DD`: Returns full list of scheduled reminders for the day (346 items for `2026-09-24`).
+  - `GET /api/reminders/today?target_date=YYYY-MM-DD`: Detailed review queue with decision provenance, path, and stability tier.
+  - `GET /api/v1/reminders/export-csv?target_date=YYYY-MM-DD`: Downloads delivery-ready CSV with 10 standard columns.
+  - `POST /api/reminders/{reminder_id}/approve`: Approves reminder for dispatch.
+  - `POST /api/reminders/{reminder_id}/reject`: Rejects reminder with reason.
+  - `POST /api/reminders/{reminder_id}/dispatch`: Controlled single reminder dispatch (dry-run supported).
+  - `GET /api/v1/analytics/kpi`: Returns executive system metrics (monitored customers, upcoming cycles, due reminders).
+  - `GET /docs` & `GET /redoc`: Interactive Swagger UI and ReDoc documentation.
+
+### 3. Frontend Single Page Application ([frontend/](file:///c:/Users/sunil/ai-mediastra-whatsapp-reminder/ai-mediastra-whatsapp-reminder/frontend/))
+- Pure HTML5 + Vanilla JS + CSS responsive interface mounted at root URL `/` and `/static`.
+- Real-time KPI summaries, file upload with date diagnostics, prediction snapshots, and interactive approval workflow.
+
+---
+
+## 5. Daily Operational Workflow & Running Pipelines
 
 ```text
 Daily Sequence:
@@ -182,20 +221,35 @@ python run_message.py
 # 4. Retrain Machine Learning Models (Offline / Periodic)
 python run_train.py
 
-# 5. Launch RefillCare Operations Dashboard
+# 5. Launch RefillCare Operations Dashboard (Streamlit)
 streamlit run app_refillcare.py
 
-# 6. Launch Standalone Broadcast Tools (Optional)
+# 6. Launch FastAPI Enterprise REST API & SPA Web App
+uvicorn api.main:app --reload --port 8000
+# Access Swagger Docs at: http://localhost:8000/docs
+# Access SPA Dashboard at:   http://localhost:8000
+
+# 7. Launch Standalone Broadcast Tools (Optional)
 streamlit run whatsapp_campaigns/app_text_campaign.py
 streamlit run whatsapp_campaigns/app_image_campaign.py
 ```
 
 ---
 
-## 5. Repository File Structure & Module Directory
+## 6. Repository File Structure & Module Directory
 
 ```text
 ai-mediastra-whatsapp-reminder/
+├── api/                                         # FastAPI Enterprise REST API Layer
+│   ├── main.py                                  # App initialization, routes & static mounting
+│   ├── services.py                              # Enterprise service layer & persistence connectors
+│   └── schemas.py                               # Pydantic models for API request/response validation
+│
+├── frontend/                                    # Modern Single Page Application (SPA)
+│   ├── index.html                               # HTML5 clinical dashboard
+│   ├── js/                                      # Frontend client logic (app.js, api.js)
+│   └── css/                                     # Responsive design system & badges (styles.css)
+│
 ├── refillcare/                                  # Core Clinical Decision Intelligence
 │   ├── engine/
 │   │   ├── decision_types.py                    # RefillDecision, Cycle, Stage dataclasses
@@ -252,6 +306,10 @@ ai-mediastra-whatsapp-reminder/
 │   ├── RefillCare_End_to_End_Master_Walkthrough.ipynb  # All-in-one 5-phase interactive tutorial
 │   └── refillcare/                              # Modular Phase Notebook Series (01 to 05)
 │
+├── tests/                                       # Comprehensive Test Suite (718+ tests)
+│   ├── refillcare/                              # Engine, holdout, and pipeline tests
+│   └── ...                                      # Integration & API tests
+│
 ├── app_refillcare.py                            # Pharmacist Operations UI (Main Dashboard)
 ├── run_prediction.py                            # Prediction evaluation CLI
 ├── run_reminder.py                              # Daily review queue & export CLI
@@ -262,7 +320,7 @@ ai-mediastra-whatsapp-reminder/
 
 ---
 
-## 6. Strategic Roadmap: Version 2.0 (V2) & Version 3.0 (V3)
+## 7. Strategic Roadmap: Version 2.0 (V2) & Version 3.0 (V3)
 
 ```mermaid
 timeline
@@ -273,6 +331,7 @@ timeline
         6-Stage Lifecycle Tracking : Complete
         Repurchase Supersession : Complete
         Pharmacist Streamlit UI : Complete
+        FastAPI REST & SPA Portal : Complete
         Dry-Run WhatsApp Dispatch : Complete
     section Version 2.0 (Next Release)
         Real-Time ERP Webhook Sync : High Priority
@@ -308,7 +367,7 @@ timeline
 
 ---
 
-## 7. Teammate Quickstart & Collaboration Guide
+## 8. Teammate Quickstart & Collaboration Guide
 
 ### 1. Environment Setup
 ```bash
@@ -335,11 +394,19 @@ copy .env.example .env
 pytest -q
 ```
 
-### 3. Launching the Pharmacist Dashboard
+### 3. Launching Applications
+
+#### Option A: Streamlit Pharmacist Operations Dashboard
 ```bash
-# Start the RefillCare Operations Dashboard
 streamlit run app_refillcare.py
 # Access at http://localhost:8501
+```
+
+#### Option B: FastAPI Enterprise REST API & SPA Portal
+```bash
+uvicorn api.main:app --reload --port 8000
+# Access Swagger Documentation: http://localhost:8000/docs
+# Access SPA Dashboard:         http://localhost:8000
 ```
 
 ### 4. Running the Daily Simulation Pipeline

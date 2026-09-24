@@ -1,0 +1,193 @@
+{
+  "schema": {
+    "total_raw_rows": 895557,
+    "columns": [
+      "invoice_date",
+      "invoice_number",
+      "customerName",
+      "itemCode",
+      "itemName",
+      "packing",
+      "batchNo",
+      "mfgDate",
+      "expiryDate",
+      "quantity",
+      "freeQuantity",
+      "rate",
+      "saleRate",
+      "mrp",
+      "invoice_total",
+      "discountPercent",
+      "item_discount",
+      "gstAmount",
+      "netAmount",
+      "costPrice",
+      "MOBILE_NO",
+      "customerId",
+      "itemId"
+    ],
+    "date_min": "2020-12-24",
+    "date_max": "2026-08-31",
+    "invalid_invoice_dates": 0,
+    "mfgDate_present": true,
+    "therapeuticCategory_present": false,
+    "generic_name_present": false
+  },
+  "customer_identity": {
+    "missing_customerId_rows": 83,
+    "missing_customerName_rows": 83,
+    "unique_customerIds": 14271,
+    "unique_customerNames": 14271,
+    "customerIds_with_multiple_names": 0,
+    "customerNames_with_multiple_ids": 0,
+    "customerId_collision_sample": {},
+    "customerName_collision_sample": {},
+    "missing_MOBILE_NO_rows": 70137,
+    "shared_MOBILE_NO_count": 180,
+    "customers_on_shared_MOBILE_NO": 388,
+    "shared_MOBILE_NO_sample": {
+      "9951921323": [
+        "CARE",
+        "D ARUN",
+        "KOSKO",
+        "CS",
+        "CSA",
+        "C HANUMAN",
+        "NAGESHWAR RAO",
+        "JEYAMMA",
+        "SATHAYA NARAYANA",
+        "CS RAJU"
+      ],
+      "9392733210": [
+        "T LAXMI",
+        "JANAKAMAMA",
+        "LAXMMAMA",
+        "LAXMA REDDY",
+        "LAXMAI",
+        "LAKSMI",
+        "JANAKAMA",
+        "LINGAMMA",
+        "LAXMAMMA"
+      ],
+      "9989072235": [
+        "PRASAD",
+        "RAO",
+        "RA BABU",
+        "RAVINDER",
+        "RAMYA SRI"
+      ],
+      "7396427591": [
+        "NARASIMHA RAO",
+        "R NARASIMHA RAO",
+        "R PRATHYUSHA",
+        "R UMA DEVI"
+      ],
+      "9396890948": [
+        "ADHI LAKSHMI MEDICAL HALL",
+        "T DHANUNJAY GOUD",
+        "T DHANANJAY GOUD",
+        "P DHANANJAY  GOUD"
+      ],
+      "9966473474": [
+        "B.MALLESH",
+        "SHIVANI",
+        "JANAKAMAMA",
+        "CS"
+      ],
+      "9912367599": [
+        "M.LAKSHMI",
+        "M G K MURTHY",
+        "M LAKSHMI",
+        "M.G.K MURTHY GARU"
+      ],
+      "8639770520": [
+        "SRINIVAS RAO",
+        "SREENIVASA RAO",
+        "A SREENIVASARAO"
+      ],
+      "9010388877": [
+        "SK. KAMAL",
+        "SHASHIKALA",
+        "CH VIDYARANI"
+      ],
+      "9701443358": [
+        "RAGHAVA",
+        "PARNIKA R",
+        "R.PARNIKA"
+      ]
+    }
+  },
+  "medicine_identity": {
+    "missing_itemId_rows": 0,
+    "missing_itemCode_rows": 0,
+    "missing_itemName_rows": 0,
+    "unique_itemIds": 16830,
+    "unique_itemCodes": 16830,
+    "itemCodes_with_multiple_names": 0,
+    "itemIds_with_multiple_codes": 0,
+    "itemCode_name_collision_sample": {}
+  },
+  "transaction_integrity": {
+    "total_valid_rows": 895474,
+    "exact_duplicate_rows": 16798,
+    "logical_duplicate_events": 77734,
+    "negative_quantity_rows": 5954,
+    "zero_quantity_rows": 0,
+    "neg_or_zero_quantity_rows": 5954,
+    "multi_line_invoice_item_combos": 68505,
+    "multi_line_total_rows": 146239
+  },
+  "purchase_history": {
+    "total_customer_medicine_histories": 327051,
+    "histories_1plus_purchases": 327051,
+    "histories_2plus_purchases": 112793,
+    "histories_3plus_purchases": 64173,
+    "histories_5plus_purchases": 34192,
+    "histories_10plus_purchases": 15256,
+    "histories_20plus_purchases": 6261,
+    "interval_statistics": {
+      "total_intervals": 568423,
+      "median_days": 26.0,
+      "mean_days": 80.59,
+      "std_days": 179.84,
+      "min_days": 0,
+      "max_days": 2060,
+      "zero_day_intervals": 81770,
+      "negative_intervals": 0,
+      "large_intervals_over_365d": 29938,
+      "recurring_15_120d_count": 289256,
+      "recurring_15_120d_pct": 50.89,
+      "distribution_buckets": {
+        "0d_same_day": 81770,
+        "1_14d": 113247,
+        "15_30d": 126492,
+        "31_60d": 106331,
+        "61_90d": 35893,
+        "91_120d": 20540,
+        "121_180d": 23560,
+        "181_365d": 30652,
+        "over_365d": 29938
+      }
+    },
+    "recurring_histories_3plus_15_120d": 37070,
+    "recurring_customers": 3756
+  },
+  "pipeline_compatibility": {
+    "missing_required_cols": [],
+    "missing_feature_pipeline_cols": [],
+    "therapeuticCategory_in_dataset": false,
+    "generic_name_in_dataset": false,
+    "cleaning_py_still_references_removed_cols": true,
+    "mfgDate_present_pipeline_drops_it": true,
+    "all_required_cols_present": true
+  },
+  "phase17c_readiness": {
+    "suitable_for_phase_17c": true,
+    "blockers": [],
+    "warnings": [
+      "77734 logical duplicate events (same invoice_number+customerId+itemId) -- handled by aggregate_invoice_items().",
+      "180 MOBILE_NO values shared by >1 customer. MOBILE_NO is NOT identity -- histories strictly isolated by customerId.",
+      "5954 rows with zero/negative quantity -- pipeline flags via is_positive_quantity."
+    ]
+  }
+}

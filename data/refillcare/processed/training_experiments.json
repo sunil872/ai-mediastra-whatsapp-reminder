@@ -1,0 +1,35 @@
+[
+  {
+    "version_id": "v2.0.0",
+    "model_type": "HistGradientBoostingRegressor",
+    "cutoff_date": "2026-09-23",
+    "hyperparameters": {
+      "model": "HistGradientBoostingRegressor",
+      "max_iter": 100
+    },
+    "metrics": {
+      "mae_days": 3.12,
+      "rmse_days": 5.48,
+      "within_3_days_pct": 71.8,
+      "within_7_days_pct": 88.4
+    },
+    "notes": "Trained model serialized to C:\\Users\\sunil\\ai-mediastra-whatsapp-reminder\\ai-mediastra-whatsapp-reminder\\data\\refillcare\\processed\\models\\refill_model_v2.0.0.pkl",
+    "timestamp": "2026-09-23T11:56:01.198093"
+  },
+  {
+    "version_id": "v2.0.0",
+    "model_type": "LightGBM_Heuristic_Hybrid",
+    "cutoff_date": "2026-08-31",
+    "hyperparameters": {
+      "model": "LightGBM_Heuristic_Hybrid"
+    },
+    "metrics": {
+      "mae_days": 3.12,
+      "rmse_days": 5.48,
+      "within_3_days_pct": 71.8,
+      "within_7_days_pct": 88.4
+    },
+    "notes": "Production model training run from CLI.",
+    "timestamp": "2026-09-23T11:56:01.204811"
+  }
+]

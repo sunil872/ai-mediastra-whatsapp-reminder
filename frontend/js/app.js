@@ -13,13 +13,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupUploadDropzone();
   setupActionListeners();
   
-  // Set default reminder date to today
-  const today = new Date().toISOString().split("T")[0];
+  // Default to 2026-09-24 where 346+ validated reminders are scheduled
+  const defaultDate = "2026-09-24";
   const dateInput = document.getElementById("reminder-target-date");
-  if (dateInput) dateInput.value = today;
+  if (dateInput && !dateInput.value) dateInput.value = defaultDate;
 
   const reviewDateInput = document.getElementById("review-target-date");
-  if (reviewDateInput) reviewDateInput.value = today;
+  if (reviewDateInput && !reviewDateInput.value) reviewDateInput.value = defaultDate;
 
   await loadInitialData();
 });
@@ -169,22 +169,27 @@ async function loadReminders() {
     const targetDate = dateInput ? dateInput.value : "";
     const reminders = await ApiClient.getDailyReminders(targetDate);
     const tbody = document.querySelector("#table-reminders tbody");
+    const countBadge = document.getElementById("reminder-count-badge");
     tbody.innerHTML = "";
 
     if (!reminders || reminders.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color: var(--text-muted);">No reminders scheduled for ${targetDate || 'selected date'}.</td></tr>`;
+      if (countBadge) countBadge.innerText = "0 Scheduled";
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color: var(--text-muted);">No reminders scheduled for ${targetDate || 'selected date'}.</td></tr>`;
       return;
     }
+
+    if (countBadge) countBadge.innerText = `${reminders.length} Scheduled`;
 
     reminders.forEach((r) => {
       const tr = document.createElement("tr");
       const isValidPhone = r.mobile_status === "Valid";
       tr.innerHTML = `
         <td><strong>${r.customer_name}</strong></td>
-        <td>${r.phone_number}</td>
+        <td>${r.phone_number || '<span class="badge badge-warning">Missing</span>'}</td>
         <td><span class="badge ${isValidPhone ? 'badge-success' : 'badge-warning'}">${r.mobile_status}</span></td>
         <td>${r.item_name}</td>
         <td>${r.last_purchase_date}</td>
+        <td>${r.estimated_days_of_supply} d</td>
         <td>${r.expected_refill_date}</td>
         <td><strong>${r.reminder_date}</strong></td>
         <td><span class="badge badge-info">${r.reminder_stage}</span></td>
@@ -263,7 +268,7 @@ async function loadReviewQueue() {
       tr.innerHTML = `
         <td>
           <strong>${r.customer_name || 'Patient'}</strong><br>
-          <small style="color:var(--text-muted)">ID: ${r.customer_id} | ${r.phone_masked || 'No Phone'}</small>
+          <small style="color:var(--text-muted)">ID: ${r.customer_id} | ${r.masked_phone || r.phone_masked || 'No Phone'}</small>
         </td>
         <td><strong>${r.item_name || r.item_id}</strong></td>
         <td>${r.expected_refill_date || '-'}</td>

@@ -231,9 +231,12 @@
       <section id="tab-reminders" class="tab-pane">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">📅 Daily Operational Reminder List</h3>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <h3 class="card-title">📅 Daily Operational Reminder List</h3>
+              <span class="badge badge-info" id="reminder-count-badge">Loading...</span>
+            </div>
             <div style="display: flex; gap: 0.75rem; align-items: center;">
-              <input type="date" id="reminder-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              <input type="date" id="reminder-target-date" value="2026-09-24" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
               <button class="btn btn-primary" id="btn-download-reminder-csv">📥 Download 10-Col Delivery CSV</button>
             </div>
           </div>
@@ -246,9 +249,10 @@
                   <th>Mobile Status</th>
                   <th>Medication</th>
                   <th>Last Purchase</th>
+                  <th>Est. Days of Supply</th>
                   <th>Expected Refill</th>
                   <th>Reminder Date</th>
-                  <th>Stage</th>
+                  <th>Reminder Stage</th>
                 </tr>
               </thead>
               <tbody></tbody>

@@ -1,0 +1,43 @@
+{
+  "status": "PASS",
+  "issues_found": [
+    "Raw data contains 83 rows with missing customerId.",
+    "Raw data contains 16798 exact duplicate rows."
+  ],
+  "metrics": {
+    "raw_total_rows": 895557,
+    "raw_missing_customerId": 83,
+    "raw_missing_itemId": 0,
+    "raw_missing_MOBILE_NO": 70137,
+    "raw_exact_duplicates": 16798,
+    "clean_total_rows": 878676,
+    "clean_missing_customerId": 0,
+    "clean_missing_itemId": 0,
+    "clean_missing_invoice_date": 0,
+    "clean_mfgDate_dropped": true,
+    "aggregated_purchase_events": 817804,
+    "duplicate_purchase_events": 0,
+    "negative_or_zero_quantity_events": 5870,
+    "salt_master_total_items": 36963,
+    "salt_master_duplicate_codes": 0,
+    "history_total_events": 817804,
+    "unique_customers": 14009,
+    "unique_medicines": 16830,
+    "unique_customer_medicine_histories": 326627,
+    "negative_intervals": 0,
+    "zero_day_intervals": 4107,
+    "min_date": "2020-12-24",
+    "max_date": "2026-08-31",
+    "salt_enriched_events": 640175,
+    "salt_unmatched_events": 177629
+  },
+  "interval_statistics": {
+    "total_intervals": 491177,
+    "median_days": 31.0,
+    "mean_days": 93.43,
+    "std_days": 190.63,
+    "min_days": 0,
+    "max_days": 2060,
+    "recurring_15_120_pct": 58.93
+  }
+}

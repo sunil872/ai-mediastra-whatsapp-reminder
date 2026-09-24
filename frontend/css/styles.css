@@ -455,6 +455,9 @@ body {
 .badge-warning { background-color: var(--warning-bg); color: var(--warning); }
 .badge-danger { background-color: var(--danger-bg); color: var(--danger); }
 .badge-info { background-color: var(--info-bg); color: var(--info); }
+.badge-primary { background-color: rgba(14, 116, 144, 0.12); color: var(--primary); }
+.badge-accent { background-color: rgba(245, 158, 11, 0.15); color: #d97706; }
+.badge-secondary { background-color: #f1f5f9; color: var(--text-secondary); }
 
 /* Toast Notifications */
 .toast-container {

@@ -1,0 +1,2599 @@
+{
+  "experiment": "PHASE_17E_PATH_A_CLASSIFICATION_ANALYSIS",
+  "read_only": true,
+  "controls": {
+    "path": "A_established_customers",
+    "min_purchases": 6,
+    "test_rows_universe": 7488,
+    "path_a_rows": 5155,
+    "test_date_min": "2026-07-01",
+    "test_date_max": "2026-08-30",
+    "history_date_min": "2020-12-24",
+    "history_date_max": "2026-08-31",
+    "current_rules": {
+      "min_purchases": 6,
+      "cadence_median_band": [
+        15.0,
+        120.0
+      ],
+      "high": {
+        "norm_mad_max": 0.35,
+        "drift_max": 7.0
+      },
+      "medium_eligible": {
+        "norm_mad_max": 0.5,
+        "drift_max": 10.0
+      },
+      "unstable": "fails depth, cadence band, or broad regularity"
+    }
+  },
+  "canonical_examples": {
+    "stable_canonical": {
+      "intervals": [
+        30,
+        30,
+        31,
+        29,
+        30,
+        32
+      ],
+      "features": {
+        "n_intervals": 6.0,
+        "hist_median": 30.0,
+        "hist_mean": 30.3333,
+        "hist_std": 1.0328,
+        "cv": 0.034,
+        "norm_mad": 0.0167,
+        "drift": 0.0,
+        "mad": 0.5,
+        "recent3_median": 30.0,
+        "max_interval": 32.0,
+        "min_interval": 29.0,
+        "max_over_median": 1.0667,
+        "pct_within_30pct_median": 100.0,
+        "pct_within_50pct_median": 100.0,
+        "pct_in_refill_band_15_120": 100.0,
+        "pct_extreme_lt10_or_gt180": 0.0,
+        "pct_gt_2x_median": 0.0,
+        "pct_lt_half_median": 0.0,
+        "iqr": 0.75,
+        "iqr_over_median": 0.025
+      },
+      "regularity": {
+        "mad": 0.5,
+        "norm_mad": 0.0167,
+        "recent3_median": 30.0,
+        "cadence_drift": 0.0,
+        "hist_median": 30.0,
+        "n_prior_intervals": 6
+      },
+      "oracle_label": "STABLE",
+      "current_path_a_label": "HIGH"
+    },
+    "recurring_variable_canonical": {
+      "intervals": [
+        30,
+        60,
+        45,
+        30,
+        90,
+        30,
+        60,
+        30,
+        90
+      ],
+      "features": {
+        "n_intervals": 9.0,
+        "hist_median": 45.0,
+        "hist_mean": 51.6667,
+        "hist_std": 25.0,
+        "cv": 0.4839,
+        "norm_mad": 0.3333,
+        "drift": 15.0,
+        "mad": 15.0,
+        "recent3_median": 60.0,
+        "max_interval": 90.0,
+        "min_interval": 30.0,
+        "max_over_median": 2.0,
+        "pct_within_30pct_median": 11.1111,
+        "pct_within_50pct_median": 77.7778,
+        "pct_in_refill_band_15_120": 100.0,
+        "pct_extreme_lt10_or_gt180": 0.0,
+        "pct_gt_2x_median": 0.0,
+        "pct_lt_half_median": 0.0,
+        "iqr": 30.0,
+        "iqr_over_median": 0.6667
+      },
+      "regularity": {
+        "mad": 15.0,
+        "norm_mad": 0.3333,
+        "recent3_median": 60.0,
+        "cadence_drift": 15.0,
+        "hist_median": 45.0,
+        "n_prior_intervals": 9
+      },
+      "oracle_label": "RECURRING_VARIABLE",
+      "current_path_a_label": "UNSTABLE"
+    },
+    "unstable_canonical": {
+      "intervals": [
+        5,
+        180,
+        12,
+        240,
+        3,
+        150
+      ],
+      "features": {
+        "n_intervals": 6.0,
+        "hist_median": 81.0,
+        "hist_mean": 98.3333,
+        "hist_std": 104.5575,
+        "cv": 1.0633,
+        "norm_mad": 0.9506,
+        "drift": 69.0,
+        "mad": 77.0,
+        "recent3_median": 150.0,
+        "max_interval": 240.0,
+        "min_interval": 3.0,
+        "max_over_median": 2.963,
+        "pct_within_30pct_median": 0.0,
+        "pct_within_50pct_median": 0.0,
+        "pct_in_refill_band_15_120": 0.0,
+        "pct_extreme_lt10_or_gt180": 50.0,
+        "pct_gt_2x_median": 33.3333,
+        "pct_lt_half_median": 50.0,
+        "iqr": 165.75,
+        "iqr_over_median": 2.0463
+      },
+      "regularity": {
+        "mad": 77.0,
+        "norm_mad": 0.9506,
+        "recent3_median": 150.0,
+        "cadence_drift": 69.0,
+        "hist_median": 81.0,
+        "n_prior_intervals": 6
+      },
+      "oracle_label": "UNSTABLE",
+      "current_path_a_label": "UNSTABLE"
+    }
+  },
+  "pair_level_cohort_2020_2026": {
+    "established_pairs": 24791,
+    "by_current_label": {
+      "UNSTABLE": 15505,
+      "HIGH": 6262,
+      "MEDIUM": 3024
+    },
+    "by_oracle_label": {
+      "UNSTABLE": 12552,
+      "RECURRING_VARIABLE": 9672,
+      "STABLE": 2567
+    },
+    "mean_purchases": 15.44
+  },
+  "current_path_a_cohorts": {
+    "HIGH": {
+      "count": 1778,
+      "pct": 34.49,
+      "mean_depth": 28.64,
+      "mean_hist_median": 25.93,
+      "median_hist_median": 28.0,
+      "mean_norm_mad": 0.18,
+      "median_norm_mad": 0.18,
+      "mean_drift": 2.08,
+      "median_drift": 1.5,
+      "mean_cv": 0.71,
+      "mean_max_over_median": 5.78,
+      "mean_pct_within_50pct": 80.11,
+      "mean_pct_extreme": 6.52,
+      "personal_median_metrics": {
+        "count": 1778,
+        "mae": 7.25,
+        "medae": 4.0,
+        "within_3_days_pct": 44.21,
+        "within_7_days_pct": 67.44,
+        "mean_bias": 2.57
+      }
+    },
+    "MEDIUM": {
+      "count": 731,
+      "pct": 14.18,
+      "mean_depth": 29.24,
+      "mean_hist_median": 25.64,
+      "median_hist_median": 22.5,
+      "mean_norm_mad": 0.38,
+      "median_norm_mad": 0.4,
+      "mean_drift": 5.48,
+      "median_drift": 6.0,
+      "mean_cv": 0.94,
+      "mean_max_over_median": 7.97,
+      "mean_pct_within_50pct": 64.6,
+      "mean_pct_extreme": 12.18,
+      "personal_median_metrics": {
+        "count": 731,
+        "mae": 9.87,
+        "medae": 7.5,
+        "within_3_days_pct": 23.39,
+        "within_7_days_pct": 49.25,
+        "mean_bias": 5.39
+      }
+    },
+    "UNSTABLE": {
+      "count": 2646,
+      "pct": 51.33,
+      "mean_depth": 33.88,
+      "mean_hist_median": 24.45,
+      "median_hist_median": 14.0,
+      "mean_norm_mad": 0.38,
+      "median_norm_mad": 0.33,
+      "mean_drift": 13.83,
+      "median_drift": 4.0,
+      "mean_cv": 1.07,
+      "mean_max_over_median": 23.91,
+      "mean_pct_within_50pct": 62.26,
+      "mean_pct_extreme": 31.81,
+      "personal_median_metrics": {
+        "count": 2646,
+        "mae": 13.64,
+        "medae": 5.5,
+        "within_3_days_pct": 38.81,
+        "within_7_days_pct": 58.31,
+        "mean_bias": 8.37
+      }
+    }
+  },
+  "oracle_behavior_cohorts": {
+    "STABLE": {
+      "count": 635,
+      "pct_of_path_a": 12.32,
+      "personal_median": {
+        "count": 635,
+        "mae": 7.46,
+        "medae": 4.0,
+        "within_3_days_pct": 46.3,
+        "within_7_days_pct": 68.66,
+        "mean_bias": 2.71
+      }
+    },
+    "RECURRING_VARIABLE": {
+      "count": 1880,
+      "pct_of_path_a": 36.47,
+      "personal_median": {
+        "count": 1880,
+        "mae": 10.3,
+        "medae": 7.0,
+        "within_3_days_pct": 31.33,
+        "within_7_days_pct": 52.18,
+        "mean_bias": 5.86
+      }
+    },
+    "UNSTABLE": {
+      "count": 2640,
+      "pct_of_path_a": 51.21,
+      "personal_median": {
+        "count": 2640,
+        "mae": 12.16,
+        "medae": 4.5,
+        "within_3_days_pct": 41.7,
+        "within_7_days_pct": 63.83,
+        "mean_bias": 6.78
+      }
+    }
+  },
+  "interval_distributions_by_current_label": {
+    "HIGH": {
+      "hist_median": {
+        "mean": 25.93,
+        "std": 8.63,
+        "p05": 15.0,
+        "p25": 18.0,
+        "p50": 28.0,
+        "p75": 31.0,
+        "p95": 37.0
+      },
+      "norm_mad": {
+        "mean": 0.18,
+        "std": 0.09,
+        "p05": 0.03,
+        "p25": 0.1,
+        "p50": 0.18,
+        "p75": 0.26,
+        "p95": 0.33
+      },
+      "drift": {
+        "mean": 2.08,
+        "std": 1.96,
+        "p05": 0.0,
+        "p25": 0.5,
+        "p50": 1.5,
+        "p75": 3.0,
+        "p95": 6.0
+      },
+      "cv": {
+        "mean": 0.71,
+        "std": 0.58,
+        "p05": 0.17,
+        "p25": 0.36,
+        "p50": 0.51,
+        "p75": 0.83,
+        "p95": 2.06
+      },
+      "max_over_median": {
+        "mean": 5.78,
+        "std": 8.51,
+        "p05": 1.15,
+        "p25": 1.81,
+        "p50": 2.79,
+        "p75": 5.29,
+        "p95": 22.81
+      },
+      "actual_target": {
+        "mean": 23.37,
+        "std": 10.77,
+        "p05": 6.0,
+        "p25": 16.0,
+        "p50": 24.0,
+        "p75": 31.0,
+        "p95": 40.0
+      }
+    },
+    "MEDIUM": {
+      "hist_median": {
+        "mean": 25.64,
+        "std": 10.85,
+        "p05": 15.0,
+        "p25": 19.0,
+        "p50": 22.5,
+        "p75": 30.0,
+        "p95": 42.25
+      },
+      "norm_mad": {
+        "mean": 0.38,
+        "std": 0.09,
+        "p05": 0.17,
+        "p25": 0.36,
+        "p50": 0.4,
+        "p75": 0.44,
+        "p95": 0.5
+      },
+      "drift": {
+        "mean": 5.48,
+        "std": 3.23,
+        "p05": 0.0,
+        "p25": 2.5,
+        "p50": 6.0,
+        "p75": 8.0,
+        "p95": 10.0
+      },
+      "cv": {
+        "mean": 0.94,
+        "std": 0.56,
+        "p05": 0.4,
+        "p25": 0.57,
+        "p50": 0.72,
+        "p75": 1.18,
+        "p95": 2.19
+      },
+      "max_over_median": {
+        "mean": 7.97,
+        "std": 10.56,
+        "p05": 1.65,
+        "p25": 2.64,
+        "p50": 3.91,
+        "p75": 8.61,
+        "p95": 28.05
+      },
+      "actual_target": {
+        "mean": 20.26,
+        "std": 10.9,
+        "p05": 5.0,
+        "p25": 11.0,
+        "p50": 19.0,
+        "p75": 29.0,
+        "p95": 38.5
+      }
+    },
+    "UNSTABLE": {
+      "hist_median": {
+        "mean": 24.45,
+        "std": 30.93,
+        "p05": 4.0,
+        "p25": 11.0,
+        "p50": 14.0,
+        "p75": 29.0,
+        "p95": 71.0
+      },
+      "norm_mad": {
+        "mean": 0.38,
+        "std": 0.21,
+        "p05": 0.09,
+        "p25": 0.21,
+        "p50": 0.33,
+        "p75": 0.52,
+        "p95": 0.76
+      },
+      "drift": {
+        "mean": 13.83,
+        "std": 36.21,
+        "p05": 0.0,
+        "p25": 1.0,
+        "p50": 4.0,
+        "p75": 14.0,
+        "p95": 49.0
+      },
+      "cv": {
+        "mean": 1.07,
+        "std": 0.81,
+        "p05": 0.33,
+        "p25": 0.56,
+        "p50": 0.82,
+        "p75": 1.29,
+        "p95": 2.69
+      },
+      "max_over_median": {
+        "mean": 23.91,
+        "std": 91.45,
+        "p05": 1.52,
+        "p25": 2.64,
+        "p50": 4.49,
+        "p75": 10.82,
+        "p95": 65.0
+      },
+      "actual_target": {
+        "mean": 16.08,
+        "std": 11.32,
+        "p05": 2.0,
+        "p25": 8.0,
+        "p50": 13.0,
+        "p75": 22.0,
+        "p95": 38.0
+      }
+    }
+  },
+  "confusion_current_vs_oracle": {
+    "HIGH": {
+      "STABLE": 543,
+      "RECURRING_VARIABLE": 992,
+      "UNSTABLE": 243
+    },
+    "MEDIUM": {
+      "STABLE": 44,
+      "RECURRING_VARIABLE": 409,
+      "UNSTABLE": 278
+    },
+    "UNSTABLE": {
+      "STABLE": 48,
+      "RECURRING_VARIABLE": 479,
+      "UNSTABLE": 2119
+    }
+  },
+  "confusion_records": [
+    {
+      "path_a_label": "HIGH",
+      "oracle_label": "RECURRING_VARIABLE",
+      "count": 992
+    },
+    {
+      "path_a_label": "HIGH",
+      "oracle_label": "STABLE",
+      "count": 543
+    },
+    {
+      "path_a_label": "HIGH",
+      "oracle_label": "UNSTABLE",
+      "count": 243
+    },
+    {
+      "path_a_label": "MEDIUM",
+      "oracle_label": "RECURRING_VARIABLE",
+      "count": 409
+    },
+    {
+      "path_a_label": "MEDIUM",
+      "oracle_label": "STABLE",
+      "count": 44
+    },
+    {
+      "path_a_label": "MEDIUM",
+      "oracle_label": "UNSTABLE",
+      "count": 278
+    },
+    {
+      "path_a_label": "UNSTABLE",
+      "oracle_label": "RECURRING_VARIABLE",
+      "count": 479
+    },
+    {
+      "path_a_label": "UNSTABLE",
+      "oracle_label": "STABLE",
+      "count": 48
+    },
+    {
+      "path_a_label": "UNSTABLE",
+      "oracle_label": "UNSTABLE",
+      "count": 2119
+    }
+  ],
+  "medium_drivers": {
+    "count": 731,
+    "normmad_driven_drift_le_7": 442,
+    "drift_driven_normmad_le_0_35": 158,
+    "both_elevated": 131,
+    "oracle_stable_pct": 6.02,
+    "oracle_variable_pct": 55.95,
+    "oracle_unstable_pct": 38.03
+  },
+  "pattern_examples_from_data": {
+    "stable_like": [
+      {
+        "customerId": "AMRUTHAVANI",
+        "itemId": "12775",
+        "purchase_count_so_far": 10,
+        "intervals": [
+          31.0,
+          30.0,
+          31.0,
+          31.0,
+          28.0,
+          31.0,
+          30.0,
+          31.0
+        ],
+        "hist_median": 31.0,
+        "hist_mean": 30.38,
+        "norm_mad": 0.0,
+        "drift": 1.0,
+        "cv": 0.035,
+        "max_over_median": 1.0,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 0.0
+      },
+      {
+        "customerId": "AMRUTHAVANI",
+        "itemId": "2540",
+        "purchase_count_so_far": 12,
+        "intervals": [
+          31.0,
+          30.0,
+          31.0,
+          30.0,
+          31.0,
+          31.0,
+          28.0,
+          31.0,
+          30.0,
+          31.0
+        ],
+        "hist_median": 31.0,
+        "hist_mean": 30.4,
+        "norm_mad": 0.0,
+        "drift": 1.0,
+        "cv": 0.032,
+        "max_over_median": 1.0,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 0.0
+      },
+      {
+        "customerId": "AMRUTHAVANI",
+        "itemId": "228",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          31.0,
+          28.0,
+          31.0,
+          30.0,
+          31.0
+        ],
+        "hist_median": 30.5,
+        "hist_mean": 30.2,
+        "norm_mad": 0.0,
+        "drift": 0.5,
+        "cv": 0.043,
+        "max_over_median": 1.0,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 0.5
+      },
+      {
+        "customerId": "AMRUTHAVANI",
+        "itemId": "19690",
+        "purchase_count_so_far": 9,
+        "intervals": [
+          32.0,
+          31.0,
+          31.0,
+          28.0,
+          31.0,
+          30.0,
+          31.0
+        ],
+        "hist_median": 31.0,
+        "hist_mean": 30.57,
+        "norm_mad": 0.0,
+        "drift": 1.0,
+        "cv": 0.042,
+        "max_over_median": 1.03,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 0.0
+      },
+      {
+        "customerId": "AMRUTHAVANI",
+        "itemId": "27120",
+        "purchase_count_so_far": 8,
+        "intervals": [
+          31.0,
+          31.0,
+          28.0,
+          31.0,
+          30.0,
+          31.0
+        ],
+        "hist_median": 31.0,
+        "hist_mean": 30.33,
+        "norm_mad": 0.0,
+        "drift": 1.0,
+        "cv": 0.04,
+        "max_over_median": 1.0,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 0.0
+      }
+    ],
+    "recurring_variable_like": [
+      {
+        "customerId": "SWETHA",
+        "itemId": "21077",
+        "purchase_count_so_far": 8,
+        "intervals": [
+          28.0,
+          17.0,
+          223.0,
+          35.0,
+          225.0,
+          112.0
+        ],
+        "hist_median": 35.0,
+        "hist_mean": 106.67,
+        "norm_mad": 0.694,
+        "drift": 77.0,
+        "cv": 0.908,
+        "max_over_median": 3.06,
+        "pct_within_50pct_median": 0.0,
+        "pct_extreme": 33.3,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 17.0,
+        "abs_error_personal_median": 18.0
+      },
+      {
+        "customerId": "NAZNEN",
+        "itemId": "4834",
+        "purchase_count_so_far": 8,
+        "intervals": [
+          17.0,
+          52.0,
+          62.0,
+          16.0,
+          67.0,
+          17.0
+        ],
+        "hist_median": 18.0,
+        "hist_mean": 38.5,
+        "norm_mad": 0.522,
+        "drift": 0.0,
+        "cv": 0.634,
+        "max_over_median": 1.94,
+        "pct_within_50pct_median": 0.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 15.0,
+        "abs_error_personal_median": 3.0
+      },
+      {
+        "customerId": "LILAVATHI",
+        "itemId": "3791",
+        "purchase_count_so_far": 12,
+        "intervals": [
+          187.0,
+          116.0,
+          93.0,
+          148.0,
+          32.0,
+          121.0,
+          32.0,
+          57.0,
+          33.0,
+          29.0
+        ],
+        "hist_median": 57.0,
+        "hist_mean": 84.8,
+        "norm_mad": 0.573,
+        "drift": 27.0,
+        "cv": 0.669,
+        "max_over_median": 2.49,
+        "pct_within_50pct_median": 20.0,
+        "pct_extreme": 10.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 34.0,
+        "abs_error_personal_median": 23.0
+      },
+      {
+        "customerId": "SHEKER",
+        "itemId": "6459",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          171.0,
+          164.0,
+          31.0,
+          75.0,
+          37.0
+        ],
+        "hist_median": 90.0,
+        "hist_mean": 95.6,
+        "norm_mad": 0.587,
+        "drift": 15.0,
+        "cv": 0.709,
+        "max_over_median": 2.28,
+        "pct_within_50pct_median": 20.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 27.0,
+        "abs_error_personal_median": 63.0
+      },
+      {
+        "customerId": "T VENKATESHWER",
+        "itemId": "18862",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          58.0,
+          60.0,
+          12.0,
+          11.0,
+          33.0
+        ],
+        "hist_median": 45.5,
+        "hist_mean": 34.8,
+        "norm_mad": 0.667,
+        "drift": 12.5,
+        "cv": 0.683,
+        "max_over_median": 1.82,
+        "pct_within_50pct_median": 20.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 46.0,
+        "abs_error_personal_median": 0.5
+      }
+    ],
+    "unstable_like": [
+      {
+        "customerId": "AHMED",
+        "itemId": "16727",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          6.0,
+          567.0,
+          524.0,
+          3.0
+        ],
+        "hist_median": 344.0,
+        "hist_mean": 275.0,
+        "norm_mad": 0.983,
+        "drift": 0.0,
+        "cv": 1.138,
+        "max_over_median": 2.14,
+        "pct_within_50pct_median": 0.0,
+        "pct_extreme": 100.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 17.0,
+        "abs_error_personal_median": 327.0
+      },
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "2208",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          6.0,
+          228.0,
+          763.0,
+          521.0
+        ],
+        "hist_median": 228.0,
+        "hist_mean": 379.5,
+        "norm_mad": 0.688,
+        "drift": 293.0,
+        "cv": 0.873,
+        "max_over_median": 2.04,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 100.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 40.0,
+        "abs_error_personal_median": 188.0
+      },
+      {
+        "customerId": "RAMANA MURTHY",
+        "itemId": "7371",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          4.0,
+          202.0,
+          1176.0,
+          189.0
+        ],
+        "hist_median": 202.0,
+        "hist_mean": 392.75,
+        "norm_mad": 0.506,
+        "drift": 132.0,
+        "cv": 1.349,
+        "max_over_median": 6.02,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 100.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 9.0,
+        "abs_error_personal_median": 193.0
+      },
+      {
+        "customerId": "PRASAD",
+        "itemId": "19948",
+        "purchase_count_so_far": 36,
+        "intervals": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "hist_median": 1.0,
+        "hist_mean": 32.44,
+        "norm_mad": 0.0,
+        "drift": 0.0,
+        "cv": 4.187,
+        "max_over_median": 725.0,
+        "pct_within_50pct_median": 91.2,
+        "pct_extreme": 100.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 1.0,
+        "abs_error_personal_median": 0.0
+      },
+      {
+        "customerId": "PRASAD",
+        "itemId": "19948",
+        "purchase_count_so_far": 44,
+        "intervals": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "hist_median": 1.0,
+        "hist_mean": 26.45,
+        "norm_mad": 0.0,
+        "drift": 0.0,
+        "cv": 4.631,
+        "max_over_median": 725.0,
+        "pct_within_50pct_median": 92.9,
+        "pct_extreme": 100.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 1.0,
+        "abs_error_personal_median": 0.0
+      }
+    ]
+  },
+  "false_classification_examples": {
+    "HIGH_but_oracle_UNSTABLE": [
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "1993",
+        "purchase_count_so_far": 41,
+        "intervals": [
+          11.0,
+          18.0,
+          14.0,
+          1.0,
+          15.0,
+          15.0,
+          5.0,
+          11.0,
+          19.0,
+          5.0,
+          7.0,
+          21.0
+        ],
+        "hist_median": 15.0,
+        "hist_mean": 41.87,
+        "norm_mad": 0.333,
+        "drift": 3.0,
+        "cv": 3.383,
+        "max_over_median": 59.6,
+        "pct_within_50pct_median": 64.1,
+        "pct_extreme": 28.2,
+        "path_a_label": "HIGH",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 15.0,
+        "abs_error_personal_median": 0.0
+      },
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "1993",
+        "purchase_count_so_far": 42,
+        "intervals": [
+          18.0,
+          14.0,
+          1.0,
+          15.0,
+          15.0,
+          5.0,
+          11.0,
+          19.0,
+          5.0,
+          7.0,
+          21.0,
+          18.0
+        ],
+        "hist_median": 15.0,
+        "hist_mean": 41.27,
+        "norm_mad": 0.3,
+        "drift": 3.0,
+        "cv": 3.389,
+        "max_over_median": 59.6,
+        "pct_within_50pct_median": 65.0,
+        "pct_extreme": 27.5,
+        "path_a_label": "HIGH",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 1.0,
+        "abs_error_personal_median": 14.0
+      },
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "1993",
+        "purchase_count_so_far": 44,
+        "intervals": [
+          1.0,
+          15.0,
+          15.0,
+          5.0,
+          11.0,
+          19.0,
+          5.0,
+          7.0,
+          21.0,
+          18.0,
+          15.0,
+          1.0
+        ],
+        "hist_median": 15.0,
+        "hist_mean": 39.69,
+        "norm_mad": 0.3,
+        "drift": 1.0,
+        "cv": 3.442,
+        "max_over_median": 59.6,
+        "pct_within_50pct_median": 64.3,
+        "pct_extreme": 28.6,
+        "path_a_label": "HIGH",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 2.0,
+        "abs_error_personal_median": 13.0
+      },
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "1993",
+        "purchase_count_so_far": 43,
+        "intervals": [
+          14.0,
+          1.0,
+          15.0,
+          15.0,
+          5.0,
+          11.0,
+          19.0,
+          5.0,
+          7.0,
+          21.0,
+          18.0,
+          15.0
+        ],
+        "hist_median": 15.0,
+        "hist_mean": 40.63,
+        "norm_mad": 0.267,
+        "drift": 0.0,
+        "cv": 3.401,
+        "max_over_median": 59.6,
+        "pct_within_50pct_median": 65.9,
+        "pct_extreme": 26.8,
+        "path_a_label": "HIGH",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 14.0,
+        "abs_error_personal_median": 1.0
+      },
+      {
+        "customerId": "SATISH",
+        "itemId": "3630",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          1594.0,
+          7.0,
+          28.0,
+          24.0,
+          35.0
+        ],
+        "hist_median": 31.5,
+        "hist_mean": 337.6,
+        "norm_mad": 0.25,
+        "drift": 3.5,
+        "cv": 2.081,
+        "max_over_median": 56.93,
+        "pct_within_50pct_median": 60.0,
+        "pct_extreme": 40.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 19.0,
+        "abs_error_personal_median": 12.5
+      }
+    ],
+    "HIGH_but_oracle_RECURRING_VARIABLE": [
+      {
+        "customerId": "GANESH",
+        "itemId": "6002",
+        "purchase_count_so_far": 26,
+        "intervals": [
+          16.0,
+          16.0,
+          30.0,
+          11.0,
+          4.0,
+          15.0,
+          30.0,
+          16.0,
+          15.0,
+          15.0,
+          15.0,
+          15.0
+        ],
+        "hist_median": 16.0,
+        "hist_mean": 64.58,
+        "norm_mad": 0.125,
+        "drift": 1.0,
+        "cv": 3.588,
+        "max_over_median": 72.0,
+        "pct_within_50pct_median": 75.0,
+        "pct_extreme": 8.3,
+        "path_a_label": "HIGH",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 16.0,
+        "abs_error_personal_median": 0.0
+      },
+      {
+        "customerId": "GANESH",
+        "itemId": "6002",
+        "purchase_count_so_far": 27,
+        "intervals": [
+          16.0,
+          30.0,
+          11.0,
+          4.0,
+          15.0,
+          30.0,
+          16.0,
+          15.0,
+          15.0,
+          15.0,
+          15.0,
+          15.0
+        ],
+        "hist_median": 16.0,
+        "hist_mean": 62.6,
+        "norm_mad": 0.125,
+        "drift": 1.0,
+        "cv": 3.627,
+        "max_over_median": 72.0,
+        "pct_within_50pct_median": 76.0,
+        "pct_extreme": 8.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 15.0,
+        "abs_error_personal_median": 1.0
+      },
+      {
+        "customerId": "VARADARAZ",
+        "itemId": "5667",
+        "purchase_count_so_far": 12,
+        "intervals": [
+          25.0,
+          17.0,
+          1637.0,
+          27.0,
+          18.0,
+          36.0,
+          23.0,
+          23.0,
+          18.0,
+          28.0
+        ],
+        "hist_median": 23.0,
+        "hist_mean": 185.2,
+        "norm_mad": 0.208,
+        "drift": 0.0,
+        "cv": 2.755,
+        "max_over_median": 68.21,
+        "pct_within_50pct_median": 90.0,
+        "pct_extreme": 10.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 30.0,
+        "abs_error_personal_median": 7.0
+      },
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "1385",
+        "purchase_count_so_far": 17,
+        "intervals": [
+          18.0,
+          14.0,
+          43.0,
+          47.0,
+          15.0,
+          16.0,
+          1304.0,
+          23.0,
+          35.0,
+          20.0,
+          20.0,
+          22.0
+        ],
+        "hist_median": 20.0,
+        "hist_mean": 107.47,
+        "norm_mad": 0.25,
+        "drift": 2.0,
+        "cv": 3.082,
+        "max_over_median": 65.2,
+        "pct_within_50pct_median": 60.0,
+        "pct_extreme": 20.0,
+        "path_a_label": "HIGH",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 29.0,
+        "abs_error_personal_median": 9.0
+      },
+      {
+        "customerId": "TEJASWINI",
+        "itemId": "2046",
+        "purchase_count_so_far": 21,
+        "intervals": [
+          12.0,
+          20.0,
+          31.0,
+          15.0,
+          24.0,
+          21.0,
+          10.0,
+          19.0,
+          11.0,
+          17.0,
+          15.0,
+          26.0
+        ],
+        "hist_median": 18.0,
+        "hist_mean": 64.21,
+        "norm_mad": 0.176,
+        "drift": 3.0,
+        "cv": 3.172,
+        "max_over_median": 53.24,
+        "pct_within_50pct_median": 84.2,
+        "pct_extreme": 5.3,
+        "path_a_label": "HIGH",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 23.0,
+        "abs_error_personal_median": 5.0
+      }
+    ],
+    "MEDIUM_but_oracle_STABLE": [
+      {
+        "customerId": "K V V SATHYANARAYANA",
+        "itemId": "2079",
+        "purchase_count_so_far": 11,
+        "intervals": [
+          30.0,
+          29.0,
+          26.0,
+          17.0,
+          29.0,
+          30.0,
+          30.0,
+          28.0,
+          52.0
+        ],
+        "hist_median": 29.5,
+        "hist_mean": 30.11,
+        "norm_mad": 0.034,
+        "drift": 7.5,
+        "cv": 0.305,
+        "max_over_median": 1.79,
+        "pct_within_50pct_median": 88.9,
+        "pct_extreme": 0.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "STABLE",
+        "actual_target": 14.0,
+        "abs_error_personal_median": 15.5
+      },
+      {
+        "customerId": "N K KISHORE",
+        "itemId": "6859",
+        "purchase_count_so_far": 20,
+        "intervals": [
+          32.0,
+          30.0,
+          31.0,
+          31.0,
+          32.0,
+          30.0,
+          27.0,
+          17.0,
+          20.0,
+          23.0,
+          34.0,
+          22.0
+        ],
+        "hist_median": 30.0,
+        "hist_mean": 28.17,
+        "norm_mad": 0.05,
+        "drift": 8.0,
+        "cv": 0.167,
+        "max_over_median": 1.13,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 1.0
+      },
+      {
+        "customerId": "BALASAI TEJA",
+        "itemId": "27850",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          25.0,
+          23.0,
+          27.0,
+          26.0,
+          1.0
+        ],
+        "hist_median": 24.0,
+        "hist_mean": 20.4,
+        "norm_mad": 0.08,
+        "drift": 9.0,
+        "cv": 0.537,
+        "max_over_median": 1.08,
+        "pct_within_50pct_median": 80.0,
+        "pct_extreme": 20.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "STABLE",
+        "actual_target": 2.0,
+        "abs_error_personal_median": 22.0
+      },
+      {
+        "customerId": "MAHESHWAR RAO",
+        "itemId": "2365",
+        "purchase_count_so_far": 34,
+        "intervals": [
+          29.0,
+          32.0,
+          30.0,
+          28.0,
+          34.0,
+          33.0,
+          24.0,
+          33.0,
+          32.0,
+          30.0,
+          14.0,
+          21.0
+        ],
+        "hist_median": 31.0,
+        "hist_mean": 32.47,
+        "norm_mad": 0.082,
+        "drift": 10.0,
+        "cv": 0.283,
+        "max_over_median": 1.97,
+        "pct_within_50pct_median": 87.5,
+        "pct_extreme": 0.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "STABLE",
+        "actual_target": 39.0,
+        "abs_error_personal_median": 8.0
+      },
+      {
+        "customerId": "MAHESHWAR RAO",
+        "itemId": "2365",
+        "purchase_count_so_far": 35,
+        "intervals": [
+          32.0,
+          30.0,
+          28.0,
+          34.0,
+          33.0,
+          24.0,
+          33.0,
+          32.0,
+          30.0,
+          14.0,
+          21.0,
+          56.0
+        ],
+        "hist_median": 31.5,
+        "hist_mean": 33.18,
+        "norm_mad": 0.097,
+        "drift": 7.5,
+        "cv": 0.299,
+        "max_over_median": 1.94,
+        "pct_within_50pct_median": 84.8,
+        "pct_extreme": 0.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "STABLE",
+        "actual_target": 17.0,
+        "abs_error_personal_median": 14.5
+      }
+    ],
+    "MEDIUM_but_oracle_UNSTABLE": [
+      {
+        "customerId": "SHEEBA RANI",
+        "itemId": "8767",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          5.0,
+          249.0,
+          98.0,
+          217.0
+        ],
+        "hist_median": 98.0,
+        "hist_mean": 142.25,
+        "norm_mad": 0.479,
+        "drift": 0.0,
+        "cv": 0.789,
+        "max_over_median": 1.58,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 75.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 20.0,
+        "abs_error_personal_median": 78.0
+      },
+      {
+        "customerId": "SRIRAM KUMAR",
+        "itemId": "1766",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          410.0,
+          19.0,
+          25.0,
+          6.0
+        ],
+        "hist_median": 22.0,
+        "hist_mean": 115.0,
+        "norm_mad": 0.432,
+        "drift": 0.0,
+        "cv": 1.712,
+        "max_over_median": 18.64,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 50.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 7.0,
+        "abs_error_personal_median": 15.0
+      },
+      {
+        "customerId": "P HEMANTHA KUMARI",
+        "itemId": "21745",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          361.0,
+          5.0,
+          30.0,
+          24.0
+        ],
+        "hist_median": 24.0,
+        "hist_mean": 105.0,
+        "norm_mad": 0.463,
+        "drift": 0.0,
+        "cv": 1.629,
+        "max_over_median": 13.37,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 50.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 6.0,
+        "abs_error_personal_median": 18.0
+      },
+      {
+        "customerId": "ARUN",
+        "itemId": "14553",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          7.0,
+          311.0,
+          27.0,
+          21.0
+        ],
+        "hist_median": 27.0,
+        "hist_mean": 91.5,
+        "norm_mad": 0.417,
+        "drift": 0.0,
+        "cv": 1.602,
+        "max_over_median": 12.96,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 50.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 11.0,
+        "abs_error_personal_median": 16.0
+      },
+      {
+        "customerId": "GOUTHAMI",
+        "itemId": "1858",
+        "purchase_count_so_far": 6,
+        "intervals": [
+          6.0,
+          63.0,
+          57.0,
+          188.0
+        ],
+        "hist_median": 63.0,
+        "hist_mean": 78.5,
+        "norm_mad": 0.475,
+        "drift": 6.0,
+        "cv": 0.985,
+        "max_over_median": 3.13,
+        "pct_within_50pct_median": 50.0,
+        "pct_extreme": 50.0,
+        "path_a_label": "MEDIUM",
+        "oracle_label": "UNSTABLE",
+        "actual_target": 47.0,
+        "abs_error_personal_median": 16.0
+      }
+    ],
+    "UNSTABLE_but_oracle_STABLE": [
+      {
+        "customerId": "EV RAMANA RAO",
+        "itemId": "1812",
+        "purchase_count_so_far": 22,
+        "intervals": [
+          35.0,
+          31.0,
+          30.0,
+          31.0,
+          27.0,
+          34.0,
+          27.0,
+          41.0,
+          30.0,
+          33.0,
+          22.0,
+          18.0
+        ],
+        "hist_median": 30.0,
+        "hist_mean": 29.6,
+        "norm_mad": 0.115,
+        "drift": 12.0,
+        "cv": 0.19,
+        "max_over_median": 1.34,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 1.0
+      },
+      {
+        "customerId": "PRAVEEN KUMAR",
+        "itemId": "27508",
+        "purchase_count_so_far": 15,
+        "intervals": [
+          18.0,
+          12.0,
+          10.0,
+          9.0,
+          22.0,
+          11.0,
+          18.0,
+          17.0,
+          15.0,
+          14.0,
+          17.0,
+          18.0
+        ],
+        "hist_median": 14.5,
+        "hist_mean": 15.0,
+        "norm_mad": 0.2,
+        "drift": 2.5,
+        "cv": 0.252,
+        "max_over_median": 1.47,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 7.7,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "STABLE",
+        "actual_target": 17.0,
+        "abs_error_personal_median": 2.5
+      },
+      {
+        "customerId": "NAGESWAR RAO",
+        "itemId": "5758",
+        "purchase_count_so_far": 13,
+        "intervals": [
+          13.0,
+          17.0,
+          12.0,
+          18.0,
+          12.0,
+          15.0,
+          10.0,
+          19.0,
+          12.0,
+          18.0,
+          21.0
+        ],
+        "hist_median": 14.0,
+        "hist_mean": 15.18,
+        "norm_mad": 0.2,
+        "drift": 4.0,
+        "cv": 0.237,
+        "max_over_median": 1.4,
+        "pct_within_50pct_median": 100.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "STABLE",
+        "actual_target": 10.0,
+        "abs_error_personal_median": 4.0
+      },
+      {
+        "customerId": "NAGARAO",
+        "itemId": "1405",
+        "purchase_count_so_far": 50,
+        "intervals": [
+          34.0,
+          31.0,
+          27.0,
+          37.0,
+          26.0,
+          33.0,
+          28.0,
+          33.0,
+          31.0,
+          27.0,
+          19.0,
+          15.0
+        ],
+        "hist_median": 30.0,
+        "hist_mean": 28.69,
+        "norm_mad": 0.033,
+        "drift": 11.0,
+        "cv": 0.202,
+        "max_over_median": 1.37,
+        "pct_within_50pct_median": 95.8,
+        "pct_extreme": 2.1,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "STABLE",
+        "actual_target": 31.0,
+        "abs_error_personal_median": 1.0
+      },
+      {
+        "customerId": "VENKATAIAH GOUD",
+        "itemId": "19007",
+        "purchase_count_so_far": 20,
+        "intervals": [
+          31.0,
+          27.0,
+          29.0,
+          31.0,
+          28.0,
+          16.0,
+          26.0,
+          35.0,
+          25.0,
+          32.0,
+          32.0,
+          14.0
+        ],
+        "hist_median": 29.0,
+        "hist_mean": 28.28,
+        "norm_mad": 0.085,
+        "drift": 15.0,
+        "cv": 0.201,
+        "max_over_median": 1.19,
+        "pct_within_50pct_median": 94.4,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "STABLE",
+        "actual_target": 24.0,
+        "abs_error_personal_median": 5.0
+      }
+    ],
+    "UNSTABLE_but_oracle_RECURRING_VARIABLE": [
+      {
+        "customerId": "VYSHNAVI",
+        "itemId": "2057",
+        "purchase_count_so_far": 15,
+        "intervals": [
+          19.0,
+          46.0,
+          58.0,
+          28.0,
+          40.0,
+          30.0,
+          23.0,
+          31.0,
+          32.0,
+          30.0,
+          16.0,
+          20.0
+        ],
+        "hist_median": 30.5,
+        "hist_mean": 36.54,
+        "norm_mad": 0.333,
+        "drift": 10.5,
+        "cv": 0.624,
+        "max_over_median": 3.4,
+        "pct_within_50pct_median": 76.9,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 27.0,
+        "abs_error_personal_median": 3.5
+      },
+      {
+        "customerId": "ABDUL SATTAR",
+        "itemId": "3088",
+        "purchase_count_so_far": 8,
+        "intervals": [
+          67.0,
+          36.0,
+          16.0,
+          77.0,
+          113.0,
+          79.0
+        ],
+        "hist_median": 77.0,
+        "hist_mean": 64.67,
+        "norm_mad": 0.299,
+        "drift": 36.0,
+        "cv": 0.531,
+        "max_over_median": 1.57,
+        "pct_within_50pct_median": 66.7,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 18.0,
+        "abs_error_personal_median": 59.0
+      },
+      {
+        "customerId": "SRAVAN",
+        "itemId": "4486",
+        "purchase_count_so_far": 9,
+        "intervals": [
+          68.0,
+          25.0,
+          72.0,
+          21.0,
+          108.0,
+          57.0,
+          94.0
+        ],
+        "hist_median": 70.0,
+        "hist_mean": 63.57,
+        "norm_mad": 0.382,
+        "drift": 24.0,
+        "cv": 0.511,
+        "max_over_median": 1.59,
+        "pct_within_50pct_median": 57.1,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 30.0,
+        "abs_error_personal_median": 40.0
+      },
+      {
+        "customerId": "SUBAN",
+        "itemId": "30157",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          62.0,
+          73.0,
+          32.0,
+          32.0,
+          28.0
+        ],
+        "hist_median": 47.0,
+        "hist_mean": 45.4,
+        "norm_mad": 0.125,
+        "drift": 15.0,
+        "cv": 0.454,
+        "max_over_median": 2.28,
+        "pct_within_50pct_median": 60.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 28.0,
+        "abs_error_personal_median": 19.0
+      },
+      {
+        "customerId": "SRINIVAS",
+        "itemId": "8214",
+        "purchase_count_so_far": 7,
+        "intervals": [
+          23.0,
+          23.0,
+          35.0,
+          20.0,
+          42.0
+        ],
+        "hist_median": 29.0,
+        "hist_mean": 28.6,
+        "norm_mad": 0.13,
+        "drift": 13.0,
+        "cv": 0.33,
+        "max_over_median": 1.83,
+        "pct_within_50pct_median": 60.0,
+        "pct_extreme": 0.0,
+        "path_a_label": "UNSTABLE",
+        "oracle_label": "RECURRING_VARIABLE",
+        "actual_target": 46.0,
+        "abs_error_personal_median": 17.0
+      }
+    ]
+  },
+  "threshold_sensitivity_top": [
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 5.0,
+      "broad_norm_mad_max": 0.4,
+      "broad_drift_max": 20.0,
+      "counts": {
+        "HIGH": 996,
+        "MEDIUM": 1449,
+        "UNSTABLE": 2710
+      },
+      "coverage_high_pct": 19.32,
+      "coverage_accepted_pct": 47.43,
+      "oracle_agreement_pct": 71.39,
+      "high_personal_median": {
+        "count": 996,
+        "mae": 6.58,
+        "medae": 3.0,
+        "within_3_days_pct": 51.61,
+        "within_7_days_pct": 72.79,
+        "mean_bias": 2.04
+      },
+      "medium_personal_median": {
+        "count": 1449,
+        "mae": 9.37,
+        "medae": 7.0,
+        "within_3_days_pct": 29.05,
+        "within_7_days_pct": 53.21,
+        "mean_bias": 4.44
+      },
+      "accepted_personal_median": {
+        "count": 2445,
+        "mae": 8.23,
+        "medae": 5.0,
+        "within_3_days_pct": 38.24,
+        "within_7_days_pct": 61.19,
+        "mean_bias": 3.46
+      },
+      "unstable_personal_median": {
+        "count": 2710,
+        "mae": 13.31,
+        "medae": 5.0,
+        "within_3_days_pct": 38.71,
+        "within_7_days_pct": 59.26,
+        "mean_bias": 8.18
+      },
+      "false_high_unstable": 79,
+      "false_medium_unstable": 292,
+      "missed_stable_as_unstable": 13,
+      "missed_variable_as_unstable": 428,
+      "stable_forced_to_medium": 184
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 7.0,
+      "broad_norm_mad_max": 0.4,
+      "broad_drift_max": 20.0,
+      "counts": {
+        "HIGH": 1051,
+        "MEDIUM": 1394,
+        "UNSTABLE": 2710
+      },
+      "coverage_high_pct": 20.39,
+      "coverage_accepted_pct": 47.43,
+      "oracle_agreement_pct": 71.31,
+      "high_personal_median": {
+        "count": 1051,
+        "mae": 6.71,
+        "medae": 3.0,
+        "within_3_days_pct": 50.43,
+        "within_7_days_pct": 72.12,
+        "mean_bias": 2.3
+      },
+      "medium_personal_median": {
+        "count": 1394,
+        "mae": 9.38,
+        "medae": 7.0,
+        "within_3_days_pct": 29.05,
+        "within_7_days_pct": 52.94,
+        "mean_bias": 4.34
+      },
+      "accepted_personal_median": {
+        "count": 2445,
+        "mae": 8.23,
+        "medae": 5.0,
+        "within_3_days_pct": 38.24,
+        "within_7_days_pct": 61.19,
+        "mean_bias": 3.46
+      },
+      "unstable_personal_median": {
+        "count": 2710,
+        "mae": 13.31,
+        "medae": 5.0,
+        "within_3_days_pct": 38.71,
+        "within_7_days_pct": 59.26,
+        "mean_bias": 8.18
+      },
+      "false_high_unstable": 82,
+      "false_medium_unstable": 289,
+      "missed_stable_as_unstable": 13,
+      "missed_variable_as_unstable": 428,
+      "stable_forced_to_medium": 160
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 10.0,
+      "broad_norm_mad_max": 0.4,
+      "broad_drift_max": 20.0,
+      "counts": {
+        "HIGH": 1099,
+        "MEDIUM": 1346,
+        "UNSTABLE": 2710
+      },
+      "coverage_high_pct": 21.32,
+      "coverage_accepted_pct": 47.43,
+      "oracle_agreement_pct": 71.25,
+      "high_personal_median": {
+        "count": 1099,
+        "mae": 6.85,
+        "medae": 3.5,
+        "within_3_days_pct": 49.59,
+        "within_7_days_pct": 70.88,
+        "mean_bias": 2.47
+      },
+      "medium_personal_median": {
+        "count": 1346,
+        "mae": 9.36,
+        "medae": 7.0,
+        "within_3_days_pct": 28.97,
+        "within_7_days_pct": 53.27,
+        "mean_bias": 4.27
+      },
+      "accepted_personal_median": {
+        "count": 2445,
+        "mae": 8.23,
+        "medae": 5.0,
+        "within_3_days_pct": 38.24,
+        "within_7_days_pct": 61.19,
+        "mean_bias": 3.46
+      },
+      "unstable_personal_median": {
+        "count": 2710,
+        "mae": 13.31,
+        "medae": 5.0,
+        "within_3_days_pct": 38.71,
+        "within_7_days_pct": 59.26,
+        "mean_bias": 8.18
+      },
+      "false_high_unstable": 83,
+      "false_medium_unstable": 288,
+      "missed_stable_as_unstable": 13,
+      "missed_variable_as_unstable": 428,
+      "stable_forced_to_medium": 138
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 5.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 20.0,
+      "counts": {
+        "HIGH": 996,
+        "MEDIUM": 1886,
+        "UNSTABLE": 2273
+      },
+      "coverage_high_pct": 19.32,
+      "coverage_accepted_pct": 55.91,
+      "oracle_agreement_pct": 70.79,
+      "high_personal_median": {
+        "count": 996,
+        "mae": 6.58,
+        "medae": 3.0,
+        "within_3_days_pct": 51.61,
+        "within_7_days_pct": 72.79,
+        "mean_bias": 2.04
+      },
+      "medium_personal_median": {
+        "count": 1886,
+        "mae": 9.94,
+        "medae": 7.0,
+        "within_3_days_pct": 26.56,
+        "within_7_days_pct": 50.69,
+        "mean_bias": 5.16
+      },
+      "accepted_personal_median": {
+        "count": 2882,
+        "mae": 8.78,
+        "medae": 6.0,
+        "within_3_days_pct": 35.22,
+        "within_7_days_pct": 58.33,
+        "mean_bias": 4.08
+      },
+      "unstable_personal_median": {
+        "count": 2273,
+        "mae": 13.59,
+        "medae": 4.5,
+        "within_3_days_pct": 42.63,
+        "within_7_days_pct": 62.52,
+        "mean_bias": 8.31
+      },
+      "false_high_unstable": 79,
+      "false_medium_unstable": 526,
+      "missed_stable_as_unstable": 13,
+      "missed_variable_as_unstable": 225,
+      "stable_forced_to_medium": 184
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 7.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 20.0,
+      "counts": {
+        "HIGH": 1051,
+        "MEDIUM": 1831,
+        "UNSTABLE": 2273
+      },
+      "coverage_high_pct": 20.39,
+      "coverage_accepted_pct": 55.91,
+      "oracle_agreement_pct": 70.71,
+      "high_personal_median": {
+        "count": 1051,
+        "mae": 6.71,
+        "medae": 3.0,
+        "within_3_days_pct": 50.43,
+        "within_7_days_pct": 72.12,
+        "mean_bias": 2.3
+      },
+      "medium_personal_median": {
+        "count": 1831,
+        "mae": 9.97,
+        "medae": 7.0,
+        "within_3_days_pct": 26.49,
+        "within_7_days_pct": 50.41,
+        "mean_bias": 5.1
+      },
+      "accepted_personal_median": {
+        "count": 2882,
+        "mae": 8.78,
+        "medae": 6.0,
+        "within_3_days_pct": 35.22,
+        "within_7_days_pct": 58.33,
+        "mean_bias": 4.08
+      },
+      "unstable_personal_median": {
+        "count": 2273,
+        "mae": 13.59,
+        "medae": 4.5,
+        "within_3_days_pct": 42.63,
+        "within_7_days_pct": 62.52,
+        "mean_bias": 8.31
+      },
+      "false_high_unstable": 82,
+      "false_medium_unstable": 523,
+      "missed_stable_as_unstable": 13,
+      "missed_variable_as_unstable": 225,
+      "stable_forced_to_medium": 160
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 10.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 20.0,
+      "counts": {
+        "HIGH": 1099,
+        "MEDIUM": 1783,
+        "UNSTABLE": 2273
+      },
+      "coverage_high_pct": 21.32,
+      "coverage_accepted_pct": 55.91,
+      "oracle_agreement_pct": 70.65,
+      "high_personal_median": {
+        "count": 1099,
+        "mae": 6.85,
+        "medae": 3.5,
+        "within_3_days_pct": 49.59,
+        "within_7_days_pct": 70.88,
+        "mean_bias": 2.47
+      },
+      "medium_personal_median": {
+        "count": 1783,
+        "mae": 9.97,
+        "medae": 7.0,
+        "within_3_days_pct": 26.36,
+        "within_7_days_pct": 50.59,
+        "mean_bias": 5.07
+      },
+      "accepted_personal_median": {
+        "count": 2882,
+        "mae": 8.78,
+        "medae": 6.0,
+        "within_3_days_pct": 35.22,
+        "within_7_days_pct": 58.33,
+        "mean_bias": 4.08
+      },
+      "unstable_personal_median": {
+        "count": 2273,
+        "mae": 13.59,
+        "medae": 4.5,
+        "within_3_days_pct": 42.63,
+        "within_7_days_pct": 62.52,
+        "mean_bias": 8.31
+      },
+      "false_high_unstable": 83,
+      "false_medium_unstable": 522,
+      "missed_stable_as_unstable": 13,
+      "missed_variable_as_unstable": 225,
+      "stable_forced_to_medium": 138
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 5.0,
+      "broad_norm_mad_max": 0.4,
+      "broad_drift_max": 15.0,
+      "counts": {
+        "HIGH": 996,
+        "MEDIUM": 1361,
+        "UNSTABLE": 2798
+      },
+      "coverage_high_pct": 19.32,
+      "coverage_accepted_pct": 45.72,
+      "oracle_agreement_pct": 70.46,
+      "high_personal_median": {
+        "count": 996,
+        "mae": 6.58,
+        "medae": 3.0,
+        "within_3_days_pct": 51.61,
+        "within_7_days_pct": 72.79,
+        "mean_bias": 2.04
+      },
+      "medium_personal_median": {
+        "count": 1361,
+        "mae": 9.19,
+        "medae": 7.0,
+        "within_3_days_pct": 29.9,
+        "within_7_days_pct": 53.78,
+        "mean_bias": 4.26
+      },
+      "accepted_personal_median": {
+        "count": 2357,
+        "mae": 8.09,
+        "medae": 5.0,
+        "within_3_days_pct": 39.08,
+        "within_7_days_pct": 61.82,
+        "mean_bias": 3.32
+      },
+      "unstable_personal_median": {
+        "count": 2798,
+        "mae": 13.27,
+        "medae": 5.5,
+        "within_3_days_pct": 37.99,
+        "within_7_days_pct": 58.79,
+        "mean_bias": 8.15
+      },
+      "false_high_unstable": 79,
+      "false_medium_unstable": 277,
+      "missed_stable_as_unstable": 23,
+      "missed_variable_as_unstable": 491,
+      "stable_forced_to_medium": 174
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 7.0,
+      "broad_norm_mad_max": 0.4,
+      "broad_drift_max": 15.0,
+      "counts": {
+        "HIGH": 1051,
+        "MEDIUM": 1306,
+        "UNSTABLE": 2798
+      },
+      "coverage_high_pct": 20.39,
+      "coverage_accepted_pct": 45.72,
+      "oracle_agreement_pct": 70.38,
+      "high_personal_median": {
+        "count": 1051,
+        "mae": 6.71,
+        "medae": 3.0,
+        "within_3_days_pct": 50.43,
+        "within_7_days_pct": 72.12,
+        "mean_bias": 2.3
+      },
+      "medium_personal_median": {
+        "count": 1306,
+        "mae": 9.19,
+        "medae": 7.0,
+        "within_3_days_pct": 29.94,
+        "within_7_days_pct": 53.52,
+        "mean_bias": 4.14
+      },
+      "accepted_personal_median": {
+        "count": 2357,
+        "mae": 8.09,
+        "medae": 5.0,
+        "within_3_days_pct": 39.08,
+        "within_7_days_pct": 61.82,
+        "mean_bias": 3.32
+      },
+      "unstable_personal_median": {
+        "count": 2798,
+        "mae": 13.27,
+        "medae": 5.5,
+        "within_3_days_pct": 37.99,
+        "within_7_days_pct": 58.79,
+        "mean_bias": 8.15
+      },
+      "false_high_unstable": 82,
+      "false_medium_unstable": 274,
+      "missed_stable_as_unstable": 23,
+      "missed_variable_as_unstable": 491,
+      "stable_forced_to_medium": 150
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 10.0,
+      "broad_norm_mad_max": 0.4,
+      "broad_drift_max": 15.0,
+      "counts": {
+        "HIGH": 1099,
+        "MEDIUM": 1258,
+        "UNSTABLE": 2798
+      },
+      "coverage_high_pct": 21.32,
+      "coverage_accepted_pct": 45.72,
+      "oracle_agreement_pct": 70.32,
+      "high_personal_median": {
+        "count": 1099,
+        "mae": 6.85,
+        "medae": 3.5,
+        "within_3_days_pct": 49.59,
+        "within_7_days_pct": 70.88,
+        "mean_bias": 2.47
+      },
+      "medium_personal_median": {
+        "count": 1258,
+        "mae": 9.17,
+        "medae": 7.0,
+        "within_3_days_pct": 29.89,
+        "within_7_days_pct": 53.9,
+        "mean_bias": 4.06
+      },
+      "accepted_personal_median": {
+        "count": 2357,
+        "mae": 8.09,
+        "medae": 5.0,
+        "within_3_days_pct": 39.08,
+        "within_7_days_pct": 61.82,
+        "mean_bias": 3.32
+      },
+      "unstable_personal_median": {
+        "count": 2798,
+        "mae": 13.27,
+        "medae": 5.5,
+        "within_3_days_pct": 37.99,
+        "within_7_days_pct": 58.79,
+        "mean_bias": 8.15
+      },
+      "false_high_unstable": 83,
+      "false_medium_unstable": 273,
+      "missed_stable_as_unstable": 23,
+      "missed_variable_as_unstable": 491,
+      "stable_forced_to_medium": 128
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 5.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 15.0,
+      "counts": {
+        "HIGH": 996,
+        "MEDIUM": 1768,
+        "UNSTABLE": 2391
+      },
+      "coverage_high_pct": 19.32,
+      "coverage_accepted_pct": 53.62,
+      "oracle_agreement_pct": 69.82,
+      "high_personal_median": {
+        "count": 996,
+        "mae": 6.58,
+        "medae": 3.0,
+        "within_3_days_pct": 51.61,
+        "within_7_days_pct": 72.79,
+        "mean_bias": 2.04
+      },
+      "medium_personal_median": {
+        "count": 1768,
+        "mae": 9.66,
+        "medae": 7.0,
+        "within_3_days_pct": 27.26,
+        "within_7_days_pct": 51.53,
+        "mean_bias": 4.84
+      },
+      "accepted_personal_median": {
+        "count": 2764,
+        "mae": 8.55,
+        "medae": 5.5,
+        "within_3_days_pct": 36.03,
+        "within_7_days_pct": 59.19,
+        "mean_bias": 3.83
+      },
+      "unstable_personal_median": {
+        "count": 2391,
+        "mae": 13.62,
+        "medae": 5.0,
+        "within_3_days_pct": 41.32,
+        "within_7_days_pct": 61.31,
+        "mean_bias": 8.38
+      },
+      "false_high_unstable": 79,
+      "false_medium_unstable": 497,
+      "missed_stable_as_unstable": 23,
+      "missed_variable_as_unstable": 304,
+      "stable_forced_to_medium": 174
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 7.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 15.0,
+      "counts": {
+        "HIGH": 1051,
+        "MEDIUM": 1713,
+        "UNSTABLE": 2391
+      },
+      "coverage_high_pct": 20.39,
+      "coverage_accepted_pct": 53.62,
+      "oracle_agreement_pct": 69.74,
+      "high_personal_median": {
+        "count": 1051,
+        "mae": 6.71,
+        "medae": 3.0,
+        "within_3_days_pct": 50.43,
+        "within_7_days_pct": 72.12,
+        "mean_bias": 2.3
+      },
+      "medium_personal_median": {
+        "count": 1713,
+        "mae": 9.68,
+        "medae": 7.0,
+        "within_3_days_pct": 27.2,
+        "within_7_days_pct": 51.26,
+        "mean_bias": 4.77
+      },
+      "accepted_personal_median": {
+        "count": 2764,
+        "mae": 8.55,
+        "medae": 5.5,
+        "within_3_days_pct": 36.03,
+        "within_7_days_pct": 59.19,
+        "mean_bias": 3.83
+      },
+      "unstable_personal_median": {
+        "count": 2391,
+        "mae": 13.62,
+        "medae": 5.0,
+        "within_3_days_pct": 41.32,
+        "within_7_days_pct": 61.31,
+        "mean_bias": 8.38
+      },
+      "false_high_unstable": 82,
+      "false_medium_unstable": 494,
+      "missed_stable_as_unstable": 23,
+      "missed_variable_as_unstable": 304,
+      "stable_forced_to_medium": 150
+    },
+    {
+      "core_norm_mad_max": 0.2,
+      "core_drift_max": 10.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 15.0,
+      "counts": {
+        "HIGH": 1099,
+        "MEDIUM": 1665,
+        "UNSTABLE": 2391
+      },
+      "coverage_high_pct": 21.32,
+      "coverage_accepted_pct": 53.62,
+      "oracle_agreement_pct": 69.68,
+      "high_personal_median": {
+        "count": 1099,
+        "mae": 6.85,
+        "medae": 3.5,
+        "within_3_days_pct": 49.59,
+        "within_7_days_pct": 70.88,
+        "mean_bias": 2.47
+      },
+      "medium_personal_median": {
+        "count": 1665,
+        "mae": 9.67,
+        "medae": 7.0,
+        "within_3_days_pct": 27.09,
+        "within_7_days_pct": 51.47,
+        "mean_bias": 4.73
+      },
+      "accepted_personal_median": {
+        "count": 2764,
+        "mae": 8.55,
+        "medae": 5.5,
+        "within_3_days_pct": 36.03,
+        "within_7_days_pct": 59.19,
+        "mean_bias": 3.83
+      },
+      "unstable_personal_median": {
+        "count": 2391,
+        "mae": 13.62,
+        "medae": 5.0,
+        "within_3_days_pct": 41.32,
+        "within_7_days_pct": 61.31,
+        "mean_bias": 8.38
+      },
+      "false_high_unstable": 83,
+      "false_medium_unstable": 493,
+      "missed_stable_as_unstable": 23,
+      "missed_variable_as_unstable": 304,
+      "stable_forced_to_medium": 128
+    }
+  ],
+  "current_threshold_metrics": {
+    "core_norm_mad_max": 0.35,
+    "core_drift_max": 7.0,
+    "broad_norm_mad_max": 0.5,
+    "broad_drift_max": 10.0,
+    "counts": {
+      "HIGH": 1778,
+      "MEDIUM": 731,
+      "UNSTABLE": 2646
+    },
+    "coverage_high_pct": 34.49,
+    "coverage_accepted_pct": 48.67,
+    "oracle_agreement_pct": 59.57,
+    "high_personal_median": {
+      "count": 1778,
+      "mae": 7.25,
+      "medae": 4.0,
+      "within_3_days_pct": 44.21,
+      "within_7_days_pct": 67.44,
+      "mean_bias": 2.57
+    },
+    "medium_personal_median": {
+      "count": 731,
+      "mae": 9.87,
+      "medae": 7.5,
+      "within_3_days_pct": 23.39,
+      "within_7_days_pct": 49.25,
+      "mean_bias": 5.39
+    },
+    "accepted_personal_median": {
+      "count": 2509,
+      "mae": 8.01,
+      "medae": 5.0,
+      "within_3_days_pct": 38.14,
+      "within_7_days_pct": 62.14,
+      "mean_bias": 3.39
+    },
+    "unstable_personal_median": {
+      "count": 2646,
+      "mae": 13.64,
+      "medae": 5.5,
+      "within_3_days_pct": 38.81,
+      "within_7_days_pct": 58.31,
+      "mean_bias": 8.37
+    },
+    "false_high_unstable": 243,
+    "false_medium_unstable": 278,
+    "missed_stable_as_unstable": 48,
+    "missed_variable_as_unstable": 479,
+    "stable_forced_to_medium": 44
+  },
+  "agreement": {
+    "current_vs_oracle_pct": 59.57,
+    "proposed_vs_oracle_pct": 81.75
+  },
+  "current_label_accuracy": {
+    "HIGH": {
+      "count": 1778,
+      "pct_of_path_a": 34.49,
+      "pct_of_test": 23.74,
+      "personal_median": {
+        "count": 1778,
+        "mae": 7.25,
+        "medae": 4.0,
+        "within_3_days_pct": 44.21,
+        "within_7_days_pct": 67.44,
+        "mean_bias": 2.57
+      }
+    },
+    "MEDIUM": {
+      "count": 731,
+      "pct_of_path_a": 14.18,
+      "pct_of_test": 9.76,
+      "personal_median": {
+        "count": 731,
+        "mae": 9.87,
+        "medae": 7.5,
+        "within_3_days_pct": 23.39,
+        "within_7_days_pct": 49.25,
+        "mean_bias": 5.39
+      }
+    },
+    "UNSTABLE": {
+      "count": 2646,
+      "pct_of_path_a": 51.33,
+      "pct_of_test": 35.34,
+      "personal_median": {
+        "count": 2646,
+        "mae": 13.64,
+        "medae": 5.5,
+        "within_3_days_pct": 38.81,
+        "within_7_days_pct": 58.31,
+        "mean_bias": 8.37
+      }
+    },
+    "ACCEPTED": {
+      "count": 2509,
+      "pct_of_path_a": 48.67,
+      "pct_of_test": 33.51,
+      "personal_median": {
+        "count": 2509,
+        "mae": 8.01,
+        "medae": 5.0,
+        "within_3_days_pct": 38.14,
+        "within_7_days_pct": 62.14,
+        "mean_bias": 3.39
+      }
+    }
+  },
+  "proposed_label_accuracy": {
+    "HIGH": {
+      "count": 673,
+      "pct_of_path_a": 13.06,
+      "pct_of_test": 8.99,
+      "personal_median": {
+        "count": 673,
+        "mae": 7.26,
+        "medae": 4.0,
+        "within_3_days_pct": 46.66,
+        "within_7_days_pct": 68.95,
+        "mean_bias": 2.65
+      }
+    },
+    "MEDIUM": {
+      "count": 1538,
+      "pct_of_path_a": 29.84,
+      "pct_of_test": 20.54,
+      "personal_median": {
+        "count": 1538,
+        "mae": 8.69,
+        "medae": 6.0,
+        "within_3_days_pct": 35.37,
+        "within_7_days_pct": 57.02,
+        "mean_bias": 3.98
+      }
+    },
+    "UNSTABLE": {
+      "count": 2944,
+      "pct_of_path_a": 57.11,
+      "pct_of_test": 39.32,
+      "personal_median": {
+        "count": 2944,
+        "mae": 12.89,
+        "medae": 5.0,
+        "within_3_days_pct": 38.25,
+        "within_7_days_pct": 59.82,
+        "mean_bias": 7.72
+      }
+    },
+    "ACCEPTED": {
+      "count": 2211,
+      "pct_of_path_a": 42.89,
+      "pct_of_test": 29.53,
+      "personal_median": {
+        "count": 2211,
+        "mae": 8.25,
+        "medae": 5.0,
+        "within_3_days_pct": 38.81,
+        "within_7_days_pct": 60.65,
+        "mean_bias": 3.57
+      }
+    }
+  },
+  "proposed_vs_oracle_confusion": {
+    "HIGH": {
+      "STABLE": 484,
+      "RECURRING_VARIABLE": 126,
+      "UNSTABLE": 63
+    },
+    "MEDIUM": {
+      "STABLE": 119,
+      "RECURRING_VARIABLE": 1286,
+      "UNSTABLE": 133
+    },
+    "UNSTABLE": {
+      "STABLE": 32,
+      "RECURRING_VARIABLE": 468,
+      "UNSTABLE": 2444
+    }
+  },
+  "proposed_decision_tree": {
+    "steps": [
+      "1. If purchase_count < 6 -> UNSTABLE (not Path A)",
+      "2. If hist_median not in [15,120] -> UNSTABLE",
+      "3. If NormMAD or Drift missing -> UNSTABLE",
+      "4. If pct_extreme(lt10|gt180) >= 35% -> UNSTABLE",
+      "5. If pct_intervals_in_[15,120] < 55% -> UNSTABLE",
+      "6. If max/median >= 3.5 AND pct_within_50pct_median < 65% -> UNSTABLE",
+      "7. HIGH if (NormMAD<=0.30 AND Drift<=7 AND max/median<=2.2) OR (NormMAD<=0.35 AND Drift<=5 AND max/median<=2.0)",
+      "8. MEDIUM if NormMAD<=0.55 AND Drift<=15 (and passed instability guards)",
+      "9. Else UNSTABLE"
+    ],
+    "rationale": "Current NormMAD/Drift alone mislabels chaotic series as MEDIUM (MAD-robust to extreme gaps) and rejects genuine recurring-variable series when recent-3 drift exceeds 10d (e.g. 30/60/90 patterns). Add extreme-gap and max/median guards; tighten HIGH; widen MEDIUM drift to 15 only after those guards."
+  },
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime_before": 1789645154.9395924,
+    "model_mtime_after": 1789645154.9395924,
+    "whatsapp_messages_sent": 0,
+    "production_code_modified": false
+  }
+}

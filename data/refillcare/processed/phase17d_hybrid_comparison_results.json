@@ -1,0 +1,945 @@
+{
+  "experiment": "PHASE_17D_HYBRID_COMPARISON",
+  "read_only": true,
+  "production_artifacts_modified": false,
+  "xgboost_version": "3.4.0",
+  "controls": {
+    "test_rows_target_gt_0": 7488,
+    "test_date_min": "2026-07-01",
+    "test_date_max": "2026-08-30",
+    "train_rows_target_gt_0": 465610,
+    "fallback_median_days": 31.0,
+    "experimental_xgb_train_sec": 14.76,
+    "hybrid_thresholds": {
+      "min_purchases": 6,
+      "core_norm_mad_max": 0.35,
+      "core_drift_max": 7.0,
+      "broad_norm_mad_max": 0.5,
+      "broad_drift_max": 10.0,
+      "cadence_median_min": 15.0,
+      "cadence_median_max": 120.0,
+      "pack_default_days": 30.0
+    },
+    "threshold_sources": [
+      "docs/PHASE_17D_REGULARITY_THRESHOLD_SELECTION.md (Candidate 5/6)",
+      "docs/PHASE_17D_REGULARITY_ANALYSIS.md (Class 1/2)",
+      "docs/PHASE_17D_HISTORY_DEPTH_ANALYSIS.md (P>=6 minimum)",
+      "docs/PHASE_17D_LONG_INTERVAL_ANALYSIS.md / is_recurring_history (15\u2013120d)",
+      "docs/PHASE_17D_PERSONAL_CADENCE_EXPERIMENT.md (tiered cadence)",
+      "docs/PHASE_17D_XGB_OBJECTIVE_EXPERIMENT.md (quantileerror q50)"
+    ]
+  },
+  "strategies": {
+    "current_xgboost": {
+      "description": "Production refill_model.joblib (reg:squarederror)",
+      "always_on": true,
+      "coverage": {
+        "eval_universe": 7488,
+        "predictions_emitted": 7488,
+        "coverage_pct": 100.0,
+        "rejected_ineligible": 0,
+        "rejection_ineligible_pct": 0.0
+      },
+      "overall_on_scored_rows": {
+        "count": 7488,
+        "mae": 43.19,
+        "medae": 19.61,
+        "rmse": 69.62,
+        "within_1_day_pct": 3.26,
+        "within_3_days_pct": 9.92,
+        "within_7_days_pct": 23.53
+      },
+      "on_hybrid_eligible_subset": {
+        "count": 2533,
+        "mae": 14.33,
+        "medae": 10.39,
+        "rmse": 20.47,
+        "within_1_day_pct": 4.9,
+        "within_3_days_pct": 14.41,
+        "within_7_days_pct": 35.49
+      },
+      "cohorts_on_scored_rows": {
+        "overall": {
+          "count": 7488,
+          "mae": 43.19,
+          "medae": 19.61,
+          "rmse": 69.62,
+          "within_1_day_pct": 3.26,
+          "within_3_days_pct": 9.92,
+          "within_7_days_pct": 23.53,
+          "cohort_rows": 7488,
+          "scored_rows": 7488,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_le_2": {
+          "count": 1282,
+          "mae": 133.15,
+          "medae": 138.98,
+          "rmse": 144.84,
+          "within_1_day_pct": 0.0,
+          "within_3_days_pct": 0.0,
+          "within_7_days_pct": 0.0,
+          "cohort_rows": 1282,
+          "scored_rows": 1282,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 57.44,
+          "medae": 42.12,
+          "rmse": 73.05,
+          "within_1_day_pct": 0.19,
+          "within_3_days_pct": 0.57,
+          "within_7_days_pct": 1.9,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_6_to_10": {
+          "count": 1051,
+          "mae": 32.8,
+          "medae": 23.01,
+          "rmse": 44.24,
+          "within_1_day_pct": 0.76,
+          "within_3_days_pct": 3.52,
+          "within_7_days_pct": 11.99,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_gt_10": {
+          "count": 4104,
+          "mae": 14.1,
+          "medae": 9.46,
+          "rmse": 20.56,
+          "within_1_day_pct": 5.7,
+          "within_3_days_pct": 17.06,
+          "within_7_days_pct": 39.38,
+          "cohort_rows": 4104,
+          "scored_rows": 4104,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_ge_6": {
+          "count": 5155,
+          "mae": 17.91,
+          "medae": 11.31,
+          "rmse": 27.12,
+          "within_1_day_pct": 4.69,
+          "within_3_days_pct": 14.3,
+          "within_7_days_pct": 33.79,
+          "cohort_rows": 5155,
+          "scored_rows": 5155,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class1_core_regular": {
+          "count": 2789,
+          "mae": 11.68,
+          "medae": 7.98,
+          "rmse": 17.36,
+          "within_1_day_pct": 6.06,
+          "within_3_days_pct": 18.68,
+          "within_7_days_pct": 44.75,
+          "cohort_rows": 2789,
+          "scored_rows": 2789,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class2_high_volume_variable": {
+          "count": 2366,
+          "mae": 25.26,
+          "medae": 17.6,
+          "rmse": 35.32,
+          "within_1_day_pct": 3.09,
+          "within_3_days_pct": 9.13,
+          "within_7_days_pct": 20.88,
+          "cohort_rows": 2366,
+          "scored_rows": 2366,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class3_emerging_p4_5": {
+          "count": 634,
+          "mae": 51.33,
+          "medae": 38.86,
+          "rmse": 65.36,
+          "within_1_day_pct": 0.32,
+          "within_3_days_pct": 0.95,
+          "within_7_days_pct": 2.68,
+          "cohort_rows": 634,
+          "scored_rows": 634,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class4_sparse_le_3": {
+          "count": 1699,
+          "mae": 116.85,
+          "medae": 113.8,
+          "rmse": 132.42,
+          "within_1_day_pct": 0.0,
+          "within_3_days_pct": 0.0,
+          "within_7_days_pct": 0.18,
+          "cohort_rows": 1699,
+          "scored_rows": 1699,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "is_recurring_history": {
+          "count": 4283,
+          "mae": 24.49,
+          "medae": 16.61,
+          "rmse": 34.99,
+          "within_1_day_pct": 3.36,
+          "within_3_days_pct": 9.85,
+          "within_7_days_pct": 23.89,
+          "cohort_rows": 4283,
+          "scored_rows": 4283,
+          "coverage_within_cohort_pct": 100.0
+        }
+      }
+    },
+    "personal_historical_median": {
+      "description": "Personal hist median; train-global fallback when missing",
+      "always_on": true,
+      "coverage": {
+        "eval_universe": 7488,
+        "predictions_emitted": 7488,
+        "coverage_pct": 100.0,
+        "rejected_ineligible": 0,
+        "rejection_ineligible_pct": 0.0
+      },
+      "overall_on_scored_rows": {
+        "count": 7488,
+        "mae": 26.72,
+        "medae": 7.0,
+        "rmse": 109.43,
+        "within_1_day_pct": 16.95,
+        "within_3_days_pct": 32.02,
+        "within_7_days_pct": 50.96
+      },
+      "on_hybrid_eligible_subset": {
+        "count": 2533,
+        "mae": 8.04,
+        "medae": 5.0,
+        "rmse": 12.11,
+        "within_1_day_pct": 18.83,
+        "within_3_days_pct": 38.02,
+        "within_7_days_pct": 61.9
+      },
+      "cohorts_on_scored_rows": {
+        "overall": {
+          "count": 7488,
+          "mae": 26.72,
+          "medae": 7.0,
+          "rmse": 109.43,
+          "within_1_day_pct": 16.95,
+          "within_3_days_pct": 32.02,
+          "within_7_days_pct": 50.96,
+          "cohort_rows": 7488,
+          "scored_rows": 7488,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_le_2": {
+          "count": 1282,
+          "mae": 60.46,
+          "medae": 17.0,
+          "rmse": 219.11,
+          "within_1_day_pct": 8.58,
+          "within_3_days_pct": 15.83,
+          "within_7_days_pct": 27.54,
+          "cohort_rows": 1282,
+          "scored_rows": 1282,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 63.15,
+          "medae": 14.0,
+          "rmse": 154.89,
+          "within_1_day_pct": 10.09,
+          "within_3_days_pct": 20.08,
+          "within_7_days_pct": 34.35,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_6_to_10": {
+          "count": 1051,
+          "mae": 20.06,
+          "medae": 7.5,
+          "rmse": 43.79,
+          "within_1_day_pct": 14.37,
+          "within_3_days_pct": 28.64,
+          "within_7_days_pct": 49.48,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_gt_10": {
+          "count": 4104,
+          "mae": 8.56,
+          "medae": 5.0,
+          "rmse": 14.69,
+          "within_1_day_pct": 21.98,
+          "within_3_days_pct": 41.01,
+          "within_7_days_pct": 62.91,
+          "cohort_rows": 4104,
+          "scored_rows": 4104,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_ge_6": {
+          "count": 5155,
+          "mae": 10.9,
+          "medae": 5.0,
+          "rmse": 23.72,
+          "within_1_day_pct": 20.43,
+          "within_3_days_pct": 38.49,
+          "within_7_days_pct": 60.17,
+          "cohort_rows": 5155,
+          "scored_rows": 5155,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class1_core_regular": {
+          "count": 2789,
+          "mae": 6.14,
+          "medae": 3.0,
+          "rmse": 10.25,
+          "within_1_day_pct": 28.15,
+          "within_3_days_pct": 50.95,
+          "within_7_days_pct": 73.72,
+          "cohort_rows": 2789,
+          "scored_rows": 2789,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class2_high_volume_variable": {
+          "count": 2366,
+          "mae": 16.51,
+          "medae": 9.0,
+          "rmse": 33.2,
+          "within_1_day_pct": 11.33,
+          "within_3_days_pct": 23.8,
+          "within_7_days_pct": 44.21,
+          "cohort_rows": 2366,
+          "scored_rows": 2366,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class3_emerging_p4_5": {
+          "count": 634,
+          "mae": 38.59,
+          "medae": 12.5,
+          "rmse": 91.13,
+          "within_1_day_pct": 10.73,
+          "within_3_days_pct": 21.45,
+          "within_7_days_pct": 36.91,
+          "cohort_rows": 634,
+          "scored_rows": 634,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class4_sparse_le_3": {
+          "count": 1699,
+          "mae": 70.28,
+          "medae": 16.0,
+          "rmse": 219.01,
+          "within_1_day_pct": 8.71,
+          "within_3_days_pct": 16.36,
+          "within_7_days_pct": 28.25,
+          "cohort_rows": 1699,
+          "scored_rows": 1699,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "is_recurring_history": {
+          "count": 4283,
+          "mae": 12.66,
+          "medae": 8.0,
+          "rmse": 20.01,
+          "within_1_day_pct": 14.24,
+          "within_3_days_pct": 28.83,
+          "within_7_days_pct": 48.66,
+          "cohort_rows": 4283,
+          "scored_rows": 4283,
+          "coverage_within_cohort_pct": 100.0
+        }
+      }
+    },
+    "best_personal_cadence": {
+      "description": "Tiered cadence (P>10 hist median; P6\u201310 recent-5; P4\u20135 recent-3; P<=3 fixed 30d pack) from PHASE_17D_PERSONAL_CADENCE_EXPERIMENT",
+      "always_on": true,
+      "coverage": {
+        "eval_universe": 7488,
+        "predictions_emitted": 7488,
+        "coverage_pct": 100.0,
+        "rejected_ineligible": 0,
+        "rejection_ineligible_pct": 0.0
+      },
+      "overall_on_scored_rows": {
+        "count": 7488,
+        "mae": 14.08,
+        "medae": 7.0,
+        "rmse": 34.1,
+        "within_1_day_pct": 16.89,
+        "within_3_days_pct": 31.9,
+        "within_7_days_pct": 50.4
+      },
+      "on_hybrid_eligible_subset": {
+        "count": 2533,
+        "mae": 8.04,
+        "medae": 5.0,
+        "rmse": 12.12,
+        "within_1_day_pct": 19.31,
+        "within_3_days_pct": 38.45,
+        "within_7_days_pct": 61.82
+      },
+      "cohorts_on_scored_rows": {
+        "overall": {
+          "count": 7488,
+          "mae": 14.08,
+          "medae": 7.0,
+          "rmse": 34.1,
+          "within_1_day_pct": 16.89,
+          "within_3_days_pct": 31.9,
+          "within_7_days_pct": 50.4,
+          "cohort_rows": 7488,
+          "scored_rows": 7488,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_le_2": {
+          "count": 1282,
+          "mae": 15.38,
+          "medae": 16.0,
+          "rmse": 17.59,
+          "within_1_day_pct": 5.93,
+          "within_3_days_pct": 12.4,
+          "within_7_days_pct": 22.78,
+          "cohort_rows": 1282,
+          "scored_rows": 1282,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 28.02,
+          "medae": 12.0,
+          "rmse": 71.21,
+          "within_1_day_pct": 11.13,
+          "within_3_days_pct": 22.55,
+          "within_7_days_pct": 36.44,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_6_to_10": {
+          "count": 1051,
+          "mae": 20.12,
+          "medae": 8.0,
+          "rmse": 44.66,
+          "within_1_day_pct": 16.18,
+          "within_3_days_pct": 29.5,
+          "within_7_days_pct": 49.19,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_gt_10": {
+          "count": 4104,
+          "mae": 8.56,
+          "medae": 5.0,
+          "rmse": 14.69,
+          "within_1_day_pct": 21.98,
+          "within_3_days_pct": 41.01,
+          "within_7_days_pct": 62.91,
+          "cohort_rows": 4104,
+          "scored_rows": 4104,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_ge_6": {
+          "count": 5155,
+          "mae": 10.91,
+          "medae": 5.0,
+          "rmse": 24.05,
+          "within_1_day_pct": 20.8,
+          "within_3_days_pct": 38.66,
+          "within_7_days_pct": 60.12,
+          "cohort_rows": 5155,
+          "scored_rows": 5155,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class1_core_regular": {
+          "count": 2789,
+          "mae": 6.14,
+          "medae": 3.0,
+          "rmse": 10.24,
+          "within_1_day_pct": 28.72,
+          "within_3_days_pct": 51.34,
+          "within_7_days_pct": 73.5,
+          "cohort_rows": 2789,
+          "scored_rows": 2789,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class2_high_volume_variable": {
+          "count": 2366,
+          "mae": 16.54,
+          "medae": 9.0,
+          "rmse": 33.72,
+          "within_1_day_pct": 11.45,
+          "within_3_days_pct": 23.71,
+          "within_7_days_pct": 44.34,
+          "cohort_rows": 2366,
+          "scored_rows": 2366,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class3_emerging_p4_5": {
+          "count": 634,
+          "mae": 37.47,
+          "medae": 12.0,
+          "rmse": 90.74,
+          "within_1_day_pct": 12.46,
+          "within_3_days_pct": 24.61,
+          "within_7_days_pct": 40.22,
+          "cohort_rows": 634,
+          "scored_rows": 634,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class4_sparse_le_3": {
+          "count": 1699,
+          "mae": 14.96,
+          "medae": 16.0,
+          "rmse": 17.27,
+          "within_1_day_pct": 6.71,
+          "within_3_days_pct": 14.13,
+          "within_7_days_pct": 24.72,
+          "cohort_rows": 1699,
+          "scored_rows": 1699,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "is_recurring_history": {
+          "count": 4283,
+          "mae": 12.35,
+          "medae": 7.5,
+          "rmse": 20.61,
+          "within_1_day_pct": 14.83,
+          "within_3_days_pct": 29.86,
+          "within_7_days_pct": 49.52,
+          "cohort_rows": 4283,
+          "scored_rows": 4283,
+          "coverage_within_cohort_pct": 100.0
+        }
+      }
+    },
+    "best_experimental_xgboost": {
+      "description": "In-memory reg:quantileerror quantile_alpha=0.5 (PHASE_17D_XGB_OBJECTIVE)",
+      "always_on": true,
+      "coverage": {
+        "eval_universe": 7488,
+        "predictions_emitted": 7488,
+        "coverage_pct": 100.0,
+        "rejected_ineligible": 0,
+        "rejection_ineligible_pct": 0.0
+      },
+      "overall_on_scored_rows": {
+        "count": 7488,
+        "mae": 13.05,
+        "medae": 7.39,
+        "rmse": 20.36,
+        "within_1_day_pct": 10.26,
+        "within_3_days_pct": 26.56,
+        "within_7_days_pct": 48.29
+      },
+      "on_hybrid_eligible_subset": {
+        "count": 2533,
+        "mae": 7.39,
+        "medae": 4.85,
+        "rmse": 10.68,
+        "within_1_day_pct": 14.61,
+        "within_3_days_pct": 35.81,
+        "within_7_days_pct": 62.53
+      },
+      "cohorts_on_scored_rows": {
+        "overall": {
+          "count": 7488,
+          "mae": 13.05,
+          "medae": 7.39,
+          "rmse": 20.36,
+          "within_1_day_pct": 10.26,
+          "within_3_days_pct": 26.56,
+          "within_7_days_pct": 48.29,
+          "cohort_rows": 7488,
+          "scored_rows": 7488,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_le_2": {
+          "count": 1282,
+          "mae": 27.05,
+          "medae": 23.93,
+          "rmse": 34.14,
+          "within_1_day_pct": 2.03,
+          "within_3_days_pct": 7.49,
+          "within_7_days_pct": 15.68,
+          "cohort_rows": 1282,
+          "scored_rows": 1282,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 18.16,
+          "medae": 11.38,
+          "rmse": 26.47,
+          "within_1_day_pct": 5.8,
+          "within_3_days_pct": 16.27,
+          "within_7_days_pct": 35.11,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_6_to_10": {
+          "count": 1051,
+          "mae": 12.04,
+          "medae": 7.44,
+          "rmse": 18.21,
+          "within_1_day_pct": 8.66,
+          "within_3_days_pct": 25.88,
+          "within_7_days_pct": 47.29,
+          "cohort_rows": 1051,
+          "scored_rows": 1051,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_gt_10": {
+          "count": 4104,
+          "mae": 7.62,
+          "medae": 4.9,
+          "rmse": 11.31,
+          "within_1_day_pct": 14.38,
+          "within_3_days_pct": 35.33,
+          "within_7_days_pct": 62.11,
+          "cohort_rows": 4104,
+          "scored_rows": 4104,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "depth_ge_6": {
+          "count": 5155,
+          "mae": 8.52,
+          "medae": 5.33,
+          "rmse": 13.01,
+          "within_1_day_pct": 13.21,
+          "within_3_days_pct": 33.4,
+          "within_7_days_pct": 59.09,
+          "cohort_rows": 5155,
+          "scored_rows": 5155,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class1_core_regular": {
+          "count": 2789,
+          "mae": 6.0,
+          "medae": 3.69,
+          "rmse": 9.12,
+          "within_1_day_pct": 17.68,
+          "within_3_days_pct": 43.28,
+          "within_7_days_pct": 71.53,
+          "cohort_rows": 2789,
+          "scored_rows": 2789,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class2_high_volume_variable": {
+          "count": 2366,
+          "mae": 11.49,
+          "medae": 8.12,
+          "rmse": 16.46,
+          "within_1_day_pct": 7.95,
+          "within_3_days_pct": 21.77,
+          "within_7_days_pct": 44.42,
+          "cohort_rows": 2366,
+          "scored_rows": 2366,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class3_emerging_p4_5": {
+          "count": 634,
+          "mae": 16.88,
+          "medae": 11.01,
+          "rmse": 24.09,
+          "within_1_day_pct": 5.05,
+          "within_3_days_pct": 17.51,
+          "within_7_days_pct": 36.59,
+          "cohort_rows": 634,
+          "scored_rows": 634,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "class4_sparse_le_3": {
+          "count": 1699,
+          "mae": 25.34,
+          "medae": 20.45,
+          "rmse": 33.11,
+          "within_1_day_pct": 3.24,
+          "within_3_days_pct": 9.18,
+          "within_7_days_pct": 19.89,
+          "cohort_rows": 1699,
+          "scored_rows": 1699,
+          "coverage_within_cohort_pct": 100.0
+        },
+        "is_recurring_history": {
+          "count": 4283,
+          "mae": 10.19,
+          "medae": 6.91,
+          "rmse": 14.52,
+          "within_1_day_pct": 11.16,
+          "within_3_days_pct": 27.5,
+          "within_7_days_pct": 50.36,
+          "cohort_rows": 4283,
+          "scored_rows": 4283,
+          "coverage_within_cohort_pct": 100.0
+        }
+      }
+    },
+    "hybrid_routing": {
+      "description": "Eligible if P>=6 & NormMAD<=0.50 & Drift<=10 & hist_median in [15,120]; core (NormMAD<=0.35 & Drift<=7) \u2192 personal median; else eligible \u2192 experimental XGB; otherwise reject",
+      "always_on": false,
+      "coverage": {
+        "eval_universe": 7488,
+        "predictions_emitted": 2533,
+        "coverage_pct": 33.83,
+        "rejected_ineligible": 4955,
+        "rejection_ineligible_pct": 66.17
+      },
+      "overall_on_scored_rows": {
+        "count": 2533,
+        "mae": 7.77,
+        "medae": 5.0,
+        "rmse": 11.6,
+        "within_1_day_pct": 18.79,
+        "within_3_days_pct": 38.73,
+        "within_7_days_pct": 62.57
+      },
+      "on_hybrid_eligible_subset": {
+        "count": 2533,
+        "mae": 7.77,
+        "medae": 5.0,
+        "rmse": 11.6,
+        "within_1_day_pct": 18.79,
+        "within_3_days_pct": 38.73,
+        "within_7_days_pct": 62.57
+      },
+      "cohorts_on_scored_rows": {
+        "overall": {
+          "count": 2533,
+          "mae": 7.77,
+          "medae": 5.0,
+          "rmse": 11.6,
+          "within_1_day_pct": 18.79,
+          "within_3_days_pct": 38.73,
+          "within_7_days_pct": 62.57,
+          "cohort_rows": 7488,
+          "scored_rows": 2533,
+          "coverage_within_cohort_pct": 33.83
+        },
+        "depth_le_2": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_1_day_pct": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null,
+          "cohort_rows": 1282,
+          "scored_rows": 0,
+          "coverage_within_cohort_pct": 0.0
+        },
+        "depth_3_to_5": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_1_day_pct": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null,
+          "cohort_rows": 1051,
+          "scored_rows": 0,
+          "coverage_within_cohort_pct": 0.0
+        },
+        "depth_6_to_10": {
+          "count": 473,
+          "mae": 10.27,
+          "medae": 7.0,
+          "rmse": 15.13,
+          "within_1_day_pct": 11.84,
+          "within_3_days_pct": 29.6,
+          "within_7_days_pct": 51.59,
+          "cohort_rows": 1051,
+          "scored_rows": 473,
+          "coverage_within_cohort_pct": 45.0
+        },
+        "depth_gt_10": {
+          "count": 2060,
+          "mae": 7.2,
+          "medae": 4.59,
+          "rmse": 10.62,
+          "within_1_day_pct": 20.39,
+          "within_3_days_pct": 40.83,
+          "within_7_days_pct": 65.1,
+          "cohort_rows": 4104,
+          "scored_rows": 2060,
+          "coverage_within_cohort_pct": 50.19
+        },
+        "depth_ge_6": {
+          "count": 2533,
+          "mae": 7.77,
+          "medae": 5.0,
+          "rmse": 11.6,
+          "within_1_day_pct": 18.79,
+          "within_3_days_pct": 38.73,
+          "within_7_days_pct": 62.57,
+          "cohort_rows": 5155,
+          "scored_rows": 2533,
+          "coverage_within_cohort_pct": 49.14
+        },
+        "class1_core_regular": {
+          "count": 1819,
+          "mae": 7.39,
+          "medae": 4.0,
+          "rmse": 11.51,
+          "within_1_day_pct": 22.81,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74,
+          "cohort_rows": 2789,
+          "scored_rows": 1819,
+          "coverage_within_cohort_pct": 65.22
+        },
+        "class2_high_volume_variable": {
+          "count": 714,
+          "mae": 8.74,
+          "medae": 6.62,
+          "rmse": 11.82,
+          "within_1_day_pct": 8.54,
+          "within_3_days_pct": 25.91,
+          "within_7_days_pct": 51.96,
+          "cohort_rows": 2366,
+          "scored_rows": 714,
+          "coverage_within_cohort_pct": 30.18
+        },
+        "class3_emerging_p4_5": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_1_day_pct": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null,
+          "cohort_rows": 634,
+          "scored_rows": 0,
+          "coverage_within_cohort_pct": 0.0
+        },
+        "class4_sparse_le_3": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_1_day_pct": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null,
+          "cohort_rows": 1699,
+          "scored_rows": 0,
+          "coverage_within_cohort_pct": 0.0
+        },
+        "is_recurring_history": {
+          "count": 2533,
+          "mae": 7.77,
+          "medae": 5.0,
+          "rmse": 11.6,
+          "within_1_day_pct": 18.79,
+          "within_3_days_pct": 38.73,
+          "within_7_days_pct": 62.57,
+          "cohort_rows": 4283,
+          "scored_rows": 2533,
+          "coverage_within_cohort_pct": 59.14
+        }
+      },
+      "routing": {
+        "route_counts": {
+          "eligible": 2533,
+          "rejected_ineligible": 4955,
+          "core_personal_median": 1819,
+          "secondary_experimental_xgb": 714,
+          "reject_reasons": {
+            "depth_lt_6": 2333,
+            "cadence_median_out_of_15_120": 1562,
+            "broad_regularity_fail": 1060
+          }
+        }
+      }
+    }
+  },
+  "ranking_overall_mae_on_scored": [
+    {
+      "strategy": "hybrid_routing",
+      "mae": 7.77,
+      "medae": 5.0,
+      "within_7_days_pct": 62.57,
+      "coverage_pct": 33.83
+    },
+    {
+      "strategy": "best_experimental_xgboost",
+      "mae": 13.05,
+      "medae": 7.39,
+      "within_7_days_pct": 48.29,
+      "coverage_pct": 100.0
+    },
+    {
+      "strategy": "best_personal_cadence",
+      "mae": 14.08,
+      "medae": 7.0,
+      "within_7_days_pct": 50.4,
+      "coverage_pct": 100.0
+    },
+    {
+      "strategy": "personal_historical_median",
+      "mae": 26.72,
+      "medae": 7.0,
+      "within_7_days_pct": 50.96,
+      "coverage_pct": 100.0
+    },
+    {
+      "strategy": "current_xgboost",
+      "mae": 43.19,
+      "medae": 19.61,
+      "within_7_days_pct": 23.53,
+      "coverage_pct": 100.0
+    }
+  ],
+  "ranking_on_hybrid_eligible_mae": [
+    {
+      "strategy": "best_experimental_xgboost",
+      "mae": 7.39,
+      "medae": 4.85,
+      "within_7_days_pct": 62.53,
+      "count": 2533
+    },
+    {
+      "strategy": "hybrid_routing",
+      "mae": 7.77,
+      "medae": 5.0,
+      "within_7_days_pct": 62.57,
+      "count": 2533
+    },
+    {
+      "strategy": "personal_historical_median",
+      "mae": 8.04,
+      "medae": 5.0,
+      "within_7_days_pct": 61.9,
+      "count": 2533
+    },
+    {
+      "strategy": "best_personal_cadence",
+      "mae": 8.04,
+      "medae": 5.0,
+      "within_7_days_pct": 61.82,
+      "count": 2533
+    },
+    {
+      "strategy": "current_xgboost",
+      "mae": 14.33,
+      "medae": 10.39,
+      "within_7_days_pct": 35.49,
+      "count": 2533
+    }
+  ],
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime_before": 1789645154.9395924,
+    "model_mtime_after": 1789645154.9395924,
+    "production_code_modified": false,
+    "reminder_logic_modified": false,
+    "whatsapp_modified": false
+  }
+}

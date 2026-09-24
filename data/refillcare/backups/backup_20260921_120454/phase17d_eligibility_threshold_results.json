@@ -1,0 +1,535 @@
+{
+  "experiment": "PHASE_17D_ELIGIBILITY_THRESHOLD_EXPERIMENT",
+  "read_only": true,
+  "production_model_retrained": false,
+  "fixed_rules": {
+    "cadence_median_band": [
+      15.0,
+      120.0
+    ],
+    "core_norm_mad_max": 0.35,
+    "core_drift_max": 7.0,
+    "broad_norm_mad_max": 0.5,
+    "broad_drift_max": 10.0,
+    "HIGH_predictor": "personal_historical_median",
+    "MEDIUM_predictor": "production_refill_model.joblib (no retrain)"
+  },
+  "controls": {
+    "test_rows": 7488,
+    "test_date_min": "2026-07-01",
+    "test_date_max": "2026-08-30",
+    "depth_thresholds": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      10
+    ],
+    "current_production_min_purchases": 6
+  },
+  "thresholds": {
+    "P_ge_3": {
+      "min_purchases": 3,
+      "test_row_count": 7488,
+      "accepted_count": 3018,
+      "rejected_count": 4470,
+      "coverage_pct": 40.3,
+      "mae": 12.29,
+      "medae": 7.0,
+      "rmse": 19.78,
+      "within_3_days_pct": 32.01,
+      "within_7_days_pct": 51.49,
+      "HIGH": {
+        "count": 2193,
+        "mae": 8.7,
+        "medae": 5.0,
+        "rmse": 14.14,
+        "within_3_days_pct": 40.54,
+        "within_7_days_pct": 62.47
+      },
+      "MEDIUM": {
+        "count": 825,
+        "mae": 21.84,
+        "medae": 16.35,
+        "rmse": 30.0,
+        "within_3_days_pct": 9.33,
+        "within_7_days_pct": 22.3
+      },
+      "regular_vs_irregular": {
+        "regular_class1_pge6": {
+          "cohort_rows": 2789,
+          "accepted_count": 1819,
+          "rejected_count": 970,
+          "coverage_pct": 65.22,
+          "mae": 7.39,
+          "medae": 4.0,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74
+        },
+        "irregular_pge6": {
+          "cohort_rows": 2366,
+          "accepted_count": 714,
+          "rejected_count": 1652,
+          "coverage_pct": 30.18,
+          "mae": 18.05,
+          "medae": 14.4,
+          "within_3_days_pct": 10.64,
+          "within_7_days_pct": 25.49
+        },
+        "regular_at_depth_gate": {
+          "cohort_rows": 3349,
+          "accepted_count": 2193,
+          "rejected_count": 1156,
+          "coverage_pct": 65.48,
+          "mae": 8.7,
+          "medae": 5.0,
+          "within_3_days_pct": 40.54,
+          "within_7_days_pct": 62.47
+        },
+        "irregular_at_depth_gate": {
+          "cohort_rows": 2857,
+          "accepted_count": 825,
+          "rejected_count": 2032,
+          "coverage_pct": 28.88,
+          "mae": 21.84,
+          "medae": 16.35,
+          "within_3_days_pct": 9.33,
+          "within_7_days_pct": 22.3
+        }
+      },
+      "confidence_counts": {
+        "HIGH": 2193,
+        "MEDIUM": 825,
+        "REJECTED": 4470
+      }
+    },
+    "P_ge_4": {
+      "min_purchases": 4,
+      "test_row_count": 7488,
+      "accepted_count": 2848,
+      "rejected_count": 4640,
+      "coverage_pct": 38.03,
+      "mae": 11.56,
+      "medae": 6.5,
+      "rmse": 18.52,
+      "within_3_days_pct": 32.87,
+      "within_7_days_pct": 52.84,
+      "HIGH": {
+        "count": 2065,
+        "mae": 8.22,
+        "medae": 4.5,
+        "rmse": 13.2,
+        "within_3_days_pct": 41.6,
+        "within_7_days_pct": 64.02
+      },
+      "MEDIUM": {
+        "count": 783,
+        "mae": 20.37,
+        "medae": 15.69,
+        "rmse": 28.09,
+        "within_3_days_pct": 9.83,
+        "within_7_days_pct": 23.37
+      },
+      "regular_vs_irregular": {
+        "regular_class1_pge6": {
+          "cohort_rows": 2789,
+          "accepted_count": 1819,
+          "rejected_count": 970,
+          "coverage_pct": 65.22,
+          "mae": 7.39,
+          "medae": 4.0,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74
+        },
+        "irregular_pge6": {
+          "cohort_rows": 2366,
+          "accepted_count": 714,
+          "rejected_count": 1652,
+          "coverage_pct": 30.18,
+          "mae": 18.05,
+          "medae": 14.4,
+          "within_3_days_pct": 10.64,
+          "within_7_days_pct": 25.49
+        },
+        "regular_at_depth_gate": {
+          "cohort_rows": 3145,
+          "accepted_count": 2065,
+          "rejected_count": 1080,
+          "coverage_pct": 65.66,
+          "mae": 8.22,
+          "medae": 4.5,
+          "within_3_days_pct": 41.6,
+          "within_7_days_pct": 64.02
+        },
+        "irregular_at_depth_gate": {
+          "cohort_rows": 2644,
+          "accepted_count": 783,
+          "rejected_count": 1861,
+          "coverage_pct": 29.61,
+          "mae": 20.37,
+          "medae": 15.69,
+          "within_3_days_pct": 9.83,
+          "within_7_days_pct": 23.37
+        }
+      },
+      "confidence_counts": {
+        "HIGH": 2065,
+        "MEDIUM": 783,
+        "REJECTED": 4640
+      }
+    },
+    "P_ge_5": {
+      "min_purchases": 5,
+      "test_row_count": 7488,
+      "accepted_count": 2679,
+      "rejected_count": 4809,
+      "coverage_pct": 35.78,
+      "mae": 10.93,
+      "medae": 6.0,
+      "rmse": 17.27,
+      "within_3_days_pct": 33.63,
+      "within_7_days_pct": 54.01,
+      "HIGH": {
+        "count": 1921,
+        "mae": 7.59,
+        "medae": 4.0,
+        "rmse": 11.79,
+        "within_3_days_pct": 42.89,
+        "within_7_days_pct": 65.8
+      },
+      "MEDIUM": {
+        "count": 758,
+        "mae": 19.41,
+        "medae": 15.29,
+        "rmse": 26.48,
+        "within_3_days_pct": 10.16,
+        "within_7_days_pct": 24.14
+      },
+      "regular_vs_irregular": {
+        "regular_class1_pge6": {
+          "cohort_rows": 2789,
+          "accepted_count": 1819,
+          "rejected_count": 970,
+          "coverage_pct": 65.22,
+          "mae": 7.39,
+          "medae": 4.0,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74
+        },
+        "irregular_pge6": {
+          "cohort_rows": 2366,
+          "accepted_count": 714,
+          "rejected_count": 1652,
+          "coverage_pct": 30.18,
+          "mae": 18.05,
+          "medae": 14.4,
+          "within_3_days_pct": 10.64,
+          "within_7_days_pct": 25.49
+        },
+        "regular_at_depth_gate": {
+          "cohort_rows": 2932,
+          "accepted_count": 1921,
+          "rejected_count": 1011,
+          "coverage_pct": 65.52,
+          "mae": 7.59,
+          "medae": 4.0,
+          "within_3_days_pct": 42.89,
+          "within_7_days_pct": 65.8
+        },
+        "irregular_at_depth_gate": {
+          "cohort_rows": 2524,
+          "accepted_count": 758,
+          "rejected_count": 1766,
+          "coverage_pct": 30.03,
+          "mae": 19.41,
+          "medae": 15.29,
+          "within_3_days_pct": 10.16,
+          "within_7_days_pct": 24.14
+        }
+      },
+      "confidence_counts": {
+        "HIGH": 1921,
+        "MEDIUM": 758,
+        "REJECTED": 4809
+      }
+    },
+    "P_ge_6": {
+      "min_purchases": 6,
+      "test_row_count": 7488,
+      "accepted_count": 2533,
+      "rejected_count": 4955,
+      "coverage_pct": 33.83,
+      "mae": 10.39,
+      "medae": 6.0,
+      "rmse": 16.38,
+      "within_3_days_pct": 34.43,
+      "within_7_days_pct": 55.11,
+      "HIGH": {
+        "count": 1819,
+        "mae": 7.39,
+        "medae": 4.0,
+        "rmse": 11.51,
+        "within_3_days_pct": 43.76,
+        "within_7_days_pct": 66.74
+      },
+      "MEDIUM": {
+        "count": 714,
+        "mae": 18.05,
+        "medae": 14.4,
+        "rmse": 24.78,
+        "within_3_days_pct": 10.64,
+        "within_7_days_pct": 25.49
+      },
+      "regular_vs_irregular": {
+        "regular_class1_pge6": {
+          "cohort_rows": 2789,
+          "accepted_count": 1819,
+          "rejected_count": 970,
+          "coverage_pct": 65.22,
+          "mae": 7.39,
+          "medae": 4.0,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74
+        },
+        "irregular_pge6": {
+          "cohort_rows": 2366,
+          "accepted_count": 714,
+          "rejected_count": 1652,
+          "coverage_pct": 30.18,
+          "mae": 18.05,
+          "medae": 14.4,
+          "within_3_days_pct": 10.64,
+          "within_7_days_pct": 25.49
+        },
+        "regular_at_depth_gate": {
+          "cohort_rows": 2789,
+          "accepted_count": 1819,
+          "rejected_count": 970,
+          "coverage_pct": 65.22,
+          "mae": 7.39,
+          "medae": 4.0,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74
+        },
+        "irregular_at_depth_gate": {
+          "cohort_rows": 2366,
+          "accepted_count": 714,
+          "rejected_count": 1652,
+          "coverage_pct": 30.18,
+          "mae": 18.05,
+          "medae": 14.4,
+          "within_3_days_pct": 10.64,
+          "within_7_days_pct": 25.49
+        }
+      },
+      "confidence_counts": {
+        "HIGH": 1819,
+        "MEDIUM": 714,
+        "REJECTED": 4955
+      }
+    },
+    "P_ge_7": {
+      "min_purchases": 7,
+      "test_row_count": 7488,
+      "accepted_count": 2430,
+      "rejected_count": 5058,
+      "coverage_pct": 32.45,
+      "mae": 10.25,
+      "medae": 6.0,
+      "rmse": 16.24,
+      "within_3_days_pct": 34.77,
+      "within_7_days_pct": 55.8,
+      "HIGH": {
+        "count": 1740,
+        "mae": 7.25,
+        "medae": 4.0,
+        "rmse": 11.32,
+        "within_3_days_pct": 44.25,
+        "within_7_days_pct": 67.59
+      },
+      "MEDIUM": {
+        "count": 690,
+        "mae": 17.79,
+        "medae": 14.24,
+        "rmse": 24.61,
+        "within_3_days_pct": 10.87,
+        "within_7_days_pct": 26.09
+      },
+      "regular_vs_irregular": {
+        "regular_class1_pge6": {
+          "cohort_rows": 2789,
+          "accepted_count": 1740,
+          "rejected_count": 1049,
+          "coverage_pct": 62.39,
+          "mae": 7.25,
+          "medae": 4.0,
+          "within_3_days_pct": 44.25,
+          "within_7_days_pct": 67.59
+        },
+        "irregular_pge6": {
+          "cohort_rows": 2366,
+          "accepted_count": 690,
+          "rejected_count": 1676,
+          "coverage_pct": 29.16,
+          "mae": 17.79,
+          "medae": 14.24,
+          "within_3_days_pct": 10.87,
+          "within_7_days_pct": 26.09
+        },
+        "regular_at_depth_gate": {
+          "cohort_rows": 2671,
+          "accepted_count": 1740,
+          "rejected_count": 931,
+          "coverage_pct": 65.14,
+          "mae": 7.25,
+          "medae": 4.0,
+          "within_3_days_pct": 44.25,
+          "within_7_days_pct": 67.59
+        },
+        "irregular_at_depth_gate": {
+          "cohort_rows": 2238,
+          "accepted_count": 690,
+          "rejected_count": 1548,
+          "coverage_pct": 30.83,
+          "mae": 17.79,
+          "medae": 14.24,
+          "within_3_days_pct": 10.87,
+          "within_7_days_pct": 26.09
+        }
+      },
+      "confidence_counts": {
+        "HIGH": 1740,
+        "MEDIUM": 690,
+        "REJECTED": 5058
+      }
+    },
+    "P_ge_10": {
+      "min_purchases": 10,
+      "test_row_count": 7488,
+      "accepted_count": 2145,
+      "rejected_count": 5343,
+      "coverage_pct": 28.65,
+      "mae": 9.49,
+      "medae": 5.65,
+      "rmse": 14.58,
+      "within_3_days_pct": 36.22,
+      "within_7_days_pct": 57.11,
+      "HIGH": {
+        "count": 1522,
+        "mae": 6.9,
+        "medae": 4.0,
+        "rmse": 10.76,
+        "within_3_days_pct": 46.12,
+        "within_7_days_pct": 68.73
+      },
+      "MEDIUM": {
+        "count": 623,
+        "mae": 15.8,
+        "medae": 13.18,
+        "rmse": 21.2,
+        "within_3_days_pct": 12.04,
+        "within_7_days_pct": 28.73
+      },
+      "regular_vs_irregular": {
+        "regular_class1_pge6": {
+          "cohort_rows": 2789,
+          "accepted_count": 1522,
+          "rejected_count": 1267,
+          "coverage_pct": 54.57,
+          "mae": 6.9,
+          "medae": 4.0,
+          "within_3_days_pct": 46.12,
+          "within_7_days_pct": 68.73
+        },
+        "irregular_pge6": {
+          "cohort_rows": 2366,
+          "accepted_count": 623,
+          "rejected_count": 1743,
+          "coverage_pct": 26.33,
+          "mae": 15.8,
+          "medae": 13.18,
+          "within_3_days_pct": 12.04,
+          "within_7_days_pct": 28.73
+        },
+        "regular_at_depth_gate": {
+          "cohort_rows": 2352,
+          "accepted_count": 1522,
+          "rejected_count": 830,
+          "coverage_pct": 64.71,
+          "mae": 6.9,
+          "medae": 4.0,
+          "within_3_days_pct": 46.12,
+          "within_7_days_pct": 68.73
+        },
+        "irregular_at_depth_gate": {
+          "cohort_rows": 1946,
+          "accepted_count": 623,
+          "rejected_count": 1323,
+          "coverage_pct": 32.01,
+          "mae": 15.8,
+          "medae": 13.18,
+          "within_3_days_pct": 12.04,
+          "within_7_days_pct": 28.73
+        }
+      },
+      "confidence_counts": {
+        "HIGH": 1522,
+        "MEDIUM": 623,
+        "REJECTED": 5343
+      }
+    }
+  },
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime_before": 1789645154.9395924,
+    "model_mtime_after": 1789645154.9395924,
+    "whatsapp_messages_sent": 0,
+    "production_code_modified": false
+  },
+  "ranking_by_mae": [
+    {
+      "threshold": "P_ge_10",
+      "coverage_pct": 28.65,
+      "mae": 9.49,
+      "within_7_days_pct": 57.11,
+      "accepted_count": 2145
+    },
+    {
+      "threshold": "P_ge_7",
+      "coverage_pct": 32.45,
+      "mae": 10.25,
+      "within_7_days_pct": 55.8,
+      "accepted_count": 2430
+    },
+    {
+      "threshold": "P_ge_6",
+      "coverage_pct": 33.83,
+      "mae": 10.39,
+      "within_7_days_pct": 55.11,
+      "accepted_count": 2533
+    },
+    {
+      "threshold": "P_ge_5",
+      "coverage_pct": 35.78,
+      "mae": 10.93,
+      "within_7_days_pct": 54.01,
+      "accepted_count": 2679
+    },
+    {
+      "threshold": "P_ge_4",
+      "coverage_pct": 38.03,
+      "mae": 11.56,
+      "within_7_days_pct": 52.84,
+      "accepted_count": 2848
+    },
+    {
+      "threshold": "P_ge_3",
+      "coverage_pct": 40.3,
+      "mae": 12.29,
+      "within_7_days_pct": 51.49,
+      "accepted_count": 3018
+    }
+  ]
+}

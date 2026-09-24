@@ -1,0 +1,342 @@
+{
+  "experiment": "PHASE_17D_LONG_INTERVAL_ANALYSIS",
+  "production_modified": false,
+  "model_mtime_unchanged": true,
+  "buckets": {
+    "0-14": {
+      "range_days": [
+        0,
+        14
+      ],
+      "count": 117229,
+      "pct": 23.93,
+      "target_mean": 7.81,
+      "target_median": 8.0,
+      "mae_production_model": 63.35,
+      "medae_production_model": 31.33,
+      "mean_signed_error_pred_minus_actual": 63.29,
+      "mae_historical_median_baseline": 24.86,
+      "history_depth": {
+        "mean_purchase_count_so_far": 25.07,
+        "median_purchase_count_so_far": 8.0,
+        "pct_2_or_fewer": 26.65,
+        "pct_3_to_5": 16.28,
+        "pct_gt_5": 57.07
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 33.64,
+        "pct_recurring_same_bucket_for_customer_item": 81.35,
+        "pct_isolated_in_bucket": 18.65,
+        "pct_target_within_0.5_2x_personal_hist_median": 52.96866438533191,
+        "median_target_over_hist_median_ratio": 0.556
+      },
+      "window_position": {
+        "mean_days_to_data_end": 1025.1,
+        "median_days_to_data_end": 1066.0,
+        "pct_invoice_in_last_180d_of_dataset": 8.94
+      },
+      "pred_distribution": {
+        "mean": 71.09,
+        "median": 39.57,
+        "p95": 210.43
+      }
+    },
+    "15-30": {
+      "range_days": [
+        15,
+        30
+      ],
+      "count": 126404,
+      "pct": 25.8,
+      "target_mean": 22.55,
+      "target_median": 22.0,
+      "mae_production_model": 48.11,
+      "medae_production_model": 23.15,
+      "mean_signed_error_pred_minus_actual": 47.55,
+      "mae_historical_median_baseline": 20.1,
+      "history_depth": {
+        "mean_purchase_count_so_far": 14.03,
+        "median_purchase_count_so_far": 8.0,
+        "pct_2_or_fewer": 22.46,
+        "pct_3_to_5": 18.26,
+        "pct_gt_5": 59.28
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 63.52,
+        "pct_recurring_same_bucket_for_customer_item": 85.37,
+        "pct_isolated_in_bucket": 14.63,
+        "pct_target_within_0.5_2x_personal_hist_median": 78.80077862067711,
+        "median_target_over_hist_median_ratio": 0.931
+      },
+      "window_position": {
+        "mean_days_to_data_end": 947.4,
+        "median_days_to_data_end": 927.0,
+        "pct_invoice_in_last_180d_of_dataset": 9.39
+      },
+      "pred_distribution": {
+        "mean": 70.1,
+        "median": 46.03,
+        "p95": 188.39
+      }
+    },
+    "31-45": {
+      "range_days": [
+        31,
+        45
+      ],
+      "count": 75749,
+      "pct": 15.46,
+      "target_mean": 35.97,
+      "target_median": 35.0,
+      "mae_production_model": 45.51,
+      "medae_production_model": 21.16,
+      "mean_signed_error_pred_minus_actual": 43.32,
+      "mae_historical_median_baseline": 22.97,
+      "history_depth": {
+        "mean_purchase_count_so_far": 11.62,
+        "median_purchase_count_so_far": 7.0,
+        "pct_2_or_fewer": 24.34,
+        "pct_3_to_5": 19.73,
+        "pct_gt_5": 55.93
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 67.95,
+        "pct_recurring_same_bucket_for_customer_item": 78.71,
+        "pct_isolated_in_bucket": 21.29,
+        "pct_target_within_0.5_2x_personal_hist_median": 77.65224494828836,
+        "median_target_over_hist_median_ratio": 1.097
+      },
+      "window_position": {
+        "mean_days_to_data_end": 959.1,
+        "median_days_to_data_end": 943.0,
+        "pct_invoice_in_last_180d_of_dataset": 8.49
+      },
+      "pred_distribution": {
+        "mean": 79.29,
+        "median": 56.37,
+        "p95": 197.6
+      }
+    },
+    "46-60": {
+      "range_days": [
+        46,
+        60
+      ],
+      "count": 30519,
+      "pct": 6.23,
+      "target_mean": 52.74,
+      "target_median": 53.0,
+      "mae_production_model": 56.3,
+      "medae_production_model": 31.56,
+      "mean_signed_error_pred_minus_actual": 48.87,
+      "mae_historical_median_baseline": 40.12,
+      "history_depth": {
+        "mean_purchase_count_so_far": 8.5,
+        "median_purchase_count_so_far": 5.0,
+        "pct_2_or_fewer": 32.41,
+        "pct_3_to_5": 22.81,
+        "pct_gt_5": 44.78
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 57.81,
+        "pct_recurring_same_bucket_for_customer_item": 54.64,
+        "pct_isolated_in_bucket": 45.36,
+        "pct_target_within_0.5_2x_personal_hist_median": 63.530517199117575,
+        "median_target_over_hist_median_ratio": 1.424
+      },
+      "window_position": {
+        "mean_days_to_data_end": 1020.8,
+        "median_days_to_data_end": 1022.0,
+        "pct_invoice_in_last_180d_of_dataset": 6.46
+      },
+      "pred_distribution": {
+        "mean": 101.61,
+        "median": 82.23,
+        "p95": 227.5
+      }
+    },
+    "61-90": {
+      "range_days": [
+        61,
+        90
+      ],
+      "count": 35822,
+      "pct": 7.31,
+      "target_mean": 73.24,
+      "target_median": 72.0,
+      "mae_production_model": 57.35,
+      "medae_production_model": 39.66,
+      "mean_signed_error_pred_minus_actual": 42.17,
+      "mae_historical_median_baseline": 56.24,
+      "history_depth": {
+        "mean_purchase_count_so_far": 7.16,
+        "median_purchase_count_so_far": 4.0,
+        "pct_2_or_fewer": 37.08,
+        "pct_3_to_5": 24.58,
+        "pct_gt_5": 38.34
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 52.14,
+        "pct_recurring_same_bucket_for_customer_item": 54.26,
+        "pct_isolated_in_bucket": 45.74,
+        "pct_target_within_0.5_2x_personal_hist_median": 49.73254300997542,
+        "median_target_over_hist_median_ratio": 1.674
+      },
+      "window_position": {
+        "mean_days_to_data_end": 1034.7,
+        "median_days_to_data_end": 1045.0,
+        "pct_invoice_in_last_180d_of_dataset": 5.56
+      },
+      "pred_distribution": {
+        "mean": 115.41,
+        "median": 102.13,
+        "p95": 237.82
+      }
+    },
+    "91-120": {
+      "range_days": [
+        91,
+        120
+      ],
+      "count": 20479,
+      "pct": 4.18,
+      "target_mean": 104.31,
+      "target_median": 104.0,
+      "mae_production_model": 58.26,
+      "medae_production_model": 50.12,
+      "mean_signed_error_pred_minus_actual": 27.69,
+      "mae_historical_median_baseline": 80.69,
+      "history_depth": {
+        "mean_purchase_count_so_far": 5.94,
+        "median_purchase_count_so_far": 3.0,
+        "pct_2_or_fewer": 42.86,
+        "pct_3_to_5": 24.83,
+        "pct_gt_5": 32.31
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 43.67,
+        "pct_recurring_same_bucket_for_customer_item": 37.46,
+        "pct_isolated_in_bucket": 62.54,
+        "pct_target_within_0.5_2x_personal_hist_median": 41.3693669527897,
+        "median_target_over_hist_median_ratio": 1.9
+      },
+      "window_position": {
+        "mean_days_to_data_end": 1056.8,
+        "median_days_to_data_end": 1064.0,
+        "pct_invoice_in_last_180d_of_dataset": 4.02
+      },
+      "pred_distribution": {
+        "mean": 132.0,
+        "median": 126.26,
+        "p95": 247.2
+      }
+    },
+    "121-180": {
+      "range_days": [
+        121,
+        180
+      ],
+      "count": 23474,
+      "pct": 4.79,
+      "target_mean": 146.63,
+      "target_median": 145.0,
+      "mae_production_model": 57.85,
+      "medae_production_model": 53.68,
+      "mean_signed_error_pred_minus_actual": -1.69,
+      "mae_historical_median_baseline": 114.02,
+      "history_depth": {
+        "mean_purchase_count_so_far": 5.01,
+        "median_purchase_count_so_far": 3.0,
+        "pct_2_or_fewer": 48.43,
+        "pct_3_to_5": 24.78,
+        "pct_gt_5": 26.79
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 36.4,
+        "pct_recurring_same_bucket_for_customer_item": 38.37,
+        "pct_isolated_in_bucket": 61.63,
+        "pct_target_within_0.5_2x_personal_hist_median": 36.59137071459347,
+        "median_target_over_hist_median_ratio": 2.263
+      },
+      "window_position": {
+        "mean_days_to_data_end": 1074.3,
+        "median_days_to_data_end": 1074.0,
+        "pct_invoice_in_last_180d_of_dataset": 1.87
+      },
+      "pred_distribution": {
+        "mean": 144.95,
+        "median": 140.54,
+        "p95": 255.17
+      }
+    },
+    ">180": {
+      "range_days": [
+        181,
+        null
+      ],
+      "count": 60284,
+      "pct": 12.3,
+      "target_mean": 486.04,
+      "target_median": 362.0,
+      "mae_production_model": 320.43,
+      "medae_production_model": 205.15,
+      "mean_signed_error_pred_minus_actual": -316.49,
+      "mae_historical_median_baseline": 419.72,
+      "history_depth": {
+        "mean_purchase_count_so_far": 3.33,
+        "median_purchase_count_so_far": 2.0,
+        "pct_2_or_fewer": 64.33,
+        "pct_3_to_5": 20.72,
+        "pct_gt_5": 14.95
+      },
+      "recurring_vs_isolated": {
+        "pct_is_recurring_history_flag": 22.47,
+        "pct_recurring_same_bucket_for_customer_item": 47.62,
+        "pct_isolated_in_bucket": 52.38,
+        "pct_target_within_0.5_2x_personal_hist_median": 23.591048120892765,
+        "median_target_over_hist_median_ratio": 4.357
+      },
+      "window_position": {
+        "mean_days_to_data_end": 1260.7,
+        "median_days_to_data_end": 1301.0,
+        "pct_invoice_in_last_180d_of_dataset": 0.0
+      },
+      "pred_distribution": {
+        "mean": 169.55,
+        "median": 175.24,
+        "p95": 266.25
+      }
+    }
+  },
+  "interpretation": {
+    "data_span": {
+      "min": "2020-12-24",
+      "max": "2026-08-31"
+    },
+    "supervised_rows": 489960,
+    "long_interval_share_gt_90d_pct": 21.27,
+    "chronic_like_15_45_share_pct": 41.26,
+    "long_vs_short_history_depth": {
+      "long_mean_purchase_count": 4.22,
+      "short_15_45_mean_purchase_count": 13.13
+    },
+    "long_recurring_same_bucket_pct": 43.54,
+    "long_is_recurring_history_flag_pct": 29.77,
+    "production_model_mae_long_gt_90": 209.79,
+    "production_model_mae_15_45": 47.13,
+    "production_signed_error_long_gt_90": -177.98,
+    "notes": [
+      "Observed targets require both purchases in-window; ultra-long gaps near dataset end are under-represented (right-truncation).",
+      "Censoring primarily affects last purchases (no target), not rows that already have a measured next-purchase interval.",
+      "Isolated long gaps with shallow history are more likely irregular purchases or stockpiling/travel gaps than stable chronic refill cadence.",
+      "Recurring same-bucket long intervals with deeper history can be genuine low-frequency refill behavior (e.g., 90\u2013120 day packs)."
+    ],
+    "long_interval_heuristic_classes_pct": {
+      "likely_genuine_low_frequency_refill": 10.0,
+      "likely_irregular_break_from_personal_cadence": 25.32,
+      "likely_irregular_or_cold_start_gap": 39.54,
+      "mixed_or_unclear": 24.84,
+      "possible_edge_of_window_selection_effect": 0.3
+    }
+  }
+}

@@ -1,0 +1,1221 @@
+{
+  "experiment": "PHASE_17D_TARGET_HANDLING_EXPERIMENT",
+  "xgboost_version": "3.4.0",
+  "read_only": true,
+  "production_model_replaced": false,
+  "evaluation_note": "All strategies evaluated against ORIGINAL (uncapped, untransformed) validation/test targets for operational fairness.",
+  "evidence_basis": "docs/PHASE_17D_LONG_INTERVAL_ANALYSIS.md",
+  "controls": {
+    "features_numeric": [
+      "purchase_count_so_far",
+      "days_since_first_purchase",
+      "days_since_previous_purchase",
+      "historical_interval_median",
+      "historical_interval_mean",
+      "historical_interval_std",
+      "historical_interval_min",
+      "historical_interval_max",
+      "historical_interval_cv",
+      "quantity",
+      "freeQuantity",
+      "avg_historical_quantity",
+      "quantity_vs_avg_ratio",
+      "purchase_month",
+      "purchase_day_of_week",
+      "purchase_day_of_month",
+      "purchase_day_of_year",
+      "purchase_quarter",
+      "is_weekend",
+      "is_first_purchase",
+      "has_multiple_prior_purchases",
+      "is_recurring_history"
+    ],
+    "features_categorical": [
+      "salt_category",
+      "salt_itemcat"
+    ],
+    "hyperparameters": {
+      "objective": "reg:squarederror",
+      "n_estimators": 150,
+      "max_depth": 6,
+      "learning_rate": 0.05,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "n_jobs": 2,
+      "tree_method": "hist"
+    },
+    "train_rows": 465610,
+    "val_rows": 12767,
+    "test_rows": 7488,
+    "train_date_min": "2020-12-24",
+    "train_date_max": "2026-04-30",
+    "val_date_min": "2026-05-01",
+    "val_date_max": "2026-06-30",
+    "test_date_min": "2026-07-01",
+    "test_date_max": "2026-08-30",
+    "preprocessing": "Single fit ColumnTransformer (median impute + OHE min_frequency=50)",
+    "target_filter": "target_days_until_next_purchase > 0",
+    "fixed_objective": "reg:squarederror (production default; isolates target handling)"
+  },
+  "train_label_stats": {
+    "raw": {
+      "mean": 96.86,
+      "median": 31.0,
+      "p95": 450.0,
+      "max": 2060.0,
+      "pct_gt_120": 17.99,
+      "pct_gt_180": 12.95
+    },
+    "unchanged": {
+      "mean": 96.86,
+      "median": 31.0,
+      "p95": 450.0,
+      "max": 2060.0,
+      "n_changed_vs_raw": 0
+    },
+    "cap_120": {
+      "mean": 48.13,
+      "median": 31.0,
+      "p95": 120.0,
+      "max": 120.0,
+      "n_changed_vs_raw": 83753
+    },
+    "cap_180": {
+      "mean": 57.24,
+      "median": 31.0,
+      "p95": 180.0,
+      "max": 180.0,
+      "n_changed_vs_raw": 60284
+    },
+    "log1p": {
+      "mean": 3.64,
+      "median": 3.47,
+      "p95": 6.11,
+      "max": 7.63,
+      "n_changed_vs_raw": 465610
+    }
+  },
+  "strategies": {
+    "unchanged": {
+      "kind": "identity",
+      "cap": null,
+      "evidence": "Control: Phase 4 / production target as-is",
+      "training_time_sec": 12.39,
+      "train_target_summary": {
+        "mean": 96.86,
+        "median": 31.0,
+        "p95": 450.0,
+        "max": 2060.0,
+        "n_changed_vs_raw": 0
+      },
+      "validation": {
+        "count": 12767,
+        "mae": 42.93,
+        "medae": 19.69,
+        "rmse": 68.44,
+        "within_3_days_pct": 9.53,
+        "within_7_days_pct": 22.25,
+        "actual_target": {
+          "mean": 28.2,
+          "median": 25.0,
+          "min": 1.0,
+          "max": 121.0
+        },
+        "predicted_target": {
+          "mean": 67.94,
+          "median": 43.75,
+          "min": 2.04,
+          "max": 408.0,
+          "negative_raw_predictions_clipped": 0
+        }
+      },
+      "test": {
+        "count": 7488,
+        "mae": 43.29,
+        "medae": 19.61,
+        "rmse": 69.58,
+        "within_3_days_pct": 9.67,
+        "within_7_days_pct": 23.14,
+        "actual_target": {
+          "mean": 18.97,
+          "median": 17.0,
+          "min": 1.0,
+          "max": 60.0
+        },
+        "predicted_target": {
+          "mean": 61.25,
+          "median": 38.71,
+          "min": 1.0,
+          "max": 332.48,
+          "negative_raw_predictions_clipped": 1
+        }
+      },
+      "validation_cohorts": {
+        "overall": {
+          "count": 12767,
+          "mae": 42.93,
+          "medae": 19.69,
+          "rmse": 68.44,
+          "within_3_days_pct": 9.53,
+          "within_7_days_pct": 22.25
+        },
+        "depth_2": {
+          "count": 2269,
+          "mae": 127.6,
+          "medae": 125.76,
+          "rmse": 139.82,
+          "within_3_days_pct": 0.26,
+          "within_7_days_pct": 0.35
+        },
+        "depth_3_to_5": {
+          "count": 1840,
+          "mae": 54.34,
+          "medae": 39.85,
+          "rmse": 69.97,
+          "within_3_days_pct": 1.68,
+          "within_7_days_pct": 4.62
+        },
+        "depth_gt_5": {
+          "count": 8658,
+          "mae": 18.32,
+          "medae": 11.64,
+          "rmse": 27.26,
+          "within_3_days_pct": 13.63,
+          "within_7_days_pct": 31.74
+        },
+        "actual_le_90d": {
+          "count": 12577,
+          "mae": 42.74,
+          "medae": 19.37,
+          "rmse": 68.42,
+          "within_3_days_pct": 9.62,
+          "within_7_days_pct": 22.49
+        },
+        "actual_le_120d": {
+          "count": 12762,
+          "mae": 42.92,
+          "medae": 19.68,
+          "rmse": 68.44,
+          "within_3_days_pct": 9.54,
+          "within_7_days_pct": 22.26
+        },
+        "actual_le_180d": {
+          "count": 12767,
+          "mae": 42.93,
+          "medae": 19.69,
+          "rmse": 68.44,
+          "within_3_days_pct": 9.53,
+          "within_7_days_pct": 22.25
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3526,
+          "mae": 51.71,
+          "medae": 23.97,
+          "rmse": 80.35,
+          "within_3_days_pct": 5.19,
+          "within_7_days_pct": 15.37
+        },
+        "interval_15_45": {
+          "count": 7236,
+          "mae": 36.76,
+          "medae": 14.88,
+          "rmse": 61.33,
+          "within_3_days_pct": 12.66,
+          "within_7_days_pct": 28.25
+        },
+        "interval_46_90": {
+          "count": 1815,
+          "mae": 49.12,
+          "medae": 29.26,
+          "rmse": 70.02,
+          "within_3_days_pct": 6.12,
+          "within_7_days_pct": 13.39
+        },
+        "interval_91_180": {
+          "count": 190,
+          "mae": 55.96,
+          "medae": 45.53,
+          "rmse": 69.65,
+          "within_3_days_pct": 3.68,
+          "within_7_days_pct": 6.32
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      },
+      "test_cohorts": {
+        "overall": {
+          "count": 7488,
+          "mae": 43.29,
+          "medae": 19.61,
+          "rmse": 69.58,
+          "within_3_days_pct": 9.67,
+          "within_7_days_pct": 23.14
+        },
+        "depth_2": {
+          "count": 1282,
+          "mae": 132.81,
+          "medae": 138.03,
+          "rmse": 144.6,
+          "within_3_days_pct": 0.0,
+          "within_7_days_pct": 0.0
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 57.31,
+          "medae": 41.29,
+          "rmse": 72.95,
+          "within_3_days_pct": 0.86,
+          "within_7_days_pct": 1.62
+        },
+        "depth_gt_5": {
+          "count": 5155,
+          "mae": 18.17,
+          "medae": 11.55,
+          "rmse": 27.33,
+          "within_3_days_pct": 13.87,
+          "within_7_days_pct": 33.29
+        },
+        "actual_le_90d": {
+          "count": 7488,
+          "mae": 43.29,
+          "medae": 19.61,
+          "rmse": 69.58,
+          "within_3_days_pct": 9.67,
+          "within_7_days_pct": 23.14
+        },
+        "actual_le_120d": {
+          "count": 7488,
+          "mae": 43.29,
+          "medae": 19.61,
+          "rmse": 69.58,
+          "within_3_days_pct": 9.67,
+          "within_7_days_pct": 23.14
+        },
+        "actual_le_180d": {
+          "count": 7488,
+          "mae": 43.29,
+          "medae": 19.61,
+          "rmse": 69.58,
+          "within_3_days_pct": 9.67,
+          "within_7_days_pct": 23.14
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3221,
+          "mae": 52.29,
+          "medae": 24.74,
+          "rmse": 80.2,
+          "within_3_days_pct": 5.81,
+          "within_7_days_pct": 16.14
+        },
+        "interval_15_45": {
+          "count": 4075,
+          "mae": 36.16,
+          "medae": 15.65,
+          "rmse": 60.0,
+          "within_3_days_pct": 12.88,
+          "within_7_days_pct": 29.06
+        },
+        "interval_46_90": {
+          "count": 192,
+          "mae": 43.61,
+          "medae": 20.16,
+          "rmse": 66.84,
+          "within_3_days_pct": 6.25,
+          "within_7_days_pct": 15.1
+        },
+        "interval_91_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      }
+    },
+    "cap_120": {
+      "kind": "cap",
+      "cap": 120.0,
+      "evidence": "Long-interval analysis: >120d arguably non-core refill signal; 91\u2013120 still mixed but >120 increasingly irregular",
+      "training_time_sec": 10.99,
+      "train_target_summary": {
+        "mean": 48.13,
+        "median": 31.0,
+        "p95": 120.0,
+        "max": 120.0,
+        "n_changed_vs_raw": 83753
+      },
+      "validation": {
+        "count": 12767,
+        "mae": 17.76,
+        "medae": 11.88,
+        "rmse": 24.51,
+        "within_3_days_pct": 15.14,
+        "within_7_days_pct": 33.35,
+        "actual_target": {
+          "mean": 28.2,
+          "median": 25.0,
+          "min": 1.0,
+          "max": 121.0
+        },
+        "predicted_target": {
+          "mean": 40.11,
+          "median": 36.44,
+          "min": 2.28,
+          "max": 111.9,
+          "negative_raw_predictions_clipped": 0
+        }
+      },
+      "test": {
+        "count": 7488,
+        "mae": 19.06,
+        "medae": 12.62,
+        "rmse": 26.26,
+        "within_3_days_pct": 14.42,
+        "within_7_days_pct": 32.09,
+        "actual_target": {
+          "mean": 18.97,
+          "median": 17.0,
+          "min": 1.0,
+          "max": 60.0
+        },
+        "predicted_target": {
+          "mean": 36.48,
+          "median": 33.51,
+          "min": 2.1,
+          "max": 109.98,
+          "negative_raw_predictions_clipped": 0
+        }
+      },
+      "validation_cohorts": {
+        "overall": {
+          "count": 12767,
+          "mae": 17.76,
+          "medae": 11.88,
+          "rmse": 24.51,
+          "within_3_days_pct": 15.14,
+          "within_7_days_pct": 33.35
+        },
+        "depth_2": {
+          "count": 2269,
+          "mae": 33.18,
+          "medae": 30.9,
+          "rmse": 38.22,
+          "within_3_days_pct": 3.75,
+          "within_7_days_pct": 8.77
+        },
+        "depth_3_to_5": {
+          "count": 1840,
+          "mae": 22.73,
+          "medae": 17.52,
+          "rmse": 29.14,
+          "within_3_days_pct": 6.79,
+          "within_7_days_pct": 18.21
+        },
+        "depth_gt_5": {
+          "count": 8658,
+          "mae": 12.66,
+          "medae": 8.56,
+          "rmse": 17.96,
+          "within_3_days_pct": 19.9,
+          "within_7_days_pct": 43.01
+        },
+        "actual_le_90d": {
+          "count": 12577,
+          "mae": 17.37,
+          "medae": 11.66,
+          "rmse": 23.98,
+          "within_3_days_pct": 15.36,
+          "within_7_days_pct": 33.85
+        },
+        "actual_le_120d": {
+          "count": 12762,
+          "mae": 17.74,
+          "medae": 11.88,
+          "rmse": 24.47,
+          "within_3_days_pct": 15.15,
+          "within_7_days_pct": 33.36
+        },
+        "actual_le_180d": {
+          "count": 12767,
+          "mae": 17.76,
+          "medae": 11.88,
+          "rmse": 24.51,
+          "within_3_days_pct": 15.14,
+          "within_7_days_pct": 33.35
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3526,
+          "mae": 23.5,
+          "medae": 16.11,
+          "rmse": 31.3,
+          "within_3_days_pct": 9.78,
+          "within_7_days_pct": 24.73
+        },
+        "interval_15_45": {
+          "count": 7236,
+          "mae": 14.61,
+          "medae": 9.63,
+          "rmse": 20.41,
+          "within_3_days_pct": 19.02,
+          "within_7_days_pct": 39.94
+        },
+        "interval_46_90": {
+          "count": 1815,
+          "mae": 16.43,
+          "medae": 14.11,
+          "rmse": 20.5,
+          "within_3_days_pct": 11.63,
+          "within_7_days_pct": 27.27
+        },
+        "interval_91_180": {
+          "count": 190,
+          "mae": 43.8,
+          "medae": 42.52,
+          "rmse": 48.06,
+          "within_3_days_pct": 0.53,
+          "within_7_days_pct": 0.53
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      },
+      "test_cohorts": {
+        "overall": {
+          "count": 7488,
+          "mae": 19.06,
+          "medae": 12.62,
+          "rmse": 26.26,
+          "within_3_days_pct": 14.42,
+          "within_7_days_pct": 32.09
+        },
+        "depth_2": {
+          "count": 1282,
+          "mae": 40.54,
+          "medae": 41.17,
+          "rmse": 44.29,
+          "within_3_days_pct": 0.39,
+          "within_7_days_pct": 2.18
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 26.4,
+          "medae": 21.22,
+          "rmse": 32.48,
+          "within_3_days_pct": 4.38,
+          "within_7_days_pct": 11.61
+        },
+        "depth_gt_5": {
+          "count": 5155,
+          "mae": 12.22,
+          "medae": 8.28,
+          "rmse": 17.28,
+          "within_3_days_pct": 19.96,
+          "within_7_days_pct": 43.71
+        },
+        "actual_le_90d": {
+          "count": 7488,
+          "mae": 19.06,
+          "medae": 12.62,
+          "rmse": 26.26,
+          "within_3_days_pct": 14.42,
+          "within_7_days_pct": 32.09
+        },
+        "actual_le_120d": {
+          "count": 7488,
+          "mae": 19.06,
+          "medae": 12.62,
+          "rmse": 26.26,
+          "within_3_days_pct": 14.42,
+          "within_7_days_pct": 32.09
+        },
+        "actual_le_180d": {
+          "count": 7488,
+          "mae": 19.06,
+          "medae": 12.62,
+          "rmse": 26.26,
+          "within_3_days_pct": 14.42,
+          "within_7_days_pct": 32.09
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3221,
+          "mae": 24.4,
+          "medae": 17.48,
+          "rmse": 32.18,
+          "within_3_days_pct": 8.54,
+          "within_7_days_pct": 23.63
+        },
+        "interval_15_45": {
+          "count": 4075,
+          "mae": 15.01,
+          "medae": 10.07,
+          "rmse": 20.8,
+          "within_3_days_pct": 19.21,
+          "within_7_days_pct": 39.04
+        },
+        "interval_46_90": {
+          "count": 192,
+          "mae": 15.23,
+          "medae": 13.7,
+          "rmse": 18.37,
+          "within_3_days_pct": 11.46,
+          "within_7_days_pct": 26.56
+        },
+        "interval_91_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      }
+    },
+    "cap_180": {
+      "kind": "cap",
+      "cap": 180.0,
+      "evidence": "Long-interval analysis: >180d = 12.3%, median depth 2, ~65% irregular/cold-start/break; dominate overall MAE",
+      "training_time_sec": 10.85,
+      "train_target_summary": {
+        "mean": 57.24,
+        "median": 31.0,
+        "p95": 180.0,
+        "max": 180.0,
+        "n_changed_vs_raw": 60284
+      },
+      "validation": {
+        "count": 12767,
+        "mae": 22.11,
+        "medae": 13.85,
+        "rmse": 31.34,
+        "within_3_days_pct": 13.4,
+        "within_7_days_pct": 29.7,
+        "actual_target": {
+          "mean": 28.2,
+          "median": 25.0,
+          "min": 1.0,
+          "max": 121.0
+        },
+        "predicted_target": {
+          "mean": 45.66,
+          "median": 38.51,
+          "min": 1.06,
+          "max": 142.18,
+          "negative_raw_predictions_clipped": 0
+        }
+      },
+      "test": {
+        "count": 7488,
+        "mae": 23.8,
+        "medae": 14.63,
+        "rmse": 33.8,
+        "within_3_days_pct": 12.73,
+        "within_7_days_pct": 29.13,
+        "actual_target": {
+          "mean": 18.97,
+          "median": 17.0,
+          "min": 1.0,
+          "max": 60.0
+        },
+        "predicted_target": {
+          "mean": 41.42,
+          "median": 34.97,
+          "min": 1.0,
+          "max": 140.74,
+          "negative_raw_predictions_clipped": 1
+        }
+      },
+      "validation_cohorts": {
+        "overall": {
+          "count": 12767,
+          "mae": 22.11,
+          "medae": 13.85,
+          "rmse": 31.34,
+          "within_3_days_pct": 13.4,
+          "within_7_days_pct": 29.7
+        },
+        "depth_2": {
+          "count": 2269,
+          "mae": 46.25,
+          "medae": 43.77,
+          "rmse": 52.46,
+          "within_3_days_pct": 2.51,
+          "within_7_days_pct": 4.94
+        },
+        "depth_3_to_5": {
+          "count": 1840,
+          "mae": 29.13,
+          "medae": 21.48,
+          "rmse": 37.75,
+          "within_3_days_pct": 6.2,
+          "within_7_days_pct": 13.37
+        },
+        "depth_gt_5": {
+          "count": 8658,
+          "mae": 14.29,
+          "medae": 9.29,
+          "rmse": 20.6,
+          "within_3_days_pct": 17.79,
+          "within_7_days_pct": 39.66
+        },
+        "actual_le_90d": {
+          "count": 12577,
+          "mae": 21.89,
+          "medae": 13.63,
+          "rmse": 31.13,
+          "within_3_days_pct": 13.54,
+          "within_7_days_pct": 30.02
+        },
+        "actual_le_120d": {
+          "count": 12762,
+          "mae": 22.09,
+          "medae": 13.84,
+          "rmse": 31.31,
+          "within_3_days_pct": 13.41,
+          "within_7_days_pct": 29.71
+        },
+        "actual_le_180d": {
+          "count": 12767,
+          "mae": 22.11,
+          "medae": 13.85,
+          "rmse": 31.34,
+          "within_3_days_pct": 13.4,
+          "within_7_days_pct": 29.7
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3526,
+          "mae": 28.55,
+          "medae": 17.71,
+          "rmse": 39.48,
+          "within_3_days_pct": 8.93,
+          "within_7_days_pct": 22.83
+        },
+        "interval_15_45": {
+          "count": 7236,
+          "mae": 19.01,
+          "medae": 11.07,
+          "rmse": 27.64,
+          "within_3_days_pct": 16.71,
+          "within_7_days_pct": 36.07
+        },
+        "interval_46_90": {
+          "count": 1815,
+          "mae": 20.45,
+          "medae": 17.49,
+          "rmse": 25.31,
+          "within_3_days_pct": 9.86,
+          "within_7_days_pct": 19.83
+        },
+        "interval_91_180": {
+          "count": 190,
+          "mae": 36.39,
+          "medae": 34.02,
+          "rmse": 42.97,
+          "within_3_days_pct": 4.21,
+          "within_7_days_pct": 8.95
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      },
+      "test_cohorts": {
+        "overall": {
+          "count": 7488,
+          "mae": 23.8,
+          "medae": 14.63,
+          "rmse": 33.8,
+          "within_3_days_pct": 12.73,
+          "within_7_days_pct": 29.13
+        },
+        "depth_2": {
+          "count": 1282,
+          "mae": 55.33,
+          "medae": 56.62,
+          "rmse": 59.91,
+          "within_3_days_pct": 0.23,
+          "within_7_days_pct": 0.7
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 33.48,
+          "medae": 25.78,
+          "rmse": 41.73,
+          "within_3_days_pct": 2.76,
+          "within_7_days_pct": 8.09
+        },
+        "depth_gt_5": {
+          "count": 5155,
+          "mae": 13.99,
+          "medae": 9.13,
+          "rmse": 20.29,
+          "within_3_days_pct": 17.87,
+          "within_7_days_pct": 40.48
+        },
+        "actual_le_90d": {
+          "count": 7488,
+          "mae": 23.8,
+          "medae": 14.63,
+          "rmse": 33.8,
+          "within_3_days_pct": 12.73,
+          "within_7_days_pct": 29.13
+        },
+        "actual_le_120d": {
+          "count": 7488,
+          "mae": 23.8,
+          "medae": 14.63,
+          "rmse": 33.8,
+          "within_3_days_pct": 12.73,
+          "within_7_days_pct": 29.13
+        },
+        "actual_le_180d": {
+          "count": 7488,
+          "mae": 23.8,
+          "medae": 14.63,
+          "rmse": 33.8,
+          "within_3_days_pct": 12.73,
+          "within_7_days_pct": 29.13
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3221,
+          "mae": 29.64,
+          "medae": 19.58,
+          "rmse": 40.44,
+          "within_3_days_pct": 7.98,
+          "within_7_days_pct": 21.79
+        },
+        "interval_15_45": {
+          "count": 4075,
+          "mae": 19.36,
+          "medae": 11.6,
+          "rmse": 27.86,
+          "within_3_days_pct": 16.69,
+          "within_7_days_pct": 35.36
+        },
+        "interval_46_90": {
+          "count": 192,
+          "mae": 20.26,
+          "medae": 16.96,
+          "rmse": 25.33,
+          "within_3_days_pct": 8.33,
+          "within_7_days_pct": 19.79
+        },
+        "interval_91_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      }
+    },
+    "log1p": {
+      "kind": "log1p",
+      "cap": null,
+      "evidence": "Robust transform for heavy-tailed refill intervals (ultra-long gaps inflate squared error on raw days scale)",
+      "training_time_sec": 10.57,
+      "train_target_summary": {
+        "mean": 3.64,
+        "median": 3.47,
+        "p95": 6.11,
+        "max": 7.63,
+        "n_changed_vs_raw": 465610
+      },
+      "validation": {
+        "count": 12767,
+        "mae": 16.13,
+        "medae": 9.13,
+        "rmse": 24.59,
+        "within_3_days_pct": 21.55,
+        "within_7_days_pct": 42.37,
+        "actual_target": {
+          "mean": 28.2,
+          "median": 25.0,
+          "min": 1.0,
+          "max": 121.0
+        },
+        "predicted_target": {
+          "mean": 35.62,
+          "median": 31.26,
+          "min": 1.72,
+          "max": 178.3,
+          "negative_raw_predictions_clipped": 0
+        }
+      },
+      "test": {
+        "count": 7488,
+        "mae": 15.67,
+        "medae": 8.46,
+        "rmse": 24.62,
+        "within_3_days_pct": 23.8,
+        "within_7_days_pct": 44.55,
+        "actual_target": {
+          "mean": 18.97,
+          "median": 17.0,
+          "min": 1.0,
+          "max": 60.0
+        },
+        "predicted_target": {
+          "mean": 31.62,
+          "median": 26.67,
+          "min": 1.83,
+          "max": 172.48,
+          "negative_raw_predictions_clipped": 0
+        }
+      },
+      "validation_cohorts": {
+        "overall": {
+          "count": 12767,
+          "mae": 16.13,
+          "medae": 9.13,
+          "rmse": 24.59,
+          "within_3_days_pct": 21.55,
+          "within_7_days_pct": 42.37
+        },
+        "depth_2": {
+          "count": 2269,
+          "mae": 32.19,
+          "medae": 27.76,
+          "rmse": 39.82,
+          "within_3_days_pct": 4.14,
+          "within_7_days_pct": 10.45
+        },
+        "depth_3_to_5": {
+          "count": 1840,
+          "mae": 21.16,
+          "medae": 13.74,
+          "rmse": 30.44,
+          "within_3_days_pct": 13.04,
+          "within_7_days_pct": 29.02
+        },
+        "depth_gt_5": {
+          "count": 8658,
+          "mae": 10.85,
+          "medae": 6.27,
+          "rmse": 16.72,
+          "within_3_days_pct": 27.92,
+          "within_7_days_pct": 53.58
+        },
+        "actual_le_90d": {
+          "count": 12577,
+          "mae": 15.62,
+          "medae": 8.93,
+          "rmse": 23.85,
+          "within_3_days_pct": 21.86,
+          "within_7_days_pct": 42.97
+        },
+        "actual_le_120d": {
+          "count": 12762,
+          "mae": 16.1,
+          "medae": 9.13,
+          "rmse": 24.54,
+          "within_3_days_pct": 21.56,
+          "within_7_days_pct": 42.39
+        },
+        "actual_le_180d": {
+          "count": 12767,
+          "mae": 16.13,
+          "medae": 9.13,
+          "rmse": 24.59,
+          "within_3_days_pct": 21.55,
+          "within_7_days_pct": 42.37
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3526,
+          "mae": 18.88,
+          "medae": 9.64,
+          "rmse": 29.1,
+          "within_3_days_pct": 21.47,
+          "within_7_days_pct": 41.12
+        },
+        "interval_15_45": {
+          "count": 7236,
+          "mae": 12.51,
+          "medae": 7.06,
+          "rmse": 19.95,
+          "within_3_days_pct": 25.32,
+          "within_7_days_pct": 49.7
+        },
+        "interval_46_90": {
+          "count": 1815,
+          "mae": 21.67,
+          "medae": 19.25,
+          "rmse": 26.66,
+          "within_3_days_pct": 8.82,
+          "within_7_days_pct": 19.72
+        },
+        "interval_91_180": {
+          "count": 190,
+          "mae": 49.48,
+          "medae": 50.02,
+          "rmse": 54.57,
+          "within_3_days_pct": 1.05,
+          "within_7_days_pct": 3.16
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      },
+      "test_cohorts": {
+        "overall": {
+          "count": 7488,
+          "mae": 15.67,
+          "medae": 8.46,
+          "rmse": 24.62,
+          "within_3_days_pct": 23.8,
+          "within_7_days_pct": 44.55
+        },
+        "depth_2": {
+          "count": 1282,
+          "mae": 37.12,
+          "medae": 35.37,
+          "rmse": 44.2,
+          "within_3_days_pct": 3.28,
+          "within_7_days_pct": 6.47
+        },
+        "depth_3_to_5": {
+          "count": 1051,
+          "mae": 21.73,
+          "medae": 13.42,
+          "rmse": 31.32,
+          "within_3_days_pct": 11.7,
+          "within_7_days_pct": 28.16
+        },
+        "depth_gt_5": {
+          "count": 5155,
+          "mae": 9.1,
+          "medae": 5.57,
+          "rmse": 13.96,
+          "within_3_days_pct": 31.37,
+          "within_7_days_pct": 57.36
+        },
+        "actual_le_90d": {
+          "count": 7488,
+          "mae": 15.67,
+          "medae": 8.46,
+          "rmse": 24.62,
+          "within_3_days_pct": 23.8,
+          "within_7_days_pct": 44.55
+        },
+        "actual_le_120d": {
+          "count": 7488,
+          "mae": 15.67,
+          "medae": 8.46,
+          "rmse": 24.62,
+          "within_3_days_pct": 23.8,
+          "within_7_days_pct": 44.55
+        },
+        "actual_le_180d": {
+          "count": 7488,
+          "mae": 15.67,
+          "medae": 8.46,
+          "rmse": 24.62,
+          "within_3_days_pct": 23.8,
+          "within_7_days_pct": 44.55
+        },
+        "actual_gt_180d": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_0_14": {
+          "count": 3221,
+          "mae": 19.48,
+          "medae": 10.13,
+          "rmse": 29.74,
+          "within_3_days_pct": 21.33,
+          "within_7_days_pct": 40.02
+        },
+        "interval_15_45": {
+          "count": 4075,
+          "mae": 12.52,
+          "medae": 7.17,
+          "rmse": 19.76,
+          "within_3_days_pct": 26.28,
+          "within_7_days_pct": 49.15
+        },
+        "interval_46_90": {
+          "count": 192,
+          "mae": 18.45,
+          "medae": 17.11,
+          "rmse": 22.83,
+          "within_3_days_pct": 12.5,
+          "within_7_days_pct": 22.92
+        },
+        "interval_91_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        },
+        "interval_gt_180": {
+          "count": 0,
+          "mae": null,
+          "medae": null,
+          "rmse": null,
+          "within_3_days_pct": null,
+          "within_7_days_pct": null
+        }
+      }
+    }
+  },
+  "ranking_by_validation_mae": [
+    {
+      "strategy": "log1p",
+      "val_mae": 16.13,
+      "val_medae": 9.13,
+      "val_within_7d": 42.37,
+      "test_mae": 15.67,
+      "test_medae": 8.46,
+      "test_within_7d": 44.55,
+      "test_depth_gt5_mae": 9.1,
+      "test_actual_le_180_mae": 15.67
+    },
+    {
+      "strategy": "cap_120",
+      "val_mae": 17.76,
+      "val_medae": 11.88,
+      "val_within_7d": 33.35,
+      "test_mae": 19.06,
+      "test_medae": 12.62,
+      "test_within_7d": 32.09,
+      "test_depth_gt5_mae": 12.22,
+      "test_actual_le_180_mae": 19.06
+    },
+    {
+      "strategy": "cap_180",
+      "val_mae": 22.11,
+      "val_medae": 13.85,
+      "val_within_7d": 29.7,
+      "test_mae": 23.8,
+      "test_medae": 14.63,
+      "test_within_7d": 29.13,
+      "test_depth_gt5_mae": 13.99,
+      "test_actual_le_180_mae": 23.8
+    },
+    {
+      "strategy": "unchanged",
+      "val_mae": 42.93,
+      "val_medae": 19.69,
+      "val_within_7d": 22.25,
+      "test_mae": 43.29,
+      "test_medae": 19.61,
+      "test_within_7d": 23.14,
+      "test_depth_gt5_mae": 18.17,
+      "test_actual_le_180_mae": 43.29
+    }
+  ],
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime_before": 1789645154.9395924,
+    "model_mtime_after": 1789645154.9395924
+  }
+}

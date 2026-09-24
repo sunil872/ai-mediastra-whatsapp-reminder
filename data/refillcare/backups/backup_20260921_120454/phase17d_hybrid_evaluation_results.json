@@ -1,0 +1,199 @@
+{
+  "experiment": "PHASE_17D_HYBRID_EVALUATION",
+  "read_only": true,
+  "production_model_retrained": false,
+  "refill_model_overwritten": false,
+  "whatsapp_messages_sent": 0,
+  "strategy_name": "hybrid_routing_v17d",
+  "controls": {
+    "test_rows_target_gt_0": 7488,
+    "test_date_min": "2026-07-01",
+    "test_date_max": "2026-08-30",
+    "train_rows_for_baseline_fallback_only": 465610,
+    "fallback_median_days": 31.0,
+    "model_path": "C:\\Users\\sunil\\ai-mediastra-whatsapp-reminder\\ai-mediastra-whatsapp-reminder\\data\\refillcare\\processed\\models\\refill_model.joblib",
+    "note": "hybrid MEDIUM branch uses existing production refill_model.joblib (not retrained). HIGH branch uses personal historical median."
+  },
+  "strategies": {
+    "current_xgboost": {
+      "label": "Current production XGBoost",
+      "always_on": true,
+      "test_row_count": 7488,
+      "eligible_accepted_count": 7488,
+      "rejected_count": 0,
+      "acceptance_pct": 100.0,
+      "rejection_pct": 0.0,
+      "mae": 43.19,
+      "medae": 19.61,
+      "rmse": 69.62,
+      "within_1_day_pct": 3.26,
+      "within_3_days_pct": 9.92,
+      "within_7_days_pct": 23.53,
+      "scored_metrics_count": 7488
+    },
+    "historical_median_baseline": {
+      "label": "Historical median baseline",
+      "always_on": true,
+      "test_row_count": 7488,
+      "eligible_accepted_count": 7488,
+      "rejected_count": 0,
+      "acceptance_pct": 100.0,
+      "rejection_pct": 0.0,
+      "mae": 26.72,
+      "medae": 7.0,
+      "rmse": 109.43,
+      "within_1_day_pct": 16.95,
+      "within_3_days_pct": 32.02,
+      "within_7_days_pct": 50.96,
+      "scored_metrics_count": 7488
+    },
+    "personal_cadence_strategy": {
+      "label": "Personal cadence (tiered)",
+      "always_on": true,
+      "test_row_count": 7488,
+      "eligible_accepted_count": 7488,
+      "rejected_count": 0,
+      "acceptance_pct": 100.0,
+      "rejection_pct": 0.0,
+      "mae": 14.08,
+      "medae": 7.0,
+      "rmse": 34.1,
+      "within_1_day_pct": 16.89,
+      "within_3_days_pct": 31.9,
+      "within_7_days_pct": 50.4,
+      "scored_metrics_count": 7488
+    },
+    "hybrid_routing_v17d": {
+      "label": "hybrid_routing_v17d",
+      "always_on": false,
+      "test_row_count": 7488,
+      "eligible_accepted_count": 2533,
+      "rejected_count": 4955,
+      "acceptance_pct": 33.83,
+      "rejection_pct": 66.17,
+      "mae": 10.39,
+      "medae": 6.0,
+      "rmse": 16.38,
+      "within_1_day_pct": 17.37,
+      "within_3_days_pct": 34.43,
+      "within_7_days_pct": 55.19,
+      "scored_metrics_count": 2533,
+      "details": {
+        "confidence_counts": {
+          "HIGH": 1819,
+          "MEDIUM": 714,
+          "REJECTED": 4955
+        },
+        "route_counts": {
+          "core_personal_median": 1819,
+          "secondary_experimental_xgb": 714,
+          "rejected": 4955
+        },
+        "HIGH": {
+          "count": 1819,
+          "mae": 7.39,
+          "medae": 4.0,
+          "rmse": 11.51,
+          "within_1_day_pct": 22.81,
+          "within_3_days_pct": 43.76,
+          "within_7_days_pct": 66.74
+        },
+        "MEDIUM": {
+          "count": 714,
+          "mae": 18.05,
+          "medae": 14.4,
+          "rmse": 24.78,
+          "within_1_day_pct": 3.5,
+          "within_3_days_pct": 10.64,
+          "within_7_days_pct": 25.77
+        },
+        "by_purchase_history_depth": {
+          "depth_le_2": {
+            "cohort_rows": 1282,
+            "eligible_accepted_count": 0,
+            "rejected_count": 1282,
+            "acceptance_pct": 0.0,
+            "mae": null,
+            "medae": null,
+            "rmse": null,
+            "within_1_day_pct": null,
+            "within_3_days_pct": null,
+            "within_7_days_pct": null
+          },
+          "depth_3_to_5": {
+            "cohort_rows": 1051,
+            "eligible_accepted_count": 0,
+            "rejected_count": 1051,
+            "acceptance_pct": 0.0,
+            "mae": null,
+            "medae": null,
+            "rmse": null,
+            "within_1_day_pct": null,
+            "within_3_days_pct": null,
+            "within_7_days_pct": null
+          },
+          "depth_6_to_10": {
+            "cohort_rows": 1051,
+            "eligible_accepted_count": 473,
+            "rejected_count": 578,
+            "acceptance_pct": 45.0,
+            "mae": 15.57,
+            "medae": 9.0,
+            "rmse": 24.2,
+            "within_1_day_pct": 10.78,
+            "within_3_days_pct": 24.52,
+            "within_7_days_pct": 44.19
+          },
+          "depth_gt_10": {
+            "cohort_rows": 4104,
+            "eligible_accepted_count": 2060,
+            "rejected_count": 2044,
+            "acceptance_pct": 50.19,
+            "mae": 9.2,
+            "medae": 5.5,
+            "rmse": 13.98,
+            "within_1_day_pct": 18.88,
+            "within_3_days_pct": 36.7,
+            "within_7_days_pct": 57.72
+          }
+        },
+        "by_regularity": {
+          "regular_class1": {
+            "cohort_rows": 2789,
+            "eligible_accepted_count": 1819,
+            "rejected_count": 970,
+            "acceptance_pct": 65.22,
+            "rejection_pct": 34.78,
+            "mae": 7.39,
+            "medae": 4.0,
+            "rmse": 11.51,
+            "within_1_day_pct": 22.81,
+            "within_3_days_pct": 43.76,
+            "within_7_days_pct": 66.74
+          },
+          "irregular_ge6": {
+            "cohort_rows": 2366,
+            "eligible_accepted_count": 714,
+            "rejected_count": 1652,
+            "acceptance_pct": 30.18,
+            "rejection_pct": 69.82,
+            "mae": 18.05,
+            "medae": 14.4,
+            "rmse": 24.78,
+            "within_1_day_pct": 3.5,
+            "within_3_days_pct": 10.64,
+            "within_7_days_pct": 25.77
+          }
+        }
+      }
+    }
+  },
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime_before": 1789645154.9395924,
+    "model_mtime_after": 1789645154.9395924,
+    "whatsapp_messages_sent": 0,
+    "production_code_modified": false
+  }
+}

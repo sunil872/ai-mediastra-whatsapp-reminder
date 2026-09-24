@@ -1,0 +1,647 @@
+{
+  "experiment": "PHASE_17K_PATH_A_ELIGIBILITY_ARCHITECTURE_AUDIT",
+  "read_only": true,
+  "strategy_promoted": false,
+  "policy_selected": false,
+  "architecture": {
+    "question": "MEDIUM-SAFE eligibility in 17J depends on production XGB, while the SAFE predictor is personal historical median. Is that gate logically safe and reproducible at real prediction time?",
+    "approach_A": {
+      "name": "Current 17J (XGB safety gate -> personal median)",
+      "eligibility_rules": {
+        "HIGH": "17F HIGH AND valid cadence stats -> personal historical median",
+        "MEDIUM_SAFE": "17F MEDIUM AND XGB<=1.5*hist (C6) AND XGB<=60 AND XGB<=2*hist (E) AND valid cadence stats -> personal historical median",
+        "MEDIUM_RISK": "17F MEDIUM failing C6/E OR missing stats demotion -> no auto",
+        "UNSTABLE": "17F UNSTABLE OR missing on unstable -> no auto"
+      },
+      "features_used_for_eligibility": [
+        "prior intervals / NormMAD / Drift / max_over_median (17F)",
+        "production XGB prediction (C6, Strategy E)",
+        "historical_interval_median"
+      ],
+      "predictor_when_accepted": "personal_historical_median",
+      "available_at_prediction_time": true,
+      "future_leakage": false,
+      "reproducibility_notes": [
+        "XGB is available at real prediction time if the production model is scored.",
+        "Eligibility is deterministic given the same model artifact + same features.",
+        "Coupling: eligibility changes if the model is retrained even when history is unchanged.",
+        "Architectural tension: gate uses a model prediction that is discarded for the output."
+      ],
+      "logically_safe_assessment": "Operationally reproducible at prediction time (no future leakage). Logically asymmetric: XGB is used only as a veto on inflation, not as the predictor. Safe if interpreted as a regime check (model stays near personal cadence); fragile if the model drifts or if inflation is not a reliable proxy for median error."
+    },
+    "approach_B": {
+      "name": "Historical-only eligibility -> personal median",
+      "eligibility_rules": {
+        "HIGH": "17F HIGH AND valid cadence stats -> personal historical median",
+        "MEDIUM_SAFE": "17F MEDIUM AND valid cadence stats -> personal historical median",
+        "MEDIUM_RISK": "missing-stats demotion of HIGH/MEDIUM only -> no auto",
+        "UNSTABLE": "17F UNSTABLE -> no auto"
+      },
+      "features_used_for_eligibility": [
+        "prior intervals / NormMAD / Drift / band / max_over_median (17F only)"
+      ],
+      "predictor_when_accepted": "personal_historical_median",
+      "available_at_prediction_time": true,
+      "future_leakage": false,
+      "reproducibility_notes": [
+        "Fully aligned: eligibility and predictor both depend only on prior intervals.",
+        "Independent of model version / retrain.",
+        "Broader coverage: includes MEDIUM rows where XGB would inflate."
+      ],
+      "logically_safe_assessment": "Fully coherent and leakage-free. Tradeoff is accuracy: accepting all 17F MEDIUM without an inflation/regime veto typically worsens MAE / catastrophic rate versus A (see metrics)."
+    },
+    "approach_C": {
+      "name": "History-stricter hybrid (17H C2\u2229C3 NormMAD<=0.40 AND Drift<=10) -> personal median; no XGB",
+      "eligibility_rules": {
+        "HIGH": "17F HIGH AND valid cadence stats -> personal historical median",
+        "MEDIUM_SAFE": "17F MEDIUM AND NormMAD<=0.4 AND Drift<=10.0 AND valid cadence stats -> personal historical median",
+        "MEDIUM_RISK": "17F MEDIUM failing C2\u2229C3 OR missing demotion -> no auto",
+        "UNSTABLE": "17F UNSTABLE -> no auto"
+      },
+      "features_used_for_eligibility": [
+        "17F Path A class (history)",
+        "NormMAD",
+        "cadence Drift"
+      ],
+      "predictor_when_accepted": "personal_historical_median",
+      "available_at_prediction_time": true,
+      "future_leakage": false,
+      "threshold_source": "Phase 17H candidate rules C2 (NormMAD<=0.40) and C3 (Drift<=10); combined here without re-optimizing on val/test.",
+      "reproducibility_notes": [
+        "No model dependency; eligibility matches median predictor's information set.",
+        "Stricter than B; may still include XGB-inflating rows and exclude variable recurrers with elevated Drift even when XGB is calm."
+      ],
+      "logically_safe_assessment": "Coherent history-only SAFE pocket. Justified by prior 17H analysis, not by new test-set tuning. May conflict with the canonical variable pattern if Drift exceeds 10."
+    },
+    "no_policy_selected": true,
+    "no_promotion": true
+  },
+  "validation": {
+    "split": "validation",
+    "date_min": "2026-05-01",
+    "date_max": "2026-06-30",
+    "universe_n": 12767,
+    "path_a_n": 8658,
+    "approach_A_17j_xgb_gate": {
+      "counts": {
+        "HIGH": 1144,
+        "MEDIUM_SAFE": 1947,
+        "MEDIUM_RISK": 1082,
+        "UNSTABLE": 4485
+      },
+      "automatic_prediction_coverage": {
+        "accepted": 3091,
+        "rejected": 5567,
+        "coverage_of_path_a_pct": 35.7,
+        "coverage_of_universe_pct": 24.21
+      },
+      "overall_accepted": {
+        "count": 3091,
+        "mae": 8.0,
+        "medae": 4.0,
+        "rmse": 12.67,
+        "within_1_day_pct": 22.0,
+        "within_3_days_pct": 43.0,
+        "within_7_days_pct": 64.77,
+        "catastrophic_count": 115,
+        "catastrophic_pct": 3.72,
+        "mean_bias": -0.09,
+        "total_absolute_error": 24730.0
+      },
+      "by_cohort": {
+        "HIGH": {
+          "count": 1144,
+          "automatic": true,
+          "metrics": {
+            "count": 1144,
+            "mae": 7.31,
+            "medae": 3.5,
+            "rmse": 11.86,
+            "within_1_day_pct": 26.84,
+            "within_3_days_pct": 48.78,
+            "within_7_days_pct": 69.14,
+            "catastrophic_count": 40,
+            "catastrophic_pct": 3.5,
+            "mean_bias": -0.18,
+            "total_absolute_error": 8359.0
+          }
+        },
+        "MEDIUM_SAFE": {
+          "count": 1947,
+          "automatic": true,
+          "metrics": {
+            "count": 1947,
+            "mae": 8.41,
+            "medae": 5.0,
+            "rmse": 13.12,
+            "within_1_day_pct": 19.16,
+            "within_3_days_pct": 39.6,
+            "within_7_days_pct": 62.2,
+            "catastrophic_count": 75,
+            "catastrophic_pct": 3.85,
+            "mean_bias": -0.04,
+            "total_absolute_error": 16371.0
+          }
+        },
+        "MEDIUM_RISK": {
+          "count": 1082,
+          "automatic": false,
+          "metrics": null
+        },
+        "UNSTABLE": {
+          "count": 4485,
+          "automatic": false,
+          "metrics": null
+        }
+      }
+    },
+    "approach_B_historical_only": {
+      "counts": {
+        "HIGH": 1144,
+        "MEDIUM_SAFE": 2803,
+        "MEDIUM_RISK": 226,
+        "UNSTABLE": 4485
+      },
+      "automatic_prediction_coverage": {
+        "accepted": 3947,
+        "rejected": 4711,
+        "coverage_of_path_a_pct": 45.59,
+        "coverage_of_universe_pct": 30.92
+      },
+      "overall_accepted": {
+        "count": 3947,
+        "mae": 9.0,
+        "medae": 5.0,
+        "rmse": 14.26,
+        "within_1_day_pct": 19.79,
+        "within_3_days_pct": 39.35,
+        "within_7_days_pct": 60.88,
+        "catastrophic_count": 198,
+        "catastrophic_pct": 5.02,
+        "mean_bias": -0.37,
+        "total_absolute_error": 35528.0
+      },
+      "by_cohort": {
+        "HIGH": {
+          "count": 1144,
+          "automatic": true,
+          "metrics": {
+            "count": 1144,
+            "mae": 7.31,
+            "medae": 3.5,
+            "rmse": 11.86,
+            "within_1_day_pct": 26.84,
+            "within_3_days_pct": 48.78,
+            "within_7_days_pct": 69.14,
+            "catastrophic_count": 40,
+            "catastrophic_pct": 3.5,
+            "mean_bias": -0.18,
+            "total_absolute_error": 8359.0
+          }
+        },
+        "MEDIUM_SAFE": {
+          "count": 2803,
+          "automatic": true,
+          "metrics": {
+            "count": 2803,
+            "mae": 9.69,
+            "medae": 6.0,
+            "rmse": 15.14,
+            "within_1_day_pct": 16.91,
+            "within_3_days_pct": 35.5,
+            "within_7_days_pct": 57.51,
+            "catastrophic_count": 158,
+            "catastrophic_pct": 5.64,
+            "mean_bias": -0.44,
+            "total_absolute_error": 27169.0
+          }
+        },
+        "MEDIUM_RISK": {
+          "count": 226,
+          "automatic": false,
+          "metrics": null
+        },
+        "UNSTABLE": {
+          "count": 4485,
+          "automatic": false,
+          "metrics": null
+        }
+      }
+    },
+    "approach_C_history_stricter_17h_C2_C3": {
+      "counts": {
+        "HIGH": 1144,
+        "MEDIUM_SAFE": 2254,
+        "MEDIUM_RISK": 775,
+        "UNSTABLE": 4485
+      },
+      "automatic_prediction_coverage": {
+        "accepted": 3398,
+        "rejected": 5260,
+        "coverage_of_path_a_pct": 39.25,
+        "coverage_of_universe_pct": 26.62
+      },
+      "overall_accepted": {
+        "count": 3398,
+        "mae": 8.34,
+        "medae": 4.5,
+        "rmse": 13.27,
+        "within_1_day_pct": 21.69,
+        "within_3_days_pct": 42.47,
+        "within_7_days_pct": 64.04,
+        "catastrophic_count": 152,
+        "catastrophic_pct": 4.47,
+        "mean_bias": -0.54,
+        "total_absolute_error": 28347.5
+      },
+      "by_cohort": {
+        "HIGH": {
+          "count": 1144,
+          "automatic": true,
+          "metrics": {
+            "count": 1144,
+            "mae": 7.31,
+            "medae": 3.5,
+            "rmse": 11.86,
+            "within_1_day_pct": 26.84,
+            "within_3_days_pct": 48.78,
+            "within_7_days_pct": 69.14,
+            "catastrophic_count": 40,
+            "catastrophic_pct": 3.5,
+            "mean_bias": -0.18,
+            "total_absolute_error": 8359.0
+          }
+        },
+        "MEDIUM_SAFE": {
+          "count": 2254,
+          "automatic": true,
+          "metrics": {
+            "count": 2254,
+            "mae": 8.87,
+            "medae": 5.0,
+            "rmse": 13.93,
+            "within_1_day_pct": 19.08,
+            "within_3_days_pct": 39.26,
+            "within_7_days_pct": 61.45,
+            "catastrophic_count": 112,
+            "catastrophic_pct": 4.97,
+            "mean_bias": -0.73,
+            "total_absolute_error": 19988.5
+          }
+        },
+        "MEDIUM_RISK": {
+          "count": 775,
+          "automatic": false,
+          "metrics": null
+        },
+        "UNSTABLE": {
+          "count": 4485,
+          "automatic": false,
+          "metrics": null
+        }
+      }
+    },
+    "missing_stats_demotions": 493,
+    "overlap_notes": {
+      "A_MEDIUM_SAFE_also_B": 1947,
+      "B_MEDIUM_SAFE_not_A": 856,
+      "C_MEDIUM_SAFE_also_A": 1642,
+      "A_MEDIUM_SAFE_not_C": 305
+    }
+  },
+  "test": {
+    "split": "test",
+    "date_min": "2026-07-01",
+    "date_max": "2026-08-31",
+    "universe_n": 7488,
+    "path_a_n": 5155,
+    "approach_A_17j_xgb_gate": {
+      "counts": {
+        "HIGH": 619,
+        "MEDIUM_SAFE": 1084,
+        "MEDIUM_RISK": 506,
+        "UNSTABLE": 2946
+      },
+      "automatic_prediction_coverage": {
+        "accepted": 1703,
+        "rejected": 3452,
+        "coverage_of_path_a_pct": 33.04,
+        "coverage_of_universe_pct": 22.74
+      },
+      "overall_accepted": {
+        "count": 1703,
+        "mae": 7.6,
+        "medae": 4.5,
+        "rmse": 11.32,
+        "within_1_day_pct": 21.2,
+        "within_3_days_pct": 41.69,
+        "within_7_days_pct": 64.06,
+        "catastrophic_count": 30,
+        "catastrophic_pct": 1.76,
+        "mean_bias": 3.57,
+        "total_absolute_error": 12941.0
+      },
+      "by_cohort": {
+        "HIGH": {
+          "count": 619,
+          "automatic": true,
+          "metrics": {
+            "count": 619,
+            "mae": 7.08,
+            "medae": 4.0,
+            "rmse": 11.52,
+            "within_1_day_pct": 23.59,
+            "within_3_days_pct": 47.17,
+            "within_7_days_pct": 70.44,
+            "catastrophic_count": 11,
+            "catastrophic_pct": 1.78,
+            "mean_bias": 2.51,
+            "total_absolute_error": 4382.5
+          }
+        },
+        "MEDIUM_SAFE": {
+          "count": 1084,
+          "automatic": true,
+          "metrics": {
+            "count": 1084,
+            "mae": 7.9,
+            "medae": 5.0,
+            "rmse": 11.2,
+            "within_1_day_pct": 19.83,
+            "within_3_days_pct": 38.56,
+            "within_7_days_pct": 60.42,
+            "catastrophic_count": 19,
+            "catastrophic_pct": 1.75,
+            "mean_bias": 4.18,
+            "total_absolute_error": 8558.5
+          }
+        },
+        "MEDIUM_RISK": {
+          "count": 506,
+          "automatic": false,
+          "metrics": null
+        },
+        "UNSTABLE": {
+          "count": 2946,
+          "automatic": false,
+          "metrics": null
+        }
+      }
+    },
+    "approach_B_historical_only": {
+      "counts": {
+        "HIGH": 619,
+        "MEDIUM_SAFE": 1504,
+        "MEDIUM_RISK": 86,
+        "UNSTABLE": 2946
+      },
+      "automatic_prediction_coverage": {
+        "accepted": 2123,
+        "rejected": 3032,
+        "coverage_of_path_a_pct": 41.18,
+        "coverage_of_universe_pct": 28.35
+      },
+      "overall_accepted": {
+        "count": 2123,
+        "mae": 8.18,
+        "medae": 5.0,
+        "rmse": 12.42,
+        "within_1_day_pct": 19.55,
+        "within_3_days_pct": 39.14,
+        "within_7_days_pct": 61.23,
+        "catastrophic_count": 54,
+        "catastrophic_pct": 2.54,
+        "mean_bias": 3.51,
+        "total_absolute_error": 17363.5
+      },
+      "by_cohort": {
+        "HIGH": {
+          "count": 619,
+          "automatic": true,
+          "metrics": {
+            "count": 619,
+            "mae": 7.08,
+            "medae": 4.0,
+            "rmse": 11.52,
+            "within_1_day_pct": 23.59,
+            "within_3_days_pct": 47.17,
+            "within_7_days_pct": 70.44,
+            "catastrophic_count": 11,
+            "catastrophic_pct": 1.78,
+            "mean_bias": 2.51,
+            "total_absolute_error": 4382.5
+          }
+        },
+        "MEDIUM_SAFE": {
+          "count": 1504,
+          "automatic": true,
+          "metrics": {
+            "count": 1504,
+            "mae": 8.63,
+            "medae": 6.0,
+            "rmse": 12.78,
+            "within_1_day_pct": 17.89,
+            "within_3_days_pct": 35.84,
+            "within_7_days_pct": 57.45,
+            "catastrophic_count": 43,
+            "catastrophic_pct": 2.86,
+            "mean_bias": 3.92,
+            "total_absolute_error": 12981.0
+          }
+        },
+        "MEDIUM_RISK": {
+          "count": 86,
+          "automatic": false,
+          "metrics": null
+        },
+        "UNSTABLE": {
+          "count": 2946,
+          "automatic": false,
+          "metrics": null
+        }
+      }
+    },
+    "approach_C_history_stricter_17h_C2_C3": {
+      "counts": {
+        "HIGH": 619,
+        "MEDIUM_SAFE": 1174,
+        "MEDIUM_RISK": 416,
+        "UNSTABLE": 2946
+      },
+      "automatic_prediction_coverage": {
+        "accepted": 1793,
+        "rejected": 3362,
+        "coverage_of_path_a_pct": 34.78,
+        "coverage_of_universe_pct": 23.94
+      },
+      "overall_accepted": {
+        "count": 1793,
+        "mae": 7.38,
+        "medae": 4.0,
+        "rmse": 11.35,
+        "within_1_day_pct": 21.7,
+        "within_3_days_pct": 42.94,
+        "within_7_days_pct": 65.98,
+        "catastrophic_count": 36,
+        "catastrophic_pct": 2.01,
+        "mean_bias": 2.76,
+        "total_absolute_error": 13225.0
+      },
+      "by_cohort": {
+        "HIGH": {
+          "count": 619,
+          "automatic": true,
+          "metrics": {
+            "count": 619,
+            "mae": 7.08,
+            "medae": 4.0,
+            "rmse": 11.52,
+            "within_1_day_pct": 23.59,
+            "within_3_days_pct": 47.17,
+            "within_7_days_pct": 70.44,
+            "catastrophic_count": 11,
+            "catastrophic_pct": 1.78,
+            "mean_bias": 2.51,
+            "total_absolute_error": 4382.5
+          }
+        },
+        "MEDIUM_SAFE": {
+          "count": 1174,
+          "automatic": true,
+          "metrics": {
+            "count": 1174,
+            "mae": 7.53,
+            "medae": 5.0,
+            "rmse": 11.25,
+            "within_1_day_pct": 20.7,
+            "within_3_days_pct": 40.72,
+            "within_7_days_pct": 63.63,
+            "catastrophic_count": 25,
+            "catastrophic_pct": 2.13,
+            "mean_bias": 2.89,
+            "total_absolute_error": 8842.5
+          }
+        },
+        "MEDIUM_RISK": {
+          "count": 416,
+          "automatic": false,
+          "metrics": null
+        },
+        "UNSTABLE": {
+          "count": 2946,
+          "automatic": false,
+          "metrics": null
+        }
+      }
+    },
+    "missing_stats_demotions": 247,
+    "overlap_notes": {
+      "A_MEDIUM_SAFE_also_B": 1084,
+      "B_MEDIUM_SAFE_not_A": 420,
+      "C_MEDIUM_SAFE_also_A": 878,
+      "A_MEDIUM_SAFE_not_C": 206
+    }
+  },
+  "canonical_variable_pattern": {
+    "intervals": [
+      30,
+      60,
+      45,
+      30,
+      90,
+      30,
+      60,
+      30,
+      90
+    ],
+    "path_a_17f_class": "MEDIUM",
+    "hist_median": 45.0,
+    "norm_mad": 0.3333333333333333,
+    "drift": 15.0,
+    "last_interval": 90.0,
+    "last_over_hist": 2.0,
+    "passes_C_hist_17h_C2_C3": false,
+    "note_last_interval_gate_would_fail": "A last-interval <=1.5x hist gate would reject this pattern (last=90.0, hist=45.0, ratio=2.00) even when the next cycle is calm \u2014 another reason not to use last-interval as a SAFE gate.",
+    "by_xgb_ratio": {
+      "1.1x": {
+        "xgb": 49.5,
+        "xgb_over_hist": 1.1,
+        "A": {
+          "policy": "MEDIUM_SAFE",
+          "auto": true
+        },
+        "B": {
+          "policy": "MEDIUM_SAFE",
+          "auto": true
+        },
+        "C": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        }
+      },
+      "1.5x": {
+        "xgb": 67.5,
+        "xgb_over_hist": 1.5,
+        "A": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        },
+        "B": {
+          "policy": "MEDIUM_SAFE",
+          "auto": true
+        },
+        "C": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        }
+      },
+      "1.6x": {
+        "xgb": 72.0,
+        "xgb_over_hist": 1.6,
+        "A": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        },
+        "B": {
+          "policy": "MEDIUM_SAFE",
+          "auto": true
+        },
+        "C": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        }
+      },
+      "2.1x": {
+        "xgb": 94.5,
+        "xgb_over_hist": 2.1,
+        "A": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        },
+        "B": {
+          "policy": "MEDIUM_SAFE",
+          "auto": true
+        },
+        "C": {
+          "policy": "MEDIUM_RISK",
+          "auto": false
+        }
+      }
+    },
+    "summary": {
+      "A_eligible_when_xgb_calm": true,
+      "B_always_eligible_as_MEDIUM_SAFE": true,
+      "C_eligible_via_history_stricter": false
+    }
+  },
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime": 1789645154.9395924,
+    "whatsapp_messages_sent": 0,
+    "production_routing_modified": false,
+    "feature_flag_remains_off": true,
+    "retrain": false,
+    "path_b_implemented": false
+  }
+}

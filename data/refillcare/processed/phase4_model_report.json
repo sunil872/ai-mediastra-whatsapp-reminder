@@ -1,0 +1,230 @@
+{
+  "phase": "PHASE_4",
+  "status": "COMPLETE",
+  "selected_model": "XGBoost",
+  "validation_comparison": {
+    "HistoricalMedianBaseline": {
+      "count": 12767,
+      "mae": 31.25,
+      "rmse": 115.91,
+      "r2": -32.5041,
+      "median_abs_error": 8.5,
+      "within_1_day_pct": 14.69,
+      "within_3_days_pct": 29.15,
+      "within_7_days_pct": 46.5,
+      "actual_target": {
+        "mean": 28.2,
+        "median": 25.0,
+        "min": 1.0,
+        "max": 121.0
+      },
+      "predicted_target": {
+        "mean": 47.83,
+        "median": 30.0,
+        "min": 1.0,
+        "max": 1942.0,
+        "negative_raw_predictions_clipped": 4
+      }
+    },
+    "RandomForest": {
+      "count": 12767,
+      "mae": 42.92,
+      "rmse": 69.03,
+      "r2": -10.8835,
+      "median_abs_error": 19.19,
+      "within_1_day_pct": 3.15,
+      "within_3_days_pct": 9.58,
+      "within_7_days_pct": 23.33,
+      "actual_target": {
+        "mean": 28.2,
+        "median": 25.0,
+        "min": 1.0,
+        "max": 121.0
+      },
+      "predicted_target": {
+        "mean": 67.85,
+        "median": 42.78,
+        "min": 4.45,
+        "max": 398.14,
+        "negative_raw_predictions_clipped": 0
+      }
+    },
+    "XGBoost": {
+      "count": 12767,
+      "mae": 42.77,
+      "rmse": 68.35,
+      "r2": -10.6512,
+      "median_abs_error": 19.58,
+      "within_1_day_pct": 3.05,
+      "within_3_days_pct": 9.86,
+      "within_7_days_pct": 23.1,
+      "actual_target": {
+        "mean": 28.2,
+        "median": 25.0,
+        "min": 1.0,
+        "max": 121.0
+      },
+      "predicted_target": {
+        "mean": 67.71,
+        "median": 43.64,
+        "min": 1.44,
+        "max": 411.87,
+        "negative_raw_predictions_clipped": 0
+      }
+    },
+    "HistGradientBoosting": {
+      "count": 12767,
+      "mae": 42.83,
+      "rmse": 68.44,
+      "r2": -10.6794,
+      "median_abs_error": 19.75,
+      "within_1_day_pct": 3.13,
+      "within_3_days_pct": 9.7,
+      "within_7_days_pct": 22.36,
+      "actual_target": {
+        "mean": 28.2,
+        "median": 25.0,
+        "min": 1.0,
+        "max": 121.0
+      },
+      "predicted_target": {
+        "mean": 67.81,
+        "median": 43.74,
+        "min": 1.9,
+        "max": 382.27,
+        "negative_raw_predictions_clipped": 0
+      }
+    }
+  },
+  "test_results": {
+    "count": 7488,
+    "mae": 43.19,
+    "rmse": 69.62,
+    "r2": -33.8291,
+    "median_abs_error": 19.61,
+    "within_1_day_pct": 3.26,
+    "within_3_days_pct": 9.92,
+    "within_7_days_pct": 23.53,
+    "actual_target": {
+      "mean": 18.97,
+      "median": 17.0,
+      "min": 1.0,
+      "max": 60.0
+    },
+    "predicted_target": {
+      "mean": 61.11,
+      "median": 38.63,
+      "min": 1.48,
+      "max": 325.1,
+      "negative_raw_predictions_clipped": 0
+    }
+  },
+  "test_subgroups_by_interval": {
+    "short_0_15d": {
+      "count": 3470,
+      "mae": 51.37,
+      "rmse": 79.48,
+      "within_7_days_pct": 17.95
+    },
+    "regular_16_45d": {
+      "count": 3826,
+      "mae": 35.72,
+      "rmse": 59.38,
+      "within_7_days_pct": 29.12
+    },
+    "longer_46_90d": {
+      "count": 192,
+      "mae": 44.27,
+      "rmse": 67.77,
+      "within_7_days_pct": 13.02
+    },
+    "long_gt_90d": {
+      "count": 0,
+      "mae": null,
+      "rmse": null,
+      "within_7_days_pct": null
+    }
+  },
+  "test_subgroups_by_history_length": {
+    "2_purchases": {
+      "count": 1282,
+      "mae": 133.15,
+      "rmse": 144.84,
+      "within_7_days_pct": 0.0
+    },
+    "3_to_5_purchases": {
+      "count": 1051,
+      "mae": 57.44,
+      "rmse": 73.05,
+      "within_7_days_pct": 1.9
+    },
+    "gt_5_purchases": {
+      "count": 5155,
+      "mae": 17.91,
+      "rmse": 27.12,
+      "within_7_days_pct": 33.79
+    }
+  },
+  "top_features": [
+    {
+      "feature": "has_multiple_prior_purchases",
+      "importance": 0.3396211266517639
+    },
+    {
+      "feature": "purchase_count_so_far",
+      "importance": 0.12000678479671478
+    },
+    {
+      "feature": "is_first_purchase",
+      "importance": 0.047999057918787
+    },
+    {
+      "feature": "historical_interval_max",
+      "importance": 0.04545578733086586
+    },
+    {
+      "feature": "salt_category_PHARMA",
+      "importance": 0.043537698686122894
+    },
+    {
+      "feature": "salt_itemcat_PHARMA",
+      "importance": 0.03843320161104202
+    },
+    {
+      "feature": "historical_interval_median",
+      "importance": 0.03374289721250534
+    },
+    {
+      "feature": "historical_interval_mean",
+      "importance": 0.02693100832402706
+    },
+    {
+      "feature": "salt_category_JUNCTION",
+      "importance": 0.023806437849998474
+    },
+    {
+      "feature": "salt_itemcat_FRIDGE",
+      "importance": 0.021299604326486588
+    },
+    {
+      "feature": "salt_category_FRIDGE",
+      "importance": 0.0207571629434824
+    },
+    {
+      "feature": "salt_itemcat_SPRAYS",
+      "importance": 0.013823996298015118
+    },
+    {
+      "feature": "salt_category_INJECTIONS",
+      "importance": 0.011994306929409504
+    },
+    {
+      "feature": "salt_category_SPRAYS",
+      "importance": 0.009862294420599937
+    },
+    {
+      "feature": "salt_itemcat_GENERAL",
+      "importance": 0.009793343022465706
+    }
+  ]
+}

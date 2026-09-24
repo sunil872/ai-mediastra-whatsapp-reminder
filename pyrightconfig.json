@@ -1,0 +1,9 @@
+{
+  "include": ["."],
+  "extraPaths": ["."],
+  "pythonVersion": "3.9",
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

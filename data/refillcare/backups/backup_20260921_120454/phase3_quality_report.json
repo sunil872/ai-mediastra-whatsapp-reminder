@@ -1,0 +1,312 @@
+{
+  "phase": "PHASE_3",
+  "status": "PASS",
+  "dataset": {
+    "source_file": "C:\\Users\\sunil\\ai-mediastra-whatsapp-reminder\\ai-mediastra-whatsapp-reminder\\data\\refillcare\\processed\\purchase_history.parquet",
+    "source_rows": 817804,
+    "supervised_rows": 489960,
+    "unique_histories": 326627,
+    "repeat_histories": 102169,
+    "multi_repeat_histories_ge_3": 58456,
+    "cold_start_histories": 224458,
+    "date_range": {
+      "min": "2020-12-24",
+      "max": "2026-08-31"
+    }
+  },
+  "target": {
+    "count": 489960,
+    "mean": 93.07,
+    "median": 31.0,
+    "std": 189.96,
+    "min": 0,
+    "max": 2060,
+    "p5": 4.0,
+    "p25": 15.0,
+    "p50": 31.0,
+    "p75": 72.0,
+    "p90": 228.0,
+    "p95": 431.0,
+    "zero_target_count": 4095,
+    "negative_target_count": 0
+  },
+  "temporal_split": {
+    "train": {
+      "rows": 469583,
+      "date_min": "2020-12-24",
+      "date_max": "2026-04-30"
+    },
+    "validation": {
+      "rows": 12821,
+      "date_min": "2026-05-01",
+      "date_max": "2026-06-30"
+    },
+    "test": {
+      "rows": 7556,
+      "date_min": "2026-07-01",
+      "date_max": "2026-08-31"
+    }
+  },
+  "features": {
+    "total_feature_count": 35,
+    "numeric_features": [
+      "purchase_count_so_far",
+      "days_since_first_purchase",
+      "days_since_previous_purchase",
+      "last_purchase_interval",
+      "historical_interval_median",
+      "historical_interval_mean",
+      "historical_interval_std",
+      "historical_interval_min",
+      "historical_interval_max",
+      "historical_interval_cv",
+      "quantity",
+      "freeQuantity",
+      "avg_historical_quantity",
+      "quantity_vs_avg_ratio",
+      "netAmount",
+      "gstAmount",
+      "rate",
+      "mrp",
+      "discountPercent",
+      "purchase_month",
+      "purchase_day_of_week",
+      "purchase_day_of_month",
+      "purchase_day_of_year",
+      "purchase_quarter",
+      "is_weekend",
+      "is_first_purchase",
+      "has_multiple_prior_purchases",
+      "is_recurring_history"
+    ],
+    "categorical_features": [
+      "itemId",
+      "itemCode",
+      "itemName",
+      "salt_composition",
+      "salt_category",
+      "salt_itemcat",
+      "salt_pack"
+    ],
+    "missingness_summary": {
+      "purchase_count_so_far": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "days_since_first_purchase": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "days_since_previous_purchase": {
+        "null_count": 102090,
+        "null_pct": 20.84
+      },
+      "last_purchase_interval": {
+        "null_count": 102090,
+        "null_pct": 20.84
+      },
+      "historical_interval_median": {
+        "null_count": 102090,
+        "null_pct": 20.84
+      },
+      "historical_interval_mean": {
+        "null_count": 102090,
+        "null_pct": 20.84
+      },
+      "historical_interval_std": {
+        "null_count": 160172,
+        "null_pct": 32.69
+      },
+      "historical_interval_min": {
+        "null_count": 102090,
+        "null_pct": 20.84
+      },
+      "historical_interval_max": {
+        "null_count": 102090,
+        "null_pct": 20.84
+      },
+      "historical_interval_cv": {
+        "null_count": 160172,
+        "null_pct": 32.69
+      },
+      "quantity": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "freeQuantity": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "avg_historical_quantity": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "quantity_vs_avg_ratio": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "netAmount": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "gstAmount": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "rate": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "mrp": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "discountPercent": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "purchase_month": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "purchase_day_of_week": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "purchase_day_of_month": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "purchase_day_of_year": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "purchase_quarter": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "is_weekend": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "is_first_purchase": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "has_multiple_prior_purchases": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "is_recurring_history": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "itemId": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "itemCode": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "itemName": {
+        "null_count": 0,
+        "null_pct": 0.0
+      },
+      "salt_composition": {
+        "null_count": 79646,
+        "null_pct": 16.26
+      },
+      "salt_category": {
+        "null_count": 12,
+        "null_pct": 0.0
+      },
+      "salt_itemcat": {
+        "null_count": 12,
+        "null_pct": 0.0
+      },
+      "salt_pack": {
+        "null_count": 37,
+        "null_pct": 0.01
+      }
+    }
+  },
+  "leakage_checks": {
+    "no_target_in_features": true,
+    "no_next_purchase_date_in_features": true,
+    "no_negative_targets": true,
+    "temporal_ordering_strictly_non_overlapping": true,
+    "zero_future_leakage_confirmed": true
+  },
+  "baseline_evaluation": {
+    "fallback_median_days": 31.0,
+    "train": {
+      "count": 469583,
+      "mae": 84.03,
+      "rmse": 210.94,
+      "r2": -0.1889,
+      "within_1_day_pct": 9.58,
+      "within_3_days_pct": 19.33,
+      "within_7_days_pct": 32.34,
+      "target_summary": {
+        "mean": 96.04,
+        "median": 31.0,
+        "std": 193.46,
+        "min": 0.0,
+        "max": 2060.0,
+        "p5": 4.0,
+        "p25": 15.0,
+        "p75": 76.0,
+        "p90": 239.0,
+        "p95": 447.0
+      }
+    },
+    "validation": {
+      "count": 12821,
+      "mae": 31.35,
+      "rmse": 115.85,
+      "r2": -32.3332,
+      "within_1_day_pct": 14.65,
+      "within_3_days_pct": 29.06,
+      "within_7_days_pct": 46.38,
+      "target_summary": {
+        "mean": 28.08,
+        "median": 25.0,
+        "std": 20.07,
+        "min": 0.0,
+        "max": 121.0,
+        "p5": 5.0,
+        "p25": 13.0,
+        "p75": 35.0,
+        "p90": 57.0,
+        "p95": 69.0
+      }
+    },
+    "test": {
+      "count": 7556,
+      "mae": 26.98,
+      "rmse": 109.53,
+      "r2": -84.0165,
+      "within_1_day_pct": 16.85,
+      "within_3_days_pct": 31.88,
+      "within_7_days_pct": 50.67,
+      "target_summary": {
+        "mean": 18.8,
+        "median": 17.0,
+        "std": 11.88,
+        "min": 0.0,
+        "max": 60.0,
+        "p5": 2.0,
+        "p25": 10.0,
+        "p75": 28.0,
+        "p90": 34.0,
+        "p95": 40.0
+      }
+    }
+  },
+  "data_quality_notes": {
+    "zero_quantity_handling": "Excluded 933 events with quantity <= 0 (returns/adjustments) from supervised training targets.",
+    "same_day_purchases_handling": "Same-day multi-invoice events (2,169 zero-day targets) preserved as legitimate distinct purchase events with target = 0.",
+    "dosage_frequency": "Strictly avoided fabricating dosage or days-supply features due to lack of prescription instructions."
+  }
+}

@@ -1,0 +1,521 @@
+{
+  "experiment": "PHASE_17J_FINAL_PATH_A_POLICY_VALIDATION",
+  "read_only": true,
+  "strategy_promoted": false,
+  "policy": {
+    "HIGH": "personal_historical_median",
+    "MEDIUM_SAFE": "personal_historical_median",
+    "MEDIUM_RISK": "no_automatic_prediction",
+    "UNSTABLE": "no_automatic_prediction",
+    "MEDIUM_SAFE_definition": "17F MEDIUM AND XGB_pred <= 1.5 * hist_median (C6) AND XGB_pred <= 60 AND XGB_pred <= 2 * hist_median (Strategy E)",
+    "prediction_time_exclusions": [
+      "insufficient Path A history (purchase_count < 6) \u2014 out of Path A frame",
+      "invalid/missing cadence statistics -> no auto (demote to RISK/UNSTABLE)",
+      "oracle collapse using future actual is NOT used at prediction time"
+    ]
+  },
+  "validation": {
+    "split": "validation",
+    "date_min": "2026-05-01",
+    "date_max": "2026-06-30",
+    "universe_n": 12767,
+    "path_a_n": 8658,
+    "policy_17j_counts": {
+      "HIGH": 1144,
+      "MEDIUM_SAFE": 1947,
+      "MEDIUM_RISK": 1082,
+      "UNSTABLE": 4485
+    },
+    "automatic_prediction_coverage": {
+      "accepted": 3091,
+      "rejected": 5567,
+      "coverage_of_path_a_pct": 35.7,
+      "coverage_of_universe_pct": 24.21
+    },
+    "policy_17j_overall_accepted": {
+      "count": 3091,
+      "mae": 8.0,
+      "medae": 4.0,
+      "rmse": 12.67,
+      "within_1_day_pct": 22.0,
+      "within_3_days_pct": 43.0,
+      "within_7_days_pct": 64.77,
+      "catastrophic_count": 115,
+      "catastrophic_pct": 3.72,
+      "catastrophic_abs_error": 4846.5,
+      "mean_bias": -0.09,
+      "total_absolute_error": 24730.0,
+      "mean_pred": 27.96,
+      "mean_actual": 28.06
+    },
+    "policy_17j_by_cohort": {
+      "HIGH": {
+        "count": 1144,
+        "automatic": true,
+        "metrics": {
+          "count": 1144,
+          "mae": 7.31,
+          "medae": 3.5,
+          "rmse": 11.86,
+          "within_1_day_pct": 26.84,
+          "within_3_days_pct": 48.78,
+          "within_7_days_pct": 69.14,
+          "catastrophic_count": 40,
+          "catastrophic_pct": 3.5,
+          "catastrophic_abs_error": 1589.0,
+          "mean_bias": -0.18,
+          "total_absolute_error": 8359.0,
+          "mean_pred": 28.4,
+          "mean_actual": 28.58
+        }
+      },
+      "MEDIUM_SAFE": {
+        "count": 1947,
+        "automatic": true,
+        "metrics": {
+          "count": 1947,
+          "mae": 8.41,
+          "medae": 5.0,
+          "rmse": 13.12,
+          "within_1_day_pct": 19.16,
+          "within_3_days_pct": 39.6,
+          "within_7_days_pct": 62.2,
+          "catastrophic_count": 75,
+          "catastrophic_pct": 3.85,
+          "catastrophic_abs_error": 3257.5,
+          "mean_bias": -0.04,
+          "total_absolute_error": 16371.0,
+          "mean_pred": 27.71,
+          "mean_actual": 27.75
+        }
+      },
+      "MEDIUM_RISK": {
+        "count": 1082,
+        "automatic": false,
+        "metrics": null,
+        "counterfactual_median_if_forced": {
+          "count": 1082,
+          "mae": 12.91,
+          "medae": 8.0,
+          "rmse": 19.63,
+          "within_1_day_pct": 12.38,
+          "within_3_days_pct": 26.16,
+          "within_7_days_pct": 47.78,
+          "catastrophic_count": 113,
+          "catastrophic_pct": 10.44,
+          "catastrophic_abs_error": 5358.0,
+          "mean_bias": -1.48,
+          "total_absolute_error": 13974.0,
+          "mean_pred": 30.95,
+          "mean_actual": 32.44
+        }
+      },
+      "UNSTABLE": {
+        "count": 4485,
+        "automatic": false,
+        "metrics": null,
+        "counterfactual_median_if_forced": {
+          "count": 4485,
+          "mae": 15.96,
+          "medae": 7.0,
+          "rmse": 30.29,
+          "within_1_day_pct": 16.32,
+          "within_3_days_pct": 31.84,
+          "within_7_days_pct": 50.39,
+          "catastrophic_count": 637,
+          "catastrophic_pct": 14.2,
+          "catastrophic_abs_error": 40591.0,
+          "mean_bias": 4.52,
+          "total_absolute_error": 71596.5,
+          "mean_pred": 29.16,
+          "mean_actual": 24.64
+        }
+      }
+    },
+    "comparator_17d_hybrid_overall_accepted": {
+      "accepted": 4703,
+      "coverage_of_path_a_pct": 54.32,
+      "coverage_of_universe_pct": 36.84,
+      "metrics": {
+        "count": 4703,
+        "mae": 11.13,
+        "medae": 6.0,
+        "rmse": 17.59,
+        "within_1_day_pct": 17.24,
+        "within_3_days_pct": 34.55,
+        "within_7_days_pct": 54.45,
+        "catastrophic_count": 386,
+        "catastrophic_pct": 8.21,
+        "catastrophic_abs_error": 17671.53,
+        "mean_bias": 3.17,
+        "total_absolute_error": 52326.27,
+        "mean_pred": 31.75,
+        "mean_actual": 28.58
+      },
+      "note": "HIGH=personal median; MEDIUM=production XGB (no E gate); UNSTABLE=reject"
+    },
+    "comparator_17f_plus_strategy_E_overall_accepted": {
+      "accepted": 3785,
+      "coverage_of_path_a_pct": 43.72,
+      "coverage_of_universe_pct": 29.65,
+      "metrics": {
+        "count": 3785,
+        "mae": 10.53,
+        "medae": 7.5,
+        "rmse": 14.98,
+        "within_1_day_pct": 12.84,
+        "within_3_days_pct": 27.61,
+        "within_7_days_pct": 47.82,
+        "catastrophic_count": 206,
+        "catastrophic_pct": 5.44,
+        "catastrophic_abs_error": 8452.8,
+        "mean_bias": 4.3,
+        "total_absolute_error": 39838.13,
+        "mean_pred": 32.51,
+        "mean_actual": 28.21
+      },
+      "note": "HIGH=personal median; MEDIUM=XGB if Strategy E else reject; UNSTABLE=reject"
+    },
+    "collapse_detectability": {
+      "note": "Oracle collapse uses future actual (actual < 0.5*hist) for analysis only. Proxies use only prior intervals available at prediction time.",
+      "medium_safe_n": 1947,
+      "oracle_collapse_in_medium_safe": 174,
+      "proxies_vs_oracle_on_medium_safe": {
+        "last_interval_lt_half_hist": {
+          "tp": 23,
+          "fp": 110,
+          "fn": 151,
+          "tn": 1663,
+          "precision": 17.29,
+          "recall": 13.22,
+          "flag_rate_pct": 6.83,
+          "oracle_rate_pct": 8.94
+        },
+        "recent3_lt_half_hist": {
+          "tp": 7,
+          "fp": 30,
+          "fn": 167,
+          "tn": 1743,
+          "precision": 18.92,
+          "recall": 4.02,
+          "flag_rate_pct": 1.9,
+          "oracle_rate_pct": 8.94
+        },
+        "last_or_recent3_lt_half_hist": {
+          "tp": 24,
+          "fp": 119,
+          "fn": 150,
+          "tn": 1654,
+          "precision": 16.78,
+          "recall": 13.79,
+          "flag_rate_pct": 7.34,
+          "oracle_rate_pct": 8.94
+        }
+      },
+      "sensitivity_if_exclude_historical_proxy": {
+        "excluded_n": 143,
+        "remaining_n": 1804,
+        "metrics_remaining_median": {
+          "count": 1804,
+          "mae": 8.28,
+          "medae": 5.0,
+          "rmse": 13.06,
+          "within_1_day_pct": 19.68,
+          "within_3_days_pct": 40.47,
+          "within_7_days_pct": 63.36,
+          "catastrophic_count": 70,
+          "catastrophic_pct": 3.88,
+          "catastrophic_abs_error": 3042.0,
+          "mean_bias": -0.16,
+          "total_absolute_error": 14937.0,
+          "mean_pred": 27.74,
+          "mean_actual": 27.9
+        },
+        "oracle_collapse_caught_among_excluded": 24,
+        "oracle_collapse_missed_among_remaining": 150
+      },
+      "collapse_reliably_detectable_at_prediction_time": false,
+      "verdict": "Collapse cannot be reliably detected at prediction time with the tested historical proxies (last interval / recent-3 < 0.5\u00d7 hist). On MEDIUM-SAFE: recall=13.79% precision=16.78%. Oracle collapse (actual < 0.5\u00d7 hist) must NOT be used as a feature. Primary 17J policy therefore does not exclude collapse via future actual."
+    },
+    "missing_stats_demotions": 493
+  },
+  "test": {
+    "split": "test",
+    "date_min": "2026-07-01",
+    "date_max": "2026-08-31",
+    "universe_n": 7488,
+    "path_a_n": 5155,
+    "policy_17j_counts": {
+      "HIGH": 619,
+      "MEDIUM_SAFE": 1084,
+      "MEDIUM_RISK": 506,
+      "UNSTABLE": 2946
+    },
+    "automatic_prediction_coverage": {
+      "accepted": 1703,
+      "rejected": 3452,
+      "coverage_of_path_a_pct": 33.04,
+      "coverage_of_universe_pct": 22.74
+    },
+    "policy_17j_overall_accepted": {
+      "count": 1703,
+      "mae": 7.6,
+      "medae": 4.5,
+      "rmse": 11.32,
+      "within_1_day_pct": 21.2,
+      "within_3_days_pct": 41.69,
+      "within_7_days_pct": 64.06,
+      "catastrophic_count": 30,
+      "catastrophic_pct": 1.76,
+      "catastrophic_abs_error": 1168.0,
+      "mean_bias": 3.57,
+      "total_absolute_error": 12941.0,
+      "mean_pred": 26.92,
+      "mean_actual": 23.35
+    },
+    "policy_17j_by_cohort": {
+      "HIGH": {
+        "count": 619,
+        "automatic": true,
+        "metrics": {
+          "count": 619,
+          "mae": 7.08,
+          "medae": 4.0,
+          "rmse": 11.52,
+          "within_1_day_pct": 23.59,
+          "within_3_days_pct": 47.17,
+          "within_7_days_pct": 70.44,
+          "catastrophic_count": 11,
+          "catastrophic_pct": 1.78,
+          "catastrophic_abs_error": 488.0,
+          "mean_bias": 2.51,
+          "total_absolute_error": 4382.5,
+          "mean_pred": 27.58,
+          "mean_actual": 25.07
+        }
+      },
+      "MEDIUM_SAFE": {
+        "count": 1084,
+        "automatic": true,
+        "metrics": {
+          "count": 1084,
+          "mae": 7.9,
+          "medae": 5.0,
+          "rmse": 11.2,
+          "within_1_day_pct": 19.83,
+          "within_3_days_pct": 38.56,
+          "within_7_days_pct": 60.42,
+          "catastrophic_count": 19,
+          "catastrophic_pct": 1.75,
+          "catastrophic_abs_error": 680.0,
+          "mean_bias": 4.18,
+          "total_absolute_error": 8558.5,
+          "mean_pred": 26.55,
+          "mean_actual": 22.37
+        }
+      },
+      "MEDIUM_RISK": {
+        "count": 506,
+        "automatic": false,
+        "metrics": null,
+        "counterfactual_median_if_forced": {
+          "count": 506,
+          "mae": 10.54,
+          "medae": 7.5,
+          "rmse": 16.11,
+          "within_1_day_pct": 13.83,
+          "within_3_days_pct": 29.64,
+          "within_7_days_pct": 49.41,
+          "catastrophic_count": 29,
+          "catastrophic_pct": 5.73,
+          "catastrophic_abs_error": 1365.0,
+          "mean_bias": 3.8,
+          "total_absolute_error": 5334.5,
+          "mean_pred": 26.64,
+          "mean_actual": 22.84
+        }
+      },
+      "UNSTABLE": {
+        "count": 2946,
+        "automatic": false,
+        "metrics": null,
+        "counterfactual_median_if_forced": {
+          "count": 2946,
+          "mae": 12.87,
+          "medae": 5.0,
+          "rmse": 29.43,
+          "within_1_day_pct": 21.11,
+          "within_3_days_pct": 38.15,
+          "within_7_days_pct": 59.78,
+          "catastrophic_count": 248,
+          "catastrophic_pct": 8.42,
+          "catastrophic_abs_error": 19046.0,
+          "mean_bias": 7.68,
+          "total_absolute_error": 37921.5,
+          "mean_pred": 23.84,
+          "mean_actual": 16.15
+        }
+      }
+    },
+    "comparator_17d_hybrid_overall_accepted": {
+      "accepted": 2533,
+      "coverage_of_path_a_pct": 49.14,
+      "coverage_of_universe_pct": 33.83,
+      "metrics": {
+        "count": 2533,
+        "mae": 10.39,
+        "medae": 6.0,
+        "rmse": 16.38,
+        "within_1_day_pct": 17.37,
+        "within_3_days_pct": 34.43,
+        "within_7_days_pct": 55.11,
+        "catastrophic_count": 147,
+        "catastrophic_pct": 5.8,
+        "catastrophic_abs_error": 6840.51,
+        "mean_bias": 6.71,
+        "total_absolute_error": 26326.32,
+        "mean_pred": 29.17,
+        "mean_actual": 22.46
+      },
+      "note": "HIGH=personal median; MEDIUM=production XGB (no E gate); UNSTABLE=reject"
+    },
+    "comparator_17f_plus_strategy_E_overall_accepted": {
+      "accepted": 2056,
+      "coverage_of_path_a_pct": 39.88,
+      "coverage_of_universe_pct": 27.46,
+      "metrics": {
+        "count": 2056,
+        "mae": 10.37,
+        "medae": 7.5,
+        "rmse": 14.09,
+        "within_1_day_pct": 11.62,
+        "within_3_days_pct": 25.1,
+        "within_7_days_pct": 48.05,
+        "catastrophic_count": 87,
+        "catastrophic_pct": 4.23,
+        "catastrophic_abs_error": 3202.21,
+        "mean_bias": 7.7,
+        "total_absolute_error": 21327.71,
+        "mean_pred": 30.87,
+        "mean_actual": 23.16
+      },
+      "note": "HIGH=personal median; MEDIUM=XGB if Strategy E else reject; UNSTABLE=reject"
+    },
+    "collapse_detectability": {
+      "note": "Oracle collapse uses future actual (actual < 0.5*hist) for analysis only. Proxies use only prior intervals available at prediction time.",
+      "medium_safe_n": 1084,
+      "oracle_collapse_in_medium_safe": 178,
+      "proxies_vs_oracle_on_medium_safe": {
+        "last_interval_lt_half_hist": {
+          "tp": 27,
+          "fp": 49,
+          "fn": 151,
+          "tn": 857,
+          "precision": 35.53,
+          "recall": 15.17,
+          "flag_rate_pct": 7.01,
+          "oracle_rate_pct": 16.42
+        },
+        "recent3_lt_half_hist": {
+          "tp": 12,
+          "fp": 15,
+          "fn": 166,
+          "tn": 891,
+          "precision": 44.44,
+          "recall": 6.74,
+          "flag_rate_pct": 2.49,
+          "oracle_rate_pct": 16.42
+        },
+        "last_or_recent3_lt_half_hist": {
+          "tp": 29,
+          "fp": 57,
+          "fn": 149,
+          "tn": 849,
+          "precision": 33.72,
+          "recall": 16.29,
+          "flag_rate_pct": 7.93,
+          "oracle_rate_pct": 16.42
+        }
+      },
+      "sensitivity_if_exclude_historical_proxy": {
+        "excluded_n": 86,
+        "remaining_n": 998,
+        "metrics_remaining_median": {
+          "count": 998,
+          "mae": 7.59,
+          "medae": 5.0,
+          "rmse": 10.81,
+          "within_1_day_pct": 20.74,
+          "within_3_days_pct": 40.18,
+          "within_7_days_pct": 62.12,
+          "catastrophic_count": 17,
+          "catastrophic_pct": 1.7,
+          "catastrophic_abs_error": 582.0,
+          "mean_bias": 3.73,
+          "total_absolute_error": 7574.5,
+          "mean_pred": 26.52,
+          "mean_actual": 22.79
+        },
+        "oracle_collapse_caught_among_excluded": 29,
+        "oracle_collapse_missed_among_remaining": 149
+      },
+      "collapse_reliably_detectable_at_prediction_time": false,
+      "verdict": "Collapse cannot be reliably detected at prediction time with the tested historical proxies (last interval / recent-3 < 0.5\u00d7 hist). On MEDIUM-SAFE: recall=16.29% precision=33.72%. Oracle collapse (actual < 0.5\u00d7 hist) must NOT be used as a feature. Primary 17J policy therefore does not exclude collapse via future actual."
+    },
+    "missing_stats_demotions": 247
+  },
+  "canonical_variable_pattern": {
+    "intervals": [
+      30,
+      60,
+      45,
+      30,
+      90,
+      30,
+      60,
+      30,
+      90
+    ],
+    "path_a_17f_class": "MEDIUM",
+    "hist_median": 45.0,
+    "norm_mad": 0.3333333333333333,
+    "drift": 15.0,
+    "eligibility_under_17j": {
+      "if_xgb_1_1x_hist": {
+        "passes_C6": true,
+        "passes_E": true,
+        "policy": "MEDIUM_SAFE",
+        "predictor": "personal_historical_median"
+      },
+      "if_xgb_1_5x_hist": {
+        "passes_C6": true,
+        "passes_E": true,
+        "policy": "MEDIUM_SAFE",
+        "predictor": "personal_historical_median"
+      },
+      "if_xgb_1_6x_hist": {
+        "passes_C6": false,
+        "passes_E": true,
+        "policy": "MEDIUM_RISK",
+        "predictor": "none"
+      },
+      "if_xgb_2_1x_hist": {
+        "passes_C6": false,
+        "passes_E": false,
+        "policy": "MEDIUM_RISK",
+        "predictor": "none"
+      }
+    },
+    "conclusion": "Canonical variable pattern remains MEDIUM under 17F and stays MEDIUM-SAFE (auto median) when XGB is calm (<=1.5x hist); becomes MEDIUM-RISK (no auto) if XGB inflates."
+  },
+  "artifact_safety": {
+    "refill_model_joblib_mtime_unchanged": true,
+    "phase4_report_mtime_unchanged": true,
+    "model_mtime": 1789645154.9395924,
+    "whatsapp_messages_sent": 0,
+    "production_routing_modified": false,
+    "feature_flag_remains_off": true,
+    "retrain": false,
+    "path_b_implemented": false
+  }
+}

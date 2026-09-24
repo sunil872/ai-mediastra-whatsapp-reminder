@@ -1,0 +1,21 @@
+{
+  "test_n": 7488,
+  "path_a_n": 5155,
+  "baseline_hybrid_routing_v17d": {
+    "HIGH": 1819,
+    "UNSTABLE": 2622,
+    "MEDIUM": 714
+  },
+  "proposed_path_a_classifier_v17f": {
+    "MEDIUM": 1540,
+    "UNSTABLE": 2946,
+    "HIGH": 669
+  },
+  "artifact_safety": {
+    "model_mtime_unchanged": true,
+    "model_mtime": 1789645154.9395924,
+    "whatsapp_messages_sent": 0,
+    "path_b_implemented": false,
+    "feature_flag_default": false
+  }
+}
