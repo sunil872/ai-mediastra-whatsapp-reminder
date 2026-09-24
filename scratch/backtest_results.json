@@ -1,0 +1,725 @@
+{
+  "Test Set (Holdout 2026-07 to 2026-08)": {
+    "overlap_comparison": {
+      "existing_refill_approach": {
+        "evaluated_count": 1181,
+        "total_cohort_count": 1181,
+        "coverage_pct": 100.0,
+        "mae": 8.474,
+        "rmse": 13.128,
+        "acc_within_3d": 38.27,
+        "acc_within_7d": 60.29,
+        "large_error_gt14d_count": 232,
+        "large_error_gt14d_pct": 19.64,
+        "large_error_gt30d_count": 38,
+        "large_error_gt30d_pct": 3.22
+      },
+      "estimated_days_of_supply": {
+        "evaluated_count": 1181,
+        "total_cohort_count": 1181,
+        "coverage_pct": 100.0,
+        "mae": 8.06,
+        "rmse": 11.619,
+        "acc_within_3d": 33.02,
+        "acc_within_7d": 59.19,
+        "large_error_gt14d_count": 219,
+        "large_error_gt14d_pct": 18.54,
+        "large_error_gt30d_count": 31,
+        "large_error_gt30d_pct": 2.62
+      }
+    },
+    "full_split_comparison": {
+      "existing_refill_approach": {
+        "evaluated_count": 1196,
+        "total_cohort_count": 7556,
+        "coverage_pct": 15.83,
+        "mae": 8.476,
+        "rmse": 13.093,
+        "acc_within_3d": 37.88,
+        "acc_within_7d": 60.03,
+        "large_error_gt14d_count": 235,
+        "large_error_gt14d_pct": 19.65,
+        "large_error_gt30d_count": 38,
+        "large_error_gt30d_pct": 3.18
+      },
+      "estimated_days_of_supply": {
+        "evaluated_count": 6660,
+        "total_cohort_count": 7556,
+        "coverage_pct": 88.14,
+        "mae": 43.345,
+        "rmse": 233.228,
+        "acc_within_3d": 22.04,
+        "acc_within_7d": 40.65,
+        "large_error_gt14d_count": 2677,
+        "large_error_gt14d_pct": 40.2,
+        "large_error_gt30d_count": 1455,
+        "large_error_gt30d_pct": 21.85
+      },
+      "raw_personal_median_baseline": {
+        "evaluated_count": 6766,
+        "total_cohort_count": 7556,
+        "coverage_pct": 89.54,
+        "mae": 28.157,
+        "rmse": 115.567,
+        "acc_within_3d": 34.5,
+        "acc_within_7d": 54.37,
+        "large_error_gt14d_count": 1868,
+        "large_error_gt14d_pct": 27.61,
+        "large_error_gt30d_count": 794,
+        "large_error_gt30d_pct": 11.74
+      }
+    },
+    "sub_cohorts": {
+      "regular_purchase_patterns": {
+        "cohort_size": 1196,
+        "existing_refill_approach": {
+          "evaluated_count": 1196,
+          "total_cohort_count": 1196,
+          "coverage_pct": 100.0,
+          "mae": 8.476,
+          "rmse": 13.093,
+          "acc_within_3d": 37.88,
+          "acc_within_7d": 60.03,
+          "large_error_gt14d_count": 235,
+          "large_error_gt14d_pct": 19.65,
+          "large_error_gt30d_count": 38,
+          "large_error_gt30d_pct": 3.18
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 1181,
+          "total_cohort_count": 1196,
+          "coverage_pct": 98.75,
+          "mae": 8.06,
+          "rmse": 11.619,
+          "acc_within_3d": 33.02,
+          "acc_within_7d": 59.19,
+          "large_error_gt14d_count": 219,
+          "large_error_gt14d_pct": 18.54,
+          "large_error_gt30d_count": 31,
+          "large_error_gt30d_pct": 2.62
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 1196,
+          "total_cohort_count": 1196,
+          "coverage_pct": 100.0,
+          "mae": 7.041,
+          "rmse": 10.946,
+          "acc_within_3d": 44.98,
+          "acc_within_7d": 67.64,
+          "large_error_gt14d_count": 170,
+          "large_error_gt14d_pct": 14.21,
+          "large_error_gt30d_count": 22,
+          "large_error_gt30d_pct": 1.84
+        }
+      },
+      "bulk_purchases": {
+        "cohort_size": 502,
+        "existing_refill_approach": {
+          "evaluated_count": 74,
+          "total_cohort_count": 502,
+          "coverage_pct": 14.74,
+          "mae": 11.409,
+          "rmse": 16.007,
+          "acc_within_3d": 22.97,
+          "acc_within_7d": 44.59,
+          "large_error_gt14d_count": 18,
+          "large_error_gt14d_pct": 24.32,
+          "large_error_gt30d_count": 6,
+          "large_error_gt30d_pct": 8.11
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 490,
+          "total_cohort_count": 502,
+          "coverage_pct": 97.61,
+          "mae": 119.785,
+          "rmse": 734.034,
+          "acc_within_3d": 7.96,
+          "acc_within_7d": 17.76,
+          "large_error_gt14d_count": 316,
+          "large_error_gt14d_pct": 64.49,
+          "large_error_gt30d_count": 208,
+          "large_error_gt30d_pct": 42.45
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 502,
+          "total_cohort_count": 502,
+          "coverage_pct": 100.0,
+          "mae": 24.734,
+          "rmse": 80.084,
+          "acc_within_3d": 22.31,
+          "acc_within_7d": 41.04,
+          "large_error_gt14d_count": 162,
+          "large_error_gt14d_pct": 32.27,
+          "large_error_gt30d_count": 57,
+          "large_error_gt30d_pct": 11.35
+        }
+      },
+      "partial_topup_purchases": {
+        "cohort_size": 925,
+        "existing_refill_approach": {
+          "evaluated_count": 171,
+          "total_cohort_count": 925,
+          "coverage_pct": 18.49,
+          "mae": 12.27,
+          "rmse": 16.411,
+          "acc_within_3d": 20.47,
+          "acc_within_7d": 40.35,
+          "large_error_gt14d_count": 63,
+          "large_error_gt14d_pct": 36.84,
+          "large_error_gt30d_count": 6,
+          "large_error_gt30d_pct": 3.51
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 903,
+          "total_cohort_count": 925,
+          "coverage_pct": 97.62,
+          "mae": 16.117,
+          "rmse": 35.193,
+          "acc_within_3d": 22.48,
+          "acc_within_7d": 44.52,
+          "large_error_gt14d_count": 273,
+          "large_error_gt14d_pct": 30.23,
+          "large_error_gt30d_count": 100,
+          "large_error_gt30d_pct": 11.07
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 925,
+          "total_cohort_count": 925,
+          "coverage_pct": 100.0,
+          "mae": 24.255,
+          "rmse": 81.371,
+          "acc_within_3d": 20.11,
+          "acc_within_7d": 38.7,
+          "large_error_gt14d_count": 375,
+          "large_error_gt14d_pct": 40.54,
+          "large_error_gt30d_count": 122,
+          "large_error_gt30d_pct": 13.19
+        }
+      },
+      "missing_ambiguous_packing": {
+        "cohort_size": 896,
+        "existing_refill_approach": {
+          "evaluated_count": 15,
+          "total_cohort_count": 896,
+          "coverage_pct": 1.67,
+          "mae": 8.66,
+          "rmse": 9.995,
+          "acc_within_3d": 6.67,
+          "acc_within_7d": 40.0,
+          "large_error_gt14d_count": 3,
+          "large_error_gt14d_pct": 20.0,
+          "large_error_gt30d_count": 0,
+          "large_error_gt30d_pct": 0.0
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 0,
+          "total_cohort_count": 896,
+          "coverage_pct": 0.0,
+          "mae": null,
+          "rmse": null,
+          "acc_within_3d": null,
+          "acc_within_7d": null,
+          "large_error_gt14d_count": 0,
+          "large_error_gt14d_pct": 0.0,
+          "large_error_gt30d_count": 0,
+          "large_error_gt30d_pct": 0.0
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 106,
+          "total_cohort_count": 896,
+          "coverage_pct": 11.83,
+          "mae": 27.066,
+          "rmse": 61.23,
+          "acc_within_3d": 29.25,
+          "acc_within_7d": 45.28,
+          "large_error_gt14d_count": 36,
+          "large_error_gt14d_pct": 33.96,
+          "large_error_gt30d_count": 20,
+          "large_error_gt30d_pct": 18.87
+        }
+      }
+    }
+  },
+  "Validation Set (Holdout 2026-05 to 2026-06)": {
+    "overlap_comparison": {
+      "existing_refill_approach": {
+        "evaluated_count": 2213,
+        "total_cohort_count": 2213,
+        "coverage_pct": 100.0,
+        "mae": 9.285,
+        "rmse": 14.985,
+        "acc_within_3d": 38.23,
+        "acc_within_7d": 58.16,
+        "large_error_gt14d_count": 481,
+        "large_error_gt14d_pct": 21.74,
+        "large_error_gt30d_count": 115,
+        "large_error_gt30d_pct": 5.2
+      },
+      "estimated_days_of_supply": {
+        "evaluated_count": 2213,
+        "total_cohort_count": 2213,
+        "coverage_pct": 100.0,
+        "mae": 9.146,
+        "rmse": 14.315,
+        "acc_within_3d": 30.86,
+        "acc_within_7d": 57.21,
+        "large_error_gt14d_count": 444,
+        "large_error_gt14d_pct": 20.06,
+        "large_error_gt30d_count": 101,
+        "large_error_gt30d_pct": 4.56
+      }
+    },
+    "full_split_comparison": {
+      "existing_refill_approach": {
+        "evaluated_count": 2229,
+        "total_cohort_count": 12821,
+        "coverage_pct": 17.39,
+        "mae": 9.301,
+        "rmse": 14.98,
+        "acc_within_3d": 38.09,
+        "acc_within_7d": 57.96,
+        "large_error_gt14d_count": 485,
+        "large_error_gt14d_pct": 21.76,
+        "large_error_gt30d_count": 115,
+        "large_error_gt30d_pct": 5.16
+      },
+      "estimated_days_of_supply": {
+        "evaluated_count": 11278,
+        "total_cohort_count": 12821,
+        "coverage_pct": 87.97,
+        "mae": 48.148,
+        "rmse": 203.392,
+        "acc_within_3d": 19.58,
+        "acc_within_7d": 36.98,
+        "large_error_gt14d_count": 4988,
+        "large_error_gt14d_pct": 44.23,
+        "large_error_gt30d_count": 2883,
+        "large_error_gt30d_pct": 25.56
+      },
+      "raw_personal_median_baseline": {
+        "evaluated_count": 11468,
+        "total_cohort_count": 12821,
+        "coverage_pct": 89.45,
+        "mae": 32.775,
+        "rmse": 122.211,
+        "acc_within_3d": 30.94,
+        "acc_within_7d": 49.13,
+        "large_error_gt14d_count": 3804,
+        "large_error_gt14d_pct": 33.17,
+        "large_error_gt30d_count": 1902,
+        "large_error_gt30d_pct": 16.59
+      }
+    },
+    "sub_cohorts": {
+      "regular_purchase_patterns": {
+        "cohort_size": 2229,
+        "existing_refill_approach": {
+          "evaluated_count": 2229,
+          "total_cohort_count": 2229,
+          "coverage_pct": 100.0,
+          "mae": 9.301,
+          "rmse": 14.98,
+          "acc_within_3d": 38.09,
+          "acc_within_7d": 57.96,
+          "large_error_gt14d_count": 485,
+          "large_error_gt14d_pct": 21.76,
+          "large_error_gt30d_count": 115,
+          "large_error_gt30d_pct": 5.16
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 2213,
+          "total_cohort_count": 2229,
+          "coverage_pct": 99.28,
+          "mae": 9.146,
+          "rmse": 14.315,
+          "acc_within_3d": 30.86,
+          "acc_within_7d": 57.21,
+          "large_error_gt14d_count": 444,
+          "large_error_gt14d_pct": 20.06,
+          "large_error_gt30d_count": 101,
+          "large_error_gt30d_pct": 4.56
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 2229,
+          "total_cohort_count": 2229,
+          "coverage_pct": 100.0,
+          "mae": 8.253,
+          "rmse": 13.929,
+          "acc_within_3d": 43.65,
+          "acc_within_7d": 65.37,
+          "large_error_gt14d_count": 383,
+          "large_error_gt14d_pct": 17.18,
+          "large_error_gt30d_count": 110,
+          "large_error_gt30d_pct": 4.93
+        }
+      },
+      "bulk_purchases": {
+        "cohort_size": 973,
+        "existing_refill_approach": {
+          "evaluated_count": 137,
+          "total_cohort_count": 973,
+          "coverage_pct": 14.08,
+          "mae": 13.263,
+          "rmse": 21.19,
+          "acc_within_3d": 19.71,
+          "acc_within_7d": 43.8,
+          "large_error_gt14d_count": 40,
+          "large_error_gt14d_pct": 29.2,
+          "large_error_gt30d_count": 14,
+          "large_error_gt30d_pct": 10.22
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 958,
+          "total_cohort_count": 973,
+          "coverage_pct": 98.46,
+          "mae": 140.125,
+          "rmse": 548.117,
+          "acc_within_3d": 8.87,
+          "acc_within_7d": 19.52,
+          "large_error_gt14d_count": 643,
+          "large_error_gt14d_pct": 67.12,
+          "large_error_gt30d_count": 450,
+          "large_error_gt30d_pct": 46.97
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 973,
+          "total_cohort_count": 973,
+          "coverage_pct": 100.0,
+          "mae": 38.815,
+          "rmse": 145.192,
+          "acc_within_3d": 17.99,
+          "acc_within_7d": 35.97,
+          "large_error_gt14d_count": 411,
+          "large_error_gt14d_pct": 42.24,
+          "large_error_gt30d_count": 201,
+          "large_error_gt30d_pct": 20.66
+        }
+      },
+      "partial_topup_purchases": {
+        "cohort_size": 1374,
+        "existing_refill_approach": {
+          "evaluated_count": 263,
+          "total_cohort_count": 1374,
+          "coverage_pct": 19.14,
+          "mae": 13.805,
+          "rmse": 20.466,
+          "acc_within_3d": 24.33,
+          "acc_within_7d": 41.83,
+          "large_error_gt14d_count": 95,
+          "large_error_gt14d_pct": 36.12,
+          "large_error_gt30d_count": 23,
+          "large_error_gt30d_pct": 8.75
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 1322,
+          "total_cohort_count": 1374,
+          "coverage_pct": 96.22,
+          "mae": 20.262,
+          "rmse": 39.433,
+          "acc_within_3d": 17.93,
+          "acc_within_7d": 37.07,
+          "large_error_gt14d_count": 510,
+          "large_error_gt14d_pct": 38.58,
+          "large_error_gt30d_count": 224,
+          "large_error_gt30d_pct": 16.94
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 1374,
+          "total_cohort_count": 1374,
+          "coverage_pct": 100.0,
+          "mae": 30.584,
+          "rmse": 88.738,
+          "acc_within_3d": 22.42,
+          "acc_within_7d": 38.79,
+          "large_error_gt14d_count": 584,
+          "large_error_gt14d_pct": 42.5,
+          "large_error_gt30d_count": 252,
+          "large_error_gt30d_pct": 18.34
+        }
+      },
+      "missing_ambiguous_packing": {
+        "cohort_size": 1543,
+        "existing_refill_approach": {
+          "evaluated_count": 16,
+          "total_cohort_count": 1543,
+          "coverage_pct": 1.04,
+          "mae": 11.412,
+          "rmse": 14.329,
+          "acc_within_3d": 18.75,
+          "acc_within_7d": 31.25,
+          "large_error_gt14d_count": 4,
+          "large_error_gt14d_pct": 25.0,
+          "large_error_gt30d_count": 0,
+          "large_error_gt30d_pct": 0.0
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 0,
+          "total_cohort_count": 1543,
+          "coverage_pct": 0.0,
+          "mae": null,
+          "rmse": null,
+          "acc_within_3d": null,
+          "acc_within_7d": null,
+          "large_error_gt14d_count": 0,
+          "large_error_gt14d_pct": 0.0,
+          "large_error_gt30d_count": 0,
+          "large_error_gt30d_pct": 0.0
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 190,
+          "total_cohort_count": 1543,
+          "coverage_pct": 12.31,
+          "mae": 53.45,
+          "rmse": 141.567,
+          "acc_within_3d": 20.53,
+          "acc_within_7d": 35.26,
+          "large_error_gt14d_count": 85,
+          "large_error_gt14d_pct": 44.74,
+          "large_error_gt30d_count": 48,
+          "large_error_gt30d_pct": 25.26
+        }
+      }
+    }
+  },
+  "Full Supervised History (All Splits 2020 to 2026)": {
+    "overlap_comparison": {
+      "existing_refill_approach": {
+        "evaluated_count": 54774,
+        "total_cohort_count": 54774,
+        "coverage_pct": 100.0,
+        "mae": 16.289,
+        "rmse": 51.508,
+        "acc_within_3d": 30.7,
+        "acc_within_7d": 50.97,
+        "large_error_gt14d_count": 15399,
+        "large_error_gt14d_pct": 28.11,
+        "large_error_gt30d_count": 5386,
+        "large_error_gt30d_pct": 9.83
+      },
+      "estimated_days_of_supply": {
+        "evaluated_count": 54774,
+        "total_cohort_count": 54774,
+        "coverage_pct": 100.0,
+        "mae": 16.011,
+        "rmse": 52.068,
+        "acc_within_3d": 26.13,
+        "acc_within_7d": 51.19,
+        "large_error_gt14d_count": 14023,
+        "large_error_gt14d_pct": 25.6,
+        "large_error_gt30d_count": 4982,
+        "large_error_gt30d_pct": 9.1
+      }
+    },
+    "full_split_comparison": {
+      "existing_refill_approach": {
+        "evaluated_count": 55202,
+        "total_cohort_count": 489960,
+        "coverage_pct": 11.27,
+        "mae": 16.372,
+        "rmse": 51.894,
+        "acc_within_3d": 30.67,
+        "acc_within_7d": 50.9,
+        "large_error_gt14d_count": 15556,
+        "large_error_gt14d_pct": 28.18,
+        "large_error_gt30d_count": 5458,
+        "large_error_gt30d_pct": 9.89
+      },
+      "estimated_days_of_supply": {
+        "evaluated_count": 380778,
+        "total_cohort_count": 489960,
+        "coverage_pct": 77.72,
+        "mae": 69.689,
+        "rmse": 233.441,
+        "acc_within_3d": 16.35,
+        "acc_within_7d": 31.1,
+        "large_error_gt14d_count": 201660,
+        "large_error_gt14d_pct": 52.96,
+        "large_error_gt30d_count": 135074,
+        "large_error_gt30d_pct": 35.47
+      },
+      "raw_personal_median_baseline": {
+        "evaluated_count": 387870,
+        "total_cohort_count": 489960,
+        "coverage_pct": 79.16,
+        "mae": 60.062,
+        "rmse": 158.699,
+        "acc_within_3d": 23.01,
+        "acc_within_7d": 38.06,
+        "large_error_gt14d_count": 180563,
+        "large_error_gt14d_pct": 46.55,
+        "large_error_gt30d_count": 117970,
+        "large_error_gt30d_pct": 30.41
+      }
+    },
+    "sub_cohorts": {
+      "regular_purchase_patterns": {
+        "cohort_size": 55202,
+        "existing_refill_approach": {
+          "evaluated_count": 55202,
+          "total_cohort_count": 55202,
+          "coverage_pct": 100.0,
+          "mae": 16.372,
+          "rmse": 51.894,
+          "acc_within_3d": 30.67,
+          "acc_within_7d": 50.9,
+          "large_error_gt14d_count": 15556,
+          "large_error_gt14d_pct": 28.18,
+          "large_error_gt30d_count": 5458,
+          "large_error_gt30d_pct": 9.89
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 54774,
+          "total_cohort_count": 55202,
+          "coverage_pct": 99.22,
+          "mae": 16.011,
+          "rmse": 52.068,
+          "acc_within_3d": 26.13,
+          "acc_within_7d": 51.19,
+          "large_error_gt14d_count": 14023,
+          "large_error_gt14d_pct": 25.6,
+          "large_error_gt30d_count": 4982,
+          "large_error_gt30d_pct": 9.1
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 55202,
+          "total_cohort_count": 55202,
+          "coverage_pct": 100.0,
+          "mae": 15.414,
+          "rmse": 52.487,
+          "acc_within_3d": 36.48,
+          "acc_within_7d": 58.0,
+          "large_error_gt14d_count": 12839,
+          "large_error_gt14d_pct": 23.26,
+          "large_error_gt30d_count": 4967,
+          "large_error_gt30d_pct": 9.0
+        }
+      },
+      "bulk_purchases": {
+        "cohort_size": 33353,
+        "existing_refill_approach": {
+          "evaluated_count": 3901,
+          "total_cohort_count": 33353,
+          "coverage_pct": 11.7,
+          "mae": 22.707,
+          "rmse": 64.789,
+          "acc_within_3d": 19.38,
+          "acc_within_7d": 38.2,
+          "large_error_gt14d_count": 1507,
+          "large_error_gt14d_pct": 38.63,
+          "large_error_gt30d_count": 652,
+          "large_error_gt30d_pct": 16.71
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 32667,
+          "total_cohort_count": 33353,
+          "coverage_pct": 97.94,
+          "mae": 134.358,
+          "rmse": 588.655,
+          "acc_within_3d": 8.35,
+          "acc_within_7d": 18.39,
+          "large_error_gt14d_count": 22357,
+          "large_error_gt14d_pct": 68.44,
+          "large_error_gt30d_count": 16131,
+          "large_error_gt30d_pct": 49.38
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 33353,
+          "total_cohort_count": 33353,
+          "coverage_pct": 100.0,
+          "mae": 59.127,
+          "rmse": 148.756,
+          "acc_within_3d": 15.34,
+          "acc_within_7d": 29.02,
+          "large_error_gt14d_count": 17598,
+          "large_error_gt14d_pct": 52.76,
+          "large_error_gt30d_count": 10895,
+          "large_error_gt30d_pct": 32.67
+        }
+      },
+      "partial_topup_purchases": {
+        "cohort_size": 42772,
+        "existing_refill_approach": {
+          "evaluated_count": 6483,
+          "total_cohort_count": 42772,
+          "coverage_pct": 15.16,
+          "mae": 17.973,
+          "rmse": 46.578,
+          "acc_within_3d": 20.79,
+          "acc_within_7d": 36.57,
+          "large_error_gt14d_count": 2569,
+          "large_error_gt14d_pct": 39.63,
+          "large_error_gt30d_count": 676,
+          "large_error_gt30d_pct": 10.43
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 41305,
+          "total_cohort_count": 42772,
+          "coverage_pct": 96.57,
+          "mae": 41.638,
+          "rmse": 117.443,
+          "acc_within_3d": 20.37,
+          "acc_within_7d": 37.67,
+          "large_error_gt14d_count": 17891,
+          "large_error_gt14d_pct": 43.31,
+          "large_error_gt30d_count": 10156,
+          "large_error_gt30d_pct": 24.59
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 42772,
+          "total_cohort_count": 42772,
+          "coverage_pct": 100.0,
+          "mae": 49.915,
+          "rmse": 132.864,
+          "acc_within_3d": 19.26,
+          "acc_within_7d": 32.88,
+          "large_error_gt14d_count": 21300,
+          "large_error_gt14d_pct": 49.8,
+          "large_error_gt30d_count": 11814,
+          "large_error_gt30d_pct": 27.62
+        }
+      },
+      "missing_ambiguous_packing": {
+        "cohort_size": 109182,
+        "existing_refill_approach": {
+          "evaluated_count": 428,
+          "total_cohort_count": 109182,
+          "coverage_pct": 0.39,
+          "mae": 26.943,
+          "rmse": 88.352,
+          "acc_within_3d": 27.1,
+          "acc_within_7d": 41.82,
+          "large_error_gt14d_count": 157,
+          "large_error_gt14d_pct": 36.68,
+          "large_error_gt30d_count": 72,
+          "large_error_gt30d_pct": 16.82
+        },
+        "estimated_days_of_supply": {
+          "evaluated_count": 0,
+          "total_cohort_count": 109182,
+          "coverage_pct": 0.0,
+          "mae": null,
+          "rmse": null,
+          "acc_within_3d": null,
+          "acc_within_7d": null,
+          "large_error_gt14d_count": 0,
+          "large_error_gt14d_pct": 0.0,
+          "large_error_gt30d_count": 0,
+          "large_error_gt30d_pct": 0.0
+        },
+        "raw_personal_median_baseline": {
+          "evaluated_count": 7092,
+          "total_cohort_count": 109182,
+          "coverage_pct": 6.5,
+          "mae": 87.066,
+          "rmse": 203.178,
+          "acc_within_3d": 19.99,
+          "acc_within_7d": 32.13,
+          "large_error_gt14d_count": 3917,
+          "large_error_gt14d_pct": 55.23,
+          "large_error_gt30d_count": 2887,
+          "large_error_gt30d_pct": 40.71
+        }
+      }
+    }
+  }
+}

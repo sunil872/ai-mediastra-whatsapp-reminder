@@ -13,9 +13,18 @@ __pycache__/
 # Logs
 logs/
 
-# Data files (uploaded CSVs, exports)
+# Data files (uploaded CSVs, exports, RefillCare raw/processed datasets)
 data/*.csv
 data/*.xlsx
+data/**/*.csv
+data/**/*.xlsx
+data/**/*.parquet
+data/**/*.json
+data/**/*.db
+data/*.db
+data/refillcare/
+*.db
+
 
 # IDE settings
 .vscode/

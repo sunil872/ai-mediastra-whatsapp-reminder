@@ -1,0 +1,87 @@
+{
+  "metadata": {
+    "audit_timestamp": "2026-09-23T19:14:58.467953",
+    "repository": "C:\\Users\\sunil\\ai-mediastra-whatsapp-reminder\\ai-mediastra-whatsapp-reminder",
+    "is_read_only": true,
+    "dry_run": true,
+    "execution_duration_sec": 257.16
+  },
+  "dataset_scope": {
+    "total_raw_rows": 895557,
+    "total_valid_rows": 889520,
+    "date_min": "2020-12-24",
+    "date_max": "2026-08-31",
+    "unique_customer_ids": 14271,
+    "unique_customer_names": 14271,
+    "unique_item_ids": 16827,
+    "unique_current_entities": 326282,
+    "unique_proposed_entities": 359963
+  },
+  "phone_data_quality": {
+    "valid_phone_rows": 819670,
+    "missing_phone_rows": 69687,
+    "invalid_phone_rows": 163,
+    "distinct_normalized_phones": 30497,
+    "phones_shared_by_multiple_customer_names": 179,
+    "phones_shared_by_multiple_customer_ids": 180
+  },
+  "customer_name_data_quality": {
+    "missing_customer_name_rows": 0,
+    "distinct_normalized_customer_names": 14009,
+    "names_shared_by_multiple_customer_ids": 240,
+    "names_shared_by_multiple_phones": 2635
+  },
+  "store_and_item_data_quality": {
+    "distinct_stores": 1,
+    "missing_store_rows": 0,
+    "missing_item_rows": 0
+  },
+  "split_analysis": {
+    "affected_current_entities": 20897,
+    "affected_current_entities_pct": 6.4046,
+    "affected_transactions": 144301
+  },
+  "merge_analysis": {
+    "affected_proposed_entities": 130,
+    "affected_current_entities": 266,
+    "affected_transactions": 758
+  },
+  "shared_phone_analysis": {
+    "scenario_a_same_phone_diff_name_same_item": 756,
+    "scenario_b_same_phone_same_name_same_item_diff_cid": 10,
+    "scenario_c_same_phone_diff_cid_same_item": 764,
+    "scenario_d_same_phone_same_name_diff_items": 21573
+  },
+  "path_a_impact": {
+    "current_eligible": 27369,
+    "proposed_eligible": 25468,
+    "remained_eligible": 23677,
+    "newly_eligible": 49,
+    "lost_eligibility": 3692,
+    "unchanged": 322541
+  },
+  "path_b_impact": {
+    "current_eligible": 1667,
+    "proposed_eligible": 1563,
+    "remained_eligible": 1548,
+    "newly_eligible": 15,
+    "lost_eligibility": 119,
+    "unchanged": 326148
+  },
+  "stability_impact_transitions": {
+    "UNSTABLE -> UNSTABLE": 326282
+  },
+  "prediction_input_impact": {
+    "total_entities_evaluated": 326282,
+    "purchase_count_changed": 21117,
+    "last_purchase_date_changed": 18227,
+    "median_interval_changed": 20431,
+    "stability_tier_changed": 0
+  },
+  "safety_classifications": {
+    "SAFE": 271834,
+    "REVIEW": 19017,
+    "COLLISION_RISK": 20,
+    "INSUFFICIENT_IDENTITY_DATA": 35411
+  }
+}

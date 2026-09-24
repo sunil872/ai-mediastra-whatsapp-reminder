@@ -1,0 +1,166 @@
+{
+  "backtest_metadata": {
+    "total_supervised_rows": 485865,
+    "existing_eligible_count": 55087,
+    "consumption_valid_count": 377786,
+    "both_overlap_count": 54659,
+    "large_error_threshold_days": 30.0,
+    "prediction_leakage_policy": "Both predictors use only information available at/before the current purchase; actual target is target_days_until_next_purchase.",
+    "existing_strategy": "hybrid_routing_v17d (core=personal median, secondary=production XGB read-only)",
+    "consumption_strategy": "historical_consumption_rate (expanding) + estimated_days_of_supply",
+    "production_changes": "NONE \u2014 read-only backtest",
+    "whatsapp_sends": 0
+  },
+  "overall_head_to_head": {
+    "existing": {
+      "label": "Existing Hybrid (head-to-head)",
+      "n": 54659,
+      "mae": 16.25,
+      "rmse": 51.53,
+      "median_error": 7.0,
+      "within_3d_pct": 30.76,
+      "within_7d_pct": 51.08,
+      "large_error_gt30d": 5322,
+      "large_error_pct": 9.74
+    },
+    "consumption": {
+      "label": "Consumption DoS (head-to-head)",
+      "n": 54659,
+      "mae": 16.0,
+      "rmse": 52.09,
+      "median_error": 6.79,
+      "within_3d_pct": 26.12,
+      "within_7d_pct": 51.24,
+      "large_error_gt30d": 4976,
+      "large_error_pct": 9.1
+    }
+  },
+  "independent_coverage": {
+    "existing": {
+      "label": "Existing Hybrid (all eligible)",
+      "n": 55087,
+      "mae": 16.33,
+      "rmse": 51.92,
+      "median_error": 7.0,
+      "within_3d_pct": 30.73,
+      "within_7d_pct": 51.01,
+      "large_error_gt30d": 5394,
+      "large_error_pct": 9.79,
+      "coverage_pct_of_supervised": 11.34
+    },
+    "consumption": {
+      "label": "Consumption DoS (all valid)",
+      "n": 377786,
+      "mae": 69.97,
+      "rmse": 233.17,
+      "median_error": 16.0,
+      "within_3d_pct": 16.08,
+      "within_7d_pct": 30.87,
+      "large_error_gt30d": 134634,
+      "large_error_pct": 35.64,
+      "coverage_pct_of_supervised": 77.76
+    }
+  },
+  "segments": {
+    "regular": {
+      "count": 32183,
+      "definition": "Head-to-head overlap AND hybrid core-regular (NormMAD<=0.35, Drift<=7, P>=6, cadence in [15,120])",
+      "existing": {
+        "label": "Existing (Regular)",
+        "n": 32183,
+        "mae": 13.51,
+        "rmse": 49.49,
+        "median_error": 4.5,
+        "within_3d_pct": 42.5,
+        "within_7d_pct": 63.95,
+        "large_error_gt30d": 2414,
+        "large_error_pct": 7.5
+      },
+      "consumption": {
+        "label": "Consumption (Regular)",
+        "n": 32183,
+        "mae": 14.17,
+        "rmse": 49.59,
+        "median_error": 5.79,
+        "within_3d_pct": 30.44,
+        "within_7d_pct": 56.5,
+        "large_error_gt30d": 2374,
+        "large_error_pct": 7.38
+      }
+    },
+    "bulk": {
+      "count": 3857,
+      "definition": "Head-to-head overlap AND quantity_vs_avg_ratio >= 1.5",
+      "existing": {
+        "label": "Existing (Bulk)",
+        "n": 3857,
+        "mae": 22.28,
+        "rmse": 61.47,
+        "median_error": 10.1,
+        "within_3d_pct": 19.21,
+        "within_7d_pct": 38.11,
+        "large_error_gt30d": 634,
+        "large_error_pct": 16.44
+      },
+      "consumption": {
+        "label": "Consumption (Bulk)",
+        "n": 3857,
+        "mae": 25.34,
+        "rmse": 62.67,
+        "median_error": 14.06,
+        "within_3d_pct": 10.55,
+        "within_7d_pct": 27.12,
+        "large_error_gt30d": 748,
+        "large_error_pct": 19.39
+      }
+    },
+    "partial_topup": {
+      "count": 2511,
+      "definition": "Head-to-head overlap AND quantity_vs_avg_ratio <= 0.5",
+      "existing": {
+        "label": "Existing (Partial/Top-up)",
+        "n": 2511,
+        "mae": 20.9,
+        "rmse": 51.96,
+        "median_error": 14.0,
+        "within_3d_pct": 16.17,
+        "within_7d_pct": 28.71,
+        "large_error_gt30d": 314,
+        "large_error_pct": 12.5
+      },
+      "consumption": {
+        "label": "Consumption (Partial/Top-up)",
+        "n": 2511,
+        "mae": 17.8,
+        "rmse": 53.9,
+        "median_error": 8.16,
+        "within_3d_pct": 23.66,
+        "within_7d_pct": 45.84,
+        "large_error_gt30d": 232,
+        "large_error_pct": 9.24
+      }
+    },
+    "missing_packing": {
+      "count": 428,
+      "definition": "Existing-eligible rows with missing/unparseable packing (no total_units)",
+      "existing": {
+        "label": "Existing (Missing Packing)",
+        "n": 428,
+        "mae": 26.94,
+        "rmse": 88.35,
+        "median_error": 9.5,
+        "within_3d_pct": 27.1,
+        "within_7d_pct": 41.82,
+        "large_error_gt30d": 72,
+        "large_error_pct": 16.82
+      },
+      "consumption": {
+        "label": "Consumption (Missing Packing)",
+        "n": 0,
+        "mae": null,
+        "rmse": null,
+        "note": "Cannot produce consumption prediction without valid packing"
+      }
+    }
+  }
+}

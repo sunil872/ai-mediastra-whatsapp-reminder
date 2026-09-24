@@ -281,6 +281,19 @@ def _is_blank_row(raw_name, raw_phone) -> bool:
     return name_blank and phone_blank
 
 
+def mask_phone(phone: Any) -> str:
+    """Mask phone number for safe display/logging (e.g. 919876543210 -> ******3210)."""
+    if phone is None or (isinstance(phone, float) and pd.isna(phone)):
+        return "MISSING_PHONE"
+    text = str(phone).strip()
+    if text == "" or text.lower() in ("nan", "none", "nat", "null"):
+        return "MISSING_PHONE"
+    digits = re.sub(r"\D", "", text)
+    if len(digits) >= 4:
+        return f"******{digits[-4:]}"
+    return "INVALID_PHONE"
+
+
 def _original_phone_display(value) -> str:
     """
     Preserve the original phone as supplied for display.

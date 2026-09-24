@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RefillCare & Mediastra — Enterprise Clinical Operations</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💊</text></svg>">
+</head>
+<body>
+
+  <!-- Sidebar Navigation -->
+  <aside class="app-sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">💊</div>
+      <div class="brand-text">
+        <h1>RefillCare</h1>
+        <span>Enterprise Platform</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-tab="tab-dashboard">
+        <span class="nav-icon">📊</span>
+        <span>Operations Dashboard</span>
+      </a>
+      <a class="nav-item" data-tab="tab-upload">
+        <span class="nav-icon">📁</span>
+        <span>Sales Ingestion & Batches</span>
+      </a>
+      <a class="nav-item" data-tab="tab-predictions">
+        <span class="nav-icon">🎯</span>
+        <span>Prediction & Accuracy</span>
+      </a>
+      <a class="nav-item" data-tab="tab-reminders">
+        <span class="nav-icon">📅</span>
+        <span>Daily Reminder List</span>
+      </a>
+      <a class="nav-item" data-tab="tab-review">
+        <span class="nav-icon">⚠️</span>
+        <span>Clinical Review Queue</span>
+      </a>
+      <a class="nav-item" data-tab="tab-models">
+        <span class="nav-icon">🤖</span>
+        <span>Model Registry</span>
+      </a>
+      <a class="nav-item" data-tab="tab-whatsapp">
+        <span class="nav-icon">💬</span>
+        <span>WhatsApp Gateway</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="system-status-pill">
+        <span class="status-dot"></span>
+        <span id="api-status-text">FastAPI Connected</span>
+      </div>
+      <div>Active Model: <strong id="sidebar-active-model">v1.0.0</strong></div>
+      <div>RefillCare v2.0.0 (Enterprise)</div>
+    </div>
+  </aside>
+
+  <!-- Main Application Workspace -->
+  <main class="app-main">
+    
+    <!-- Top Navigation Bar -->
+    <header class="top-navbar">
+      <div class="navbar-title">
+        <h2 id="current-page-title">Operations Dashboard</h2>
+      </div>
+      <div class="navbar-actions">
+        <span class="badge badge-info" id="sales-coverage-badge">Dec 2020 – Aug 2026</span>
+        <button class="btn btn-outline" id="btn-refresh-all">🔄 Refresh</button>
+      </div>
+    </header>
+
+    <!-- Dynamic Tab Content Workspace -->
+    <div class="content-container">
+
+      <!-- TAB 1: OPERATIONS DASHBOARD -->
+      <section id="tab-dashboard" class="tab-pane active">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title">Customers Monitored</div>
+            <div class="kpi-value" id="kpi-customers">-</div>
+            <div class="kpi-sub">Total distinct patient accounts</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Sales Transactions</div>
+            <div class="kpi-value" id="kpi-transactions">-</div>
+            <div class="kpi-sub">Historical longitudinal records</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Upcoming Reminders</div>
+            <div class="kpi-value" id="kpi-upcoming">-</div>
+            <div class="kpi-sub">Scheduled prediction cycles</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Latest Sales Date</div>
+            <div class="kpi-value" id="kpi-latest-date" style="font-size: 1.6rem;">-</div>
+            <div class="kpi-sub">DD-MM-YYYY verified cutoff</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">🚀 Fast Operational Actions</h3>
+          </div>
+          <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <button class="btn btn-primary" id="btn-quick-upload">📁 Upload Monthly Sales</button>
+            <button class="btn btn-accent" id="btn-quick-predict">🔮 Generate Updated Predictions</button>
+            <button class="btn btn-outline" id="btn-quick-export">📥 Download Today's Reminder CSV</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: SALES INGESTION & BATCHES -->
+      <section id="tab-upload" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📁 Upload Monthly Pharmacy Sales Data</h3>
+          </div>
+          
+          <div class="upload-dropzone" id="sales-dropzone">
+            <div class="upload-icon">📤</div>
+            <h3>Drag & Drop Excel (.xlsx) or CSV file here</h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">
+              Strict DD-MM-YYYY validation will automatically verify dates prior to ingestion.
+            </p>
+            <input type="file" id="sales-file-input" accept=".xlsx,.xls,.csv" style="display: none;">
+            <button class="btn btn-outline" style="margin-top: 1rem;" onclick="document.getElementById('sales-file-input').click()">Browse File</button>
+          </div>
+
+          <!-- Preview & Validation Card -->
+          <div id="upload-preview-area" style="display: none; margin-top: 1.5rem;">
+            <h4 style="margin-bottom: 0.75rem; color: var(--primary);">📋 Ingestion Pre-flight Diagnostics</h4>
+            
+            <div class="kpi-grid" style="margin-bottom: 1rem;">
+              <div class="kpi-card"><div class="kpi-title">Detected Format</div><div class="kpi-value" id="diag-format" style="font-size: 1.2rem;">-</div></div>
+              <div class="kpi-card"><div class="kpi-title">Date Range</div><div class="kpi-value" id="diag-range" style="font-size: 1.2rem;">-</div></div>
+              <div class="kpi-card"><div class="kpi-title">Valid Records</div><div class="kpi-value" id="diag-valid">-</div></div>
+              <div class="kpi-card"><div class="kpi-title">Invalid Dates</div><div class="kpi-value" id="diag-invalid">-</div></div>
+            </div>
+
+            <div id="diag-warning" style="display: none; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;" class="badge-warning"></div>
+
+            <div class="table-responsive" style="max-height: 260px; margin-bottom: 1.25rem;">
+              <table class="data-table" id="table-sales-preview">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+              <button class="btn btn-primary" id="btn-confirm-ingest">🚀 Process & Commit Sales Data</button>
+              <button class="btn btn-outline" id="btn-cancel-ingest">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Historical Import Batches -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📜 Historical Import Batches & Rollback Audit</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-import-batches">
+              <thead>
+                <tr>
+                  <th>Batch ID</th>
+                  <th>Source File</th>
+                  <th>Upload Time</th>
+                  <th>Date Range</th>
+                  <th>Records Added</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: PREDICTION & ACCURACY -->
+      <section id="tab-predictions" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">🎯 Refill Prediction Engine</h3>
+            <button class="btn btn-accent" id="btn-run-predictions">🔮 Generate Updated Predictions</button>
+          </div>
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            Generates immutable prediction snapshots combining Path A (LightGBM) and Path B (Days-of-Supply).
+          </p>
+          <div class="table-responsive" style="max-height: 450px;">
+            <table class="data-table" id="table-prediction-snapshots">
+              <thead>
+                <tr>
+                  <th>Customer ID</th>
+                  <th>Patient Name</th>
+                  <th>Phone</th>
+                  <th>Medicine</th>
+                  <th>Last Purchase</th>
+                  <th>Est. Days of Supply</th>
+                  <th>Expected Refill</th>
+                  <th>Reminder Date</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Outcome Evaluation -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📊 Realized Outcome Evaluation (Predictions vs. Actuals)</h3>
+            <button class="btn btn-outline" id="btn-run-evaluation">📈 Calculate Outcome Accuracy</button>
+          </div>
+          <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-title">Predictions Evaluated</div><div class="kpi-value" id="eval-count">-</div></div>
+            <div class="kpi-card"><div class="kpi-title">Within ±3 Days</div><div class="kpi-value" id="eval-within3">-</div></div>
+            <div class="kpi-card"><div class="kpi-title">Within ±7 Days</div><div class="kpi-value" id="eval-within7">-</div></div>
+            <div class="kpi-card"><div class="kpi-title">Mean Error (MAE)</div><div class="kpi-value" id="eval-mae">-</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: DAILY REMINDER LIST -->
+      <section id="tab-reminders" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📅 Daily Operational Reminder List</h3>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+              <input type="date" id="reminder-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              <button class="btn btn-primary" id="btn-download-reminder-csv">📥 Download 10-Col Delivery CSV</button>
+            </div>
+          </div>
+          <div class="table-responsive" style="max-height: 450px;">
+            <table class="data-table" id="table-reminders">
+              <thead>
+                <tr>
+                  <th>Customer Name</th>
+                  <th>Mobile Number</th>
+                  <th>Mobile Status</th>
+                  <th>Medication</th>
+                  <th>Last Purchase</th>
+                  <th>Expected Refill</th>
+                  <th>Reminder Date</th>
+                  <th>Stage</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: CLINICAL REVIEW QUEUE -->
+      <section id="tab-review" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">⚠️ Today's Refill Reminder & Clinical Review Queue</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <input type="date" id="review-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              <select id="review-path-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main);">
+                <option value="">All Paths</option>
+                <option value="PATH_A">Path A (Adherence)</option>
+                <option value="PATH_B">Path B (Recurrence)</option>
+              </select>
+              <select id="review-stability-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main);">
+                <option value="">All Stability</option>
+                <option value="HIGH">HIGH (Auto-Median)</option>
+                <option value="MEDIUM-SAFE">MEDIUM-SAFE (Auto-Median)</option>
+                <option value="MEDIUM-RISK">MEDIUM-RISK (Pharmacist Review)</option>
+                <option value="UNSTABLE">UNSTABLE (Pharmacist Review)</option>
+              </select>
+              <button class="btn btn-outline" id="btn-refresh-review-queue">🔄 Filter Queue</button>
+            </div>
+          </div>
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            Review unified refill decisions, verify adherence stability, approve/reject reminder candidates, and trigger controlled Xinno dry-run dispatch.
+          </p>
+          <div class="table-responsive" style="max-height: 520px;">
+            <table class="data-table" id="table-review-queue">
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Medicine</th>
+                  <th>Expected Refill</th>
+                  <th>Stage</th>
+                  <th>Path</th>
+                  <th>Stability</th>
+                  <th>Prediction Method</th>
+                  <th>Decision Reason</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: MODEL REGISTRY -->
+      <section id="tab-models" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">🤖 Model Version Registry & Artifact Lineage</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-models">
+              <thead>
+                <tr>
+                  <th>Version ID</th>
+                  <th>Model Type</th>
+                  <th>Cutoff Date</th>
+                  <th>Train Samples</th>
+                  <th>Val MAE (Days)</th>
+                  <th>Within 3d (%)</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 7: WHATSAPP GATEWAY -->
+      <section id="tab-whatsapp" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">💬 WhatsApp & Xinno Messaging Gateway</h3>
+            <span class="badge badge-warning" id="wa-dry-run-badge">Dry-Run Simulation Active</span>
+          </div>
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            Automated WhatsApp reminders remain safely controlled with dry-run simulation mode enabled by default.
+          </p>
+          <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem;">
+            <button class="btn btn-primary" id="btn-dispatch-dryrun">🧪 Simulate Batch Send (Dry-Run)</button>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-wa-logs">
+              <thead>
+                <tr>
+                  <th>Phone Number</th>
+                  <th>Customer</th>
+                  <th>Medication</th>
+                  <th>Refill Date</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Notification Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

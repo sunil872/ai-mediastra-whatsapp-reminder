@@ -1,0 +1,27 @@
+"""RefillCare Configuration Package."""
+
+from refillcare.config.whatsapp_template import (
+    WHATSAPP_TEMPLATE_NAME,
+    WHATSAPP_TEMPLATE_CATEGORY,
+    WHATSAPP_TEMPLATE_TYPE,
+    WHATSAPP_TEMPLATE_LANGUAGE,
+    WHATSAPP_TEMPLATE_POLICY,
+    WHATSAPP_TEMPLATE_BODY,
+    WHATSAPP_TEMPLATE_VARIABLES,
+    WHATSAPP_VARIABLE_DESCRIPTIONS,
+    get_template_metadata,
+    build_template_components,
+)
+
+__all__ = [
+    "WHATSAPP_TEMPLATE_NAME",
+    "WHATSAPP_TEMPLATE_CATEGORY",
+    "WHATSAPP_TEMPLATE_TYPE",
+    "WHATSAPP_TEMPLATE_LANGUAGE",
+    "WHATSAPP_TEMPLATE_POLICY",
+    "WHATSAPP_TEMPLATE_BODY",
+    "WHATSAPP_TEMPLATE_VARIABLES",
+    "WHATSAPP_VARIABLE_DESCRIPTIONS",
+    "get_template_metadata",
+    "build_template_components",
+]
