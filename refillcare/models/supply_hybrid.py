@@ -362,3 +362,179 @@ def generate_hybrid_supply_batch_predictions(
     out_df["fallback_reason"] = [r["fallback_reason"] for r in results]
 
     return out_df
+
+
+# -----------------------------------------------------------------------------
+# Generalized Human-Level ML & Dimensionally Correct Supply Consensus Engine
+# -----------------------------------------------------------------------------
+
+import joblib
+from pathlib import Path
+from functools import lru_cache
+
+HUMAN_ML_MODEL_PATH = Path("data/refillcare/processed/models/human_ml_refill_model.joblib")
+
+
+def calculate_estimated_residual_inventory(
+    previous_units: Optional[float],
+    elapsed_days: Optional[float],
+    consumption_velocity: float,
+) -> float:
+    """Calculate estimated residual medication units from an early prior purchase.
+
+    Units:
+        residual_inventory = max(0, previous_units - (elapsed_days * consumption_velocity))
+
+    If elapsed_days > 30.0, residual inventory is set strictly to 0.0 (assumes prior supply
+    was exhausted or patient purchased from another pharmacy).
+    """
+    if previous_units is None or previous_units <= 0:
+        return 0.0
+    if elapsed_days is None or elapsed_days <= 0:
+        return 0.0
+    if elapsed_days > 30.0:
+        return 0.0
+
+    consumed = float(elapsed_days) * float(consumption_velocity)
+    residual = max(0.0, float(previous_units) - consumed)
+    # Cap at previous_units and plausible single-course limit
+    return round(float(min(residual, previous_units, 90.0)), 2)
+
+
+def calculate_dimensionally_correct_supply_bounds(
+    effective_units: float,
+    consumption_velocity: float,
+    lower_factor: float = 0.65,
+    upper_factor: float = 1.50,
+    min_lower_days: float = 7.0,
+    min_upper_days: float = 10.0,
+) -> Tuple[float, float, float]:
+    """Calculate dimensionally correct physical supply boundaries in days.
+
+    Dimensionality:
+        effective_units (tablets) / consumption_velocity (tablets/day) = estimated_supply_days (days)
+        lower_bound (days) = max(min_lower_days, estimated_supply_days * lower_factor)
+        upper_bound (days) = max(min_upper_days, estimated_supply_days * upper_factor)
+
+    Returns:
+        (estimated_supply_days, lower_bound_days, upper_bound_days)
+    """
+    safe_velocity = max(0.33, min(4.0, float(consumption_velocity))) if consumption_velocity and consumption_velocity > 0 else 1.0
+    safe_units = max(1.0, float(effective_units))
+
+    # Dimensionally correct: units / (units/day) = days
+    supply_days = safe_units / safe_velocity
+    supply_days = max(5.0, min(365.0, supply_days))
+
+    lower_bound = max(min_lower_days, supply_days * lower_factor)
+    upper_bound = max(min_upper_days, supply_days * upper_factor)
+
+    return round(supply_days, 1), round(lower_bound, 1), round(upper_bound, 1)
+
+
+@lru_cache(maxsize=1)
+def load_human_ml_bundle(model_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Load serialized human ML model bundle with caching."""
+    p = Path(model_path) if model_path else HUMAN_ML_MODEL_PATH
+    if not p.is_file():
+        # Fallback to search in processed models
+        alt_p = Path(__file__).resolve().parent.parent.parent / "data" / "refillcare" / "processed" / "models" / "human_ml_refill_model.joblib"
+        if alt_p.is_file():
+            p = alt_p
+        else:
+            return None
+    try:
+        bundle = joblib.load(p)
+        return bundle
+    except Exception:
+        return None
+
+
+def evaluate_human_hybrid_prediction(
+    features: Dict[str, Any],
+    stability_tier: str,
+    cadence_median: float,
+    model_bundle: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Evaluate multi-signal consensus across ML, dimensionally correct supply, and historical cadence.
+
+    Enforces:
+    1. Dimensionally correct physical supply boundaries [Lower, Upper].
+    2. Signal agreement check between ML and Supply.
+    3. Routing to PHARMACIST_REVIEW if severe model/supply divergence exists.
+    """
+    effective_units = float(features.get("estimated_effective_supply", features.get("latest_units", 30.0)))
+    velocity = float(features.get("estimated_consumption_velocity", 1.0))
+    hist_med = float(cadence_median) if cadence_median and cadence_median > 0 else 30.0
+
+    # 1. Dimensionally correct physical bounds in days
+    supply_days, lower_bound, upper_bound = calculate_dimensionally_correct_supply_bounds(
+        effective_units=effective_units,
+        consumption_velocity=velocity,
+        lower_factor=0.65,
+        upper_factor=1.50,
+    )
+
+    # 2. ML Prediction
+    bundle = model_bundle or load_human_ml_bundle()
+    raw_ml_pred = None
+    if bundle and "model" in bundle and "feature_cols" in bundle:
+        try:
+            feat_cols = bundle["feature_cols"]
+            row_vals = [float(features.get(c, 0.0)) for c in feat_cols]
+            X_in = np.asarray([row_vals], dtype=np.float64)
+            raw_ml_pred = float(bundle["model"].predict(X_in)[0])
+        except Exception:
+            raw_ml_pred = None
+
+    # Fallback to supply days or historical cadence if ML prediction unavailable
+    if raw_ml_pred is None:
+        raw_ml_pred = supply_days
+
+    # 3. Clamped Prediction within Physical Guardrails
+    clamped_pred = float(np.clip(raw_ml_pred, lower_bound, upper_bound))
+
+    # 4. Consensus & Divergence Check
+    agreement_delta = abs(raw_ml_pred - supply_days)
+    review_required = False
+    decision_reason = "Consensus Achieved"
+
+    qty_ratio = float(features.get("quantity_ratio_vs_typical", 1.0))
+    typical_u = float(features.get("typical_units_median", 30.0))
+
+    if qty_ratio < 0.8:
+        # Partial purchase (e.g. 1 strip of 10 instead of usual 20 tabs)
+        scaled_int = round(hist_med * qty_ratio)
+        clamped_pred = float(max(5, min(int(scaled_int), int(effective_units))))
+        decision_reason = f"Partial Purchase Scaled ({int(effective_units)}u vs typical {int(typical_u)}u, ratio {qty_ratio:.0%}: {int(round(clamped_pred))}d)"
+    elif features.get("is_early_topup"):
+        # Early top-up with carryover inventory: interval must scale with total available supply
+        supply_scaled = round(supply_days * 0.8)
+        clamped_pred = float(max(clamped_pred, supply_scaled, 45.0 if effective_units >= 50.0 else 20.0))
+        decision_reason = f"Early Top-Up Carryover Supply ({int(effective_units)}u available: {int(round(clamped_pred))}d)"
+    elif qty_ratio > 1.3 and effective_units < 90.0:
+        # Multi-pack purchase (e.g. 2-month supply = 60 tabs vs typical 30 tabs)
+        scaled_int = round(hist_med * qty_ratio)
+        clamped_pred = float(max(clamped_pred, scaled_int, hist_med))
+        decision_reason = f"Multi-Pack Scaled ({int(effective_units)}u vs typical {int(typical_u)}u, ratio {qty_ratio:.0%}: {int(round(clamped_pred))}d)"
+    elif features.get("is_post_lapse"):
+        decision_reason = f"Post-Lapse Supply Reset ({int(effective_units)}u: {int(round(clamped_pred))}d)"
+    elif agreement_delta > 45.0 and effective_units >= 60.0:
+        # Only flag unexplained severe divergence if none of the explicit physical archetypes apply
+        review_required = True
+        decision_reason = f"MODEL_SUPPLY_DIVERGENCE: ML={raw_ml_pred:.1f}d vs Supply={supply_days:.1f}d (delta={agreement_delta:.1f}d > 45d). Pharmacist review required."
+    else:
+        decision_reason = f"Multi-Signal Consensus ({int(round(clamped_pred))}d)"
+
+    return {
+        "predicted_interval_days": int(round(clamped_pred)),
+        "consensus_interval": round(clamped_pred, 1),
+        "raw_ml_prediction_days": round(raw_ml_pred, 1),
+        "estimated_supply_days": round(supply_days, 1),
+        "lower_bound_days": round(lower_bound, 1),
+        "upper_bound_days": round(upper_bound, 1),
+        "agreement_delta": round(agreement_delta, 1),
+        "review_required": review_required,
+        "consensus_reason": decision_reason,
+    }
+

@@ -21,9 +21,20 @@ Ensures:
 from __future__ import annotations
 
 import io
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+try:
+    import cloudinary
+    import cloudinary.uploader
+except ImportError:
+    mock_c = MagicMock()
+    mock_u = MagicMock()
+    mock_c.uploader = mock_u
+    sys.modules["cloudinary"] = mock_c
+    sys.modules["cloudinary.uploader"] = mock_u
 
 from services.cloudinary_image import (
     ALLOWED_EXTENSIONS,

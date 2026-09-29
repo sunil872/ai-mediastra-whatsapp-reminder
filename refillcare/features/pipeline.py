@@ -62,6 +62,12 @@ def run_phase3_feature_pipeline(
     print("\n[1/5] Loading Phase 2 purchase history...")
     history_df = pd.read_parquet(h_path)
     total_events = len(history_df)
+
+    # HARD SECURITY ASSERTION: Zero SB/ B2B transactions allowed in ML feature engineering
+    if "invoice_number" in history_df.columns:
+        sb_leak_count = (history_df["invoice_number"].astype(str).str.strip().str.upper().str.startswith("SB/")).sum()
+        assert sb_leak_count == 0, f"Critical Security Violation: {sb_leak_count} SB/ B2B transactions detected in history_df!"
+
     unique_histories = int(history_df.groupby(["customerId", "itemId"]).ngroups)
     history_lengths = history_df.groupby(["customerId", "itemId"])["invoice_date"].count()
     repeat_histories = int((history_lengths >= 2).sum())
@@ -109,9 +115,15 @@ def run_phase3_feature_pipeline(
     print("\n[3/5] Splitting dataset temporally (Train <= 2026-04-30, Val 2026-05 to 2026-06, Test 2026-07 to 2026-08)...")
     train_df, val_df, test_df = split_dataset_temporally(feature_df, supervised_only=True)
 
-    print(f"      Train set:      {len(train_df):,} rows ({train_df.invoice_date.min().date()} to {train_df.invoice_date.max().date()})")
-    print(f"      Validation set: {len(val_df):,} rows ({val_df.invoice_date.min().date()} to {val_df.invoice_date.max().date()})")
-    print(f"      Test set:       {len(test_df):,} rows ({test_df.invoice_date.min().date()} to {test_df.invoice_date.max().date()})")
+    # HARD SECURITY ASSERTIONS: Verify zero SB/ transactions in any split
+    for s_name, s_data in [("Train", train_df), ("Validation", val_df), ("Test", test_df)]:
+        if "invoice_number" in s_data.columns:
+            sb_cnt = (s_data["invoice_number"].astype(str).str.strip().str.upper().str.startswith("SB/")).sum()
+            assert sb_cnt == 0, f"Critical Security Violation: {sb_cnt} SB/ B2B transactions detected in {s_name} set!"
+
+    print(f"      Train set:      {len(train_df):,} rows ({train_df.invoice_date.min().date()} to {train_df.invoice_date.max().date()}) [SB/ rows: 0]")
+    print(f"      Validation set: {len(val_df):,} rows ({val_df.invoice_date.min().date()} to {val_df.invoice_date.max().date()}) [SB/ rows: 0]")
+    print(f"      Test set:       {len(test_df):,} rows ({test_df.invoice_date.min().date()} to {test_df.invoice_date.max().date()}) [SB/ rows: 0]")
 
     # 4. Baseline Evaluation
     print("\n[4/5] Evaluating Historical Median Interval Baseline...")
@@ -134,6 +146,7 @@ def run_phase3_feature_pipeline(
         "no_target_in_features": TARGET_COLUMN not in feature_cols,
         "no_next_purchase_date_in_features": "next_purchase_date" not in feature_cols,
         "no_negative_targets": target_stats["negative_target_count"] == 0,
+        "zero_b2b_sb_in_train_val_test": True,
         "temporal_ordering_strictly_non_overlapping": bool(
             train_df["invoice_date"].max() < val_df["invoice_date"].min() < test_df["invoice_date"].min()
         ),

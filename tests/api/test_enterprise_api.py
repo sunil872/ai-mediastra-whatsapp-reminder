@@ -17,6 +17,35 @@ from api.main import app
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def isolated_sales_history(monkeypatch, tmp_path):
+    """Isolate purchase history to temporary location with small sample to protect memory and production data."""
+    from api import services
+    sample_df = pd.DataFrame([
+        {
+            "customerId": "C101",
+            "customerName": "Existing Patient",
+            "itemId": "I201",
+            "itemName": "Existing Medicine",
+            "invoice_date": "2026-07-01",
+            "quantity": 30,
+            "packing": "10 Tabs",
+            "MOBILE_NO": "9876543210",
+            "import_batch_id": "BATCH_SAMPLE",
+            "transaction_number": "S0/1000",
+            "invoice_number": "S0/1000",
+            "transaction_type": "CUSTOMER_SALE",
+            "refillcare_eligible": True,
+        }
+    ])
+    temp_parquet = tmp_path / "test_purchase_history.parquet"
+    sample_df.to_parquet(temp_parquet, index=False)
+    monkeypatch.setattr(services, "HISTORY_PARQUET_PATH", temp_parquet)
+    yield
+    import gc
+    gc.collect()
+
+
 def test_health_check():
     """Verify system health check endpoint."""
     response = client.get("/health")
@@ -66,7 +95,7 @@ def test_sales_ingestion_and_rollback():
     
     # Ingest
     ingest_res = client.post("/api/v1/sales/ingest", files=files)
-    assert ingest_res.status_code == 200
+    assert ingest_res.status_code == 200, f"Error: {ingest_res.status_code} - {ingest_res.text}"
     ingest_data = ingest_res.json()
     batch_id = ingest_data["import_batch_id"]
     assert batch_id.startswith("BATCH_")
@@ -127,8 +156,24 @@ def test_model_registry():
     models_res = client.get("/api/v1/models")
     assert models_res.status_code == 200
     models = models_res.json()
-    assert len(models) >= 1
+    assert len(models) >= 2
     assert any(m["version_id"] == "v1.0.0" for m in models)
+    assert any(m["version_id"] == "v1.2.0-human-consensus" for m in models)
+
+
+def test_consensus_regimen_analytics():
+    """Verify consensus regimen analytics endpoint and breakdown."""
+    res = client.get("/api/v1/analytics/consensus-regimen")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["engine_version"] == "v1.2.0-human-consensus"
+    assert len(data["regimens"]) >= 4
+    assert any(r["regimen"] == "Once Daily (OD)" for r in data["regimens"])
+    assert any(r["regimen"] == "Alternate Day / Intermittent (QOD)" for r in data["regimens"])
+    assert any(r["regimen"] == "Twice Daily (BD)" for r in data["regimens"])
+    assert any(r["regimen"] == "Thrice Daily (TID) / Multiple" for r in data["regimens"])
+    assert len(data["archetypes"]) >= 4
+    assert len(data["benchmarks"]) >= 3
 
 
 def test_whatsapp_dry_run_dispatch():

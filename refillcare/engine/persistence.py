@@ -42,6 +42,34 @@ from services.xinno_whatsapp import send_template_message
 from utils.validators import mask_phone, normalize_to_whatsapp_number
 
 
+def parse_decision_provenance(reason: Optional[str]) -> Tuple[str, str]:
+    """Parse archetype badge and clinical dosage regimen from decision reason."""
+    if not reason:
+        return "Standard Consensus", "1.0 tab/d (OD)"
+    r_lower = reason.lower()
+    if "multi-pack" in r_lower:
+        arch = "Multi-Pack Scaled"
+    elif "early top-up" in r_lower:
+        arch = "Early Top-Up Carryover"
+    elif "partial purchase" in r_lower or "partial strip" in r_lower:
+        arch = "Partial Purchase Scaled"
+    elif "post-lapse" in r_lower:
+        arch = "Post-Lapse Reset"
+    else:
+        arch = "Standard Consensus"
+
+    # Regimen detection
+    if "2.0/d" in r_lower or "2.0 tab" in r_lower or "bd" in r_lower:
+        regimen = "2.0 tabs/d (BD)"
+    elif "0.5/d" in r_lower or "0.5 tab" in r_lower or "qod" in r_lower or "alternate" in r_lower:
+        regimen = "0.5 tab/d (QOD)"
+    elif "3.0/d" in r_lower or "tid" in r_lower:
+        regimen = "3.0 tabs/d (TID)"
+    else:
+        regimen = "1.0 tab/d (OD)"
+    return arch, regimen
+
+
 class RefillPersistenceManager:
     """Enterprise database-backed persistence manager for RefillCare V1."""
 
@@ -60,12 +88,28 @@ class RefillPersistenceManager:
             return 0
 
         now = datetime.utcnow()
-        existing_map = {r.decision_id: r for r in db.query(RefillDecisionModel).all()}
+        target_ids = [
+            f"DEC-{dec.customer_item_key}-{(dec.last_purchase_date.strftime('%Y%m%d') if hasattr(dec.last_purchase_date, 'strftime') else str(dec.last_purchase_date).replace('-', '')[:8])}"
+            for dec in decisions
+        ]
+        existing_records = (
+            db.query(RefillDecisionModel)
+            .filter(RefillDecisionModel.decision_id.in_(target_ids))
+            .all()
+        )
+        existing_map: Dict[str, RefillDecisionModel] = {
+            str(r.decision_id): r for r in existing_records
+        }
         saved_count = 0
         new_records = []
 
         for dec in decisions:
-            dec_id = f"DEC-{dec.customer_item_key}-{dec.last_purchase_date.strftime('%Y%m%d')}"
+            date_str = (
+                dec.last_purchase_date.strftime('%Y%m%d')
+                if hasattr(dec.last_purchase_date, 'strftime')
+                else str(dec.last_purchase_date).replace('-', '')[:8]
+            )
+            dec_id = f"DEC-{dec.customer_item_key}-{date_str}"
             existing = existing_map.get(dec_id)
 
             if existing:
@@ -148,17 +192,42 @@ class RefillPersistenceManager:
 
         now = datetime.utcnow()
 
-        # 1. Batch load existing active cycles grouped by customer_item_key
-        active_cycles_by_key = defaultdict(list)
-        for c in db.query(ReminderCycleModel).filter(ReminderCycleModel.is_active == True).all():
-            active_cycles_by_key[c.customer_item_key].append(c)
+        # 1. Batch load existing active cycles targeted by customer_item_key
+        target_keys = {dec.customer_item_key for dec in decisions if dec.customer_item_key}
+        target_cycle_ids = {dec.cycle_id for dec in decisions if dec.cycle_id}
 
-        # 2. Batch load all cycle_ids and existing stages
-        existing_cycles = {c.cycle_id: c for c in db.query(ReminderCycleModel).all()}
-        existing_stages = {
-            (s.cycle_id, s.stage_offset)
-            for s in db.query(ReminderStageModel.cycle_id, ReminderStageModel.stage_offset).all()
-        }
+        active_cycles_by_key: Dict[str, List[ReminderCycleModel]] = defaultdict(list)
+        if target_keys:
+            active_cycles = (
+                db.query(ReminderCycleModel)
+                .filter(
+                    ReminderCycleModel.customer_item_key.in_(target_keys),
+                    ReminderCycleModel.is_active == True,
+                )
+                .all()
+            )
+            for c in active_cycles:
+                active_cycles_by_key[str(c.customer_item_key)].append(c)
+
+        # 2. Batch load target cycle_ids and existing stages
+        existing_cycles: Dict[str, ReminderCycleModel] = {}
+        existing_stages: Set[Tuple[str, int]] = set()
+        if target_cycle_ids:
+            found_cycles = (
+                db.query(ReminderCycleModel)
+                .filter(ReminderCycleModel.cycle_id.in_(target_cycle_ids))
+                .all()
+            )
+            for c in found_cycles:
+                existing_cycles[str(c.cycle_id)] = c
+
+            found_stages = (
+                db.query(ReminderStageModel.cycle_id, ReminderStageModel.stage_offset)
+                .filter(ReminderStageModel.cycle_id.in_(target_cycle_ids))
+                .all()
+            )
+            for s in found_stages:
+                existing_stages.add((str(s.cycle_id), int(s.stage_offset)))
 
         # 3. Repurchase Reset & Ineligibility Sync Logic
         superseded_cycle_info = []
@@ -206,7 +275,12 @@ class RefillPersistenceManager:
                 continue
 
             if dec.cycle_id not in existing_cycles:
-                dec_id = f"DEC-{dec.customer_item_key}-{dec.last_purchase_date.strftime('%Y%m%d')}"
+                date_str = (
+                    dec.last_purchase_date.strftime('%Y%m%d')
+                    if hasattr(dec.last_purchase_date, 'strftime')
+                    else str(dec.last_purchase_date).replace('-', '')[:8]
+                )
+                dec_id = f"DEC-{dec.customer_item_key}-{date_str}"
                 new_cycle = ReminderCycleModel(
                     cycle_id=dec.cycle_id,
                     customer_item_key=dec.customer_item_key,
@@ -308,6 +382,8 @@ class RefillPersistenceManager:
             i_name = dec.item_name if dec else stage.item_id
             phone = dec.mobile_no if dec else None
             p_masked = mask_phone(phone) if phone else "MISSING"
+            reason = dec.decision_reason if dec else ""
+            arch, regimen = parse_decision_provenance(reason)
 
             queue.append({
                 "reminder_id": stage.reminder_id,
@@ -331,7 +407,9 @@ class RefillPersistenceManager:
                 "historical_median_days": dec.cadence_median if dec else None,
                 "predicted_interval_days": dec.predicted_interval_days if dec else None,
                 "estimated_days_of_supply": dec.dos_days if (dec and dec.dos_days) else (dec.predicted_interval_days if dec else 30.0),
-                "decision_reason": dec.decision_reason if dec else "",
+                "decision_reason": reason,
+                "archetype": arch,
+                "dosage_regimen": regimen,
                 "message_text": stage.message_text,
             })
 
@@ -394,8 +472,8 @@ class RefillPersistenceManager:
         )
 
         phone = dec.mobile_no if dec else None
-        c_name = dec.customer_name if dec else "Valued Customer"
-        i_name = dec.item_name if dec else stage.item_id
+        c_name = dec.customer_name if (dec and dec.customer_name) else "Valued Customer"
+        i_name = dec.item_name if (dec and dec.item_name) else stage.item_id
 
         if not phone:
             stage.status = STATUS_FAILED
@@ -405,8 +483,8 @@ class RefillPersistenceManager:
 
         # Perform dispatch
         dispatch_res = send_template_message(
-            phone_number=phone,
-            customer_name=c_name,
+            phone_number=str(phone),
+            customer_name=str(c_name),
             store_name=self.store_name,
             dry_run=is_dry_run,
         )
@@ -415,8 +493,8 @@ class RefillPersistenceManager:
         now = datetime.utcnow()
         audit_rec = WhatsAppDeliveryLogModel(
             reminder_id=reminder_id,
-            phone_number=phone,
-            customer_name=c_name,
+            phone_number=str(phone),
+            customer_name=str(c_name),
             template_name="refillcare_medicine_reminder",
             xinno_message_id=dispatch_res.get("provider_msg_id"),
             is_dry_run=is_dry_run,

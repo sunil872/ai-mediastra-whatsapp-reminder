@@ -34,6 +34,19 @@ from refillcare.data.monthly_ingestion import (
     ingest_monthly_sales_pipeline,
     normalize_sales_dataframe,
 )
+from refillcare.data.transaction_classifier import (
+    classify_transaction,
+    classify_transactions_df,
+    filter_eligible_customer_transactions,
+    get_transaction_channel_summary,
+    ChannelClassification,
+    ExclusionReason,
+    TRANSACTION_TYPE_CUSTOMER_SALE,
+    TRANSACTION_TYPE_B2B_INTER_STORE,
+    TRANSACTION_TYPE_UNKNOWN,
+    EXCLUSION_REASON_INTER_STORE,
+    EXCLUSION_REASON_UNKNOWN_TYPE,
+)
 
 __all__ = [
     "load_raw_transactions",
@@ -52,4 +65,13 @@ __all__ = [
     "validate_monthly_sales_data",
     "ingest_monthly_sales_pipeline",
     "normalize_sales_dataframe",
+    "classify_transaction",
+    "classify_transactions_df",
+    "filter_eligible_customer_transactions",
+    "get_transaction_channel_summary",
+    "TRANSACTION_TYPE_CUSTOMER_SALE",
+    "TRANSACTION_TYPE_B2B_INTER_STORE",
+    "TRANSACTION_TYPE_UNKNOWN",
+    "EXCLUSION_REASON_INTER_STORE",
+    "EXCLUSION_REASON_UNKNOWN_TYPE",
 ]

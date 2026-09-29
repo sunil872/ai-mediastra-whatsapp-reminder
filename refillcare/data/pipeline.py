@@ -18,6 +18,11 @@ from refillcare.data.cleaning import (
     clean_transactions,
     aggregate_invoice_items,
 )
+from refillcare.data.transaction_classifier import (
+    classify_transactions_df,
+    filter_eligible_customer_transactions,
+    get_transaction_channel_summary,
+)
 from refillcare.data.enrichment import (
     load_salt_master,
     enrich_with_salt,
@@ -40,7 +45,7 @@ def run_refillcare_data_pipeline(
     output_dir: Optional[Union[str, Path]] = None,
     save_artifacts: bool = True,
 ) -> Dict[str, Any]:
-    """Execute the full RefillCare data preparation pipeline.
+    """Execute the full RefillCare data preparation pipeline with transaction-channel isolation.
 
     Args:
         transactions_path: Path to customer_data_fields.csv.
@@ -57,7 +62,7 @@ def run_refillcare_data_pipeline(
     out_dir = Path(output_dir) if output_dir else base_dir / "data" / "refillcare" / "processed"
 
     print("================================================================")
-    print("STARTING REFILLCARE DATA PIPELINE (PHASE 2)")
+    print("STARTING REFILLCARE DATA PIPELINE (PHASE 2 - V1 CHANNEL ISOLATION)")
     print("================================================================")
     print(f"Transaction source: {tx_path}")
     print(f"SALT master source: {salt_path}")
@@ -68,15 +73,28 @@ def run_refillcare_data_pipeline(
     raw_df = load_raw_transactions(tx_path)
     print(f"      Loaded {len(raw_df):,} raw transaction rows.")
 
-    # 2. Clean Transactions
-    print("\n[2/6] Cleaning transactions (removing exact duplicates, missing keys, dropping mfgDate)...")
-    clean_df = clean_transactions(raw_df)
-    print(f"      Cleaned dataset contains {len(clean_df):,} rows.")
+    # 2. Clean Transactions & Classify Channels
+    print("\n[2/6] Cleaning transactions and classifying transaction channels...")
+    clean_all_df = clean_transactions(raw_df)
+    clean_all_df = classify_transactions_df(clean_all_df, invoice_col="invoice_number")
+    channel_summary = get_transaction_channel_summary(clean_all_df)
+    print(f"      Cleaned dataset contains {len(clean_all_df):,} total rows.")
+    print(f"      Transaction Channel Breakdown:")
+    print(f"        - Total Transactions:       {channel_summary['total_transactions']:,}")
+    print(f"        - Customer Sales (S0/):     {channel_summary['customer_sales']:,} (RefillCare Eligible)")
+    print(f"        - B2B Inter-Store (SB/):    {channel_summary['b2b_inter_store']:,} (EXCLUDED)")
+    print(f"        - Unknown Transactions:     {channel_summary['unknown']:,} (EXCLUDED)")
+    print(f"        - RefillCare Eligible Rows: {channel_summary['refillcare_eligible']:,}")
 
-    # 3. Aggregate Duplicate Invoices
+    # Filter out B2B and Unknown transactions UPSTREAM before invoice aggregation,
+    # customer history building, and feature engineering!
+    customer_clean_df = filter_eligible_customer_transactions(clean_all_df, invoice_col="invoice_number")
+    print(f"      Proceeding with {len(customer_clean_df):,} validated customer transactions.")
+
+    # 3. Aggregate Duplicate Invoices (Customer Sales Only)
     print("\n[3/6] Aggregating invoice lines by (customerId + invoice_number + invoice_date + itemId)...")
-    aggregated_df = aggregate_invoice_items(clean_df)
-    print(f"      Aggregated to {len(aggregated_df):,} unique purchase events.")
+    aggregated_df = aggregate_invoice_items(customer_clean_df)
+    print(f"      Aggregated to {len(aggregated_df):,} unique customer purchase events.")
 
     # 4. SALT Master Loading & Enrichment
     salt_df = None
@@ -91,10 +109,16 @@ def run_refillcare_data_pipeline(
         print("\n[4/6] SALT master not found; proceeding without SALT enrichment.")
         enriched_events_df = aggregated_df
 
-    # 5. Purchase History & Interval Calculation
+    # 5. Purchase History & Interval Calculation (Isolated from SB/ B2B transactions)
     print("\n[5/6] Building customer-medicine purchase history and intervals...")
     history_df = create_purchase_history(enriched_events_df)
     interval_stats = compute_interval_statistics(history_df)
+
+    # HARD SECURITY ASSERTION: Zero SB/ transactions in purchase history
+    if "invoice_number" in history_df.columns:
+        sb_leak_count = (history_df["invoice_number"].astype(str).str.strip().str.upper().str.startswith("SB/")).sum()
+        assert sb_leak_count == 0, f"Critical Pipeline Violation: {sb_leak_count} SB/ transactions leaked into purchase_history!"
+
     print(f"      History generated: {len(history_df):,} events across {history_df.groupby(['customerId', 'itemId']).ngroups:,} customer-medicine histories.")
     print(f"      Intervals calculated: {interval_stats['total_intervals']:,}")
     print(f"      Median refill interval: {interval_stats['median_days']} days (Mean: {interval_stats['mean_days']} days)")
@@ -104,12 +128,13 @@ def run_refillcare_data_pipeline(
     print("\n[6/6] Executing data quality validation...")
     validation_report = validate_dataset(
         raw_df=raw_df,
-        clean_df=clean_df,
+        clean_df=customer_clean_df,
         aggregated_df=aggregated_df,
         history_df=history_df,
         salt_df=salt_df,
     )
     validation_report["interval_statistics"] = interval_stats
+    validation_report["transaction_channel_summary"] = channel_summary
     print(f"      Validation Status: {validation_report['status']}")
 
     # Save outputs
@@ -121,16 +146,18 @@ def run_refillcare_data_pipeline(
         report_path = out_dir / "data_quality_report.json"
 
         try:
-            clean_df.to_parquet(clean_tx_path, index=False)
+            # clean_transactions.parquet preserves ALL transactions with classification metadata
+            clean_all_df.to_parquet(clean_tx_path, index=False)
+            # purchase_history.parquet contains ONLY clean customer transactions
             history_df.to_parquet(history_path, index=False)
             print(f"\nArtifacts saved successfully (Parquet):")
-            print(f"  - {clean_tx_path}")
-            print(f"  - {history_path}")
+            print(f"  - {clean_tx_path} (all {len(clean_all_df):,} transactions with channel metadata)")
+            print(f"  - {history_path} (pure customer purchase events: {len(history_df):,} rows)")
         except Exception as e:
             print(f"\nParquet write failed ({e}); falling back to CSV...")
             clean_tx_csv = out_dir / "clean_transactions.csv"
             history_csv = out_dir / "purchase_history.csv"
-            clean_df.to_csv(clean_tx_csv, index=False)
+            clean_all_df.to_csv(clean_tx_csv, index=False)
             history_df.to_csv(history_csv, index=False)
             print(f"  - {clean_tx_csv}")
             print(f"  - {history_csv}")
@@ -146,12 +173,14 @@ def run_refillcare_data_pipeline(
 
     return {
         "raw_df": raw_df,
-        "clean_df": clean_df,
+        "clean_all_df": clean_all_df,
+        "customer_clean_df": customer_clean_df,
         "aggregated_df": aggregated_df,
         "history_df": history_df,
         "salt_df": salt_df,
         "validation_report": validation_report,
         "interval_statistics": interval_stats,
+        "transaction_channel_summary": channel_summary,
     }
 
 

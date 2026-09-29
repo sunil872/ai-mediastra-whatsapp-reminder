@@ -1,0 +1,26 @@
+[
+  {
+    "strategy": "1. Current Baseline (Historical Median)",
+    "mae": 21.43,
+    "within_3d_pct": 24.1,
+    "within_7d_pct": 40.2,
+    "early_spam_pct": 52.7,
+    "late_stockout_pct": 23.2
+  },
+  {
+    "strategy": "2. Pure Naive Days of Supply (DOS)",
+    "mae": 26.63,
+    "within_3d_pct": 20.8,
+    "within_7d_pct": 33.9,
+    "early_spam_pct": 61.5,
+    "late_stockout_pct": 17.6
+  },
+  {
+    "strategy": "3. Proposed Human-Level Inventory ML Engine",
+    "mae": 23.54,
+    "within_3d_pct": 24.2,
+    "within_7d_pct": 40.6,
+    "early_spam_pct": 54.4,
+    "late_stockout_pct": 21.4
+  }
+]

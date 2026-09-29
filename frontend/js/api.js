@@ -17,6 +17,19 @@ export const ApiClient = {
     return await res.json();
   },
 
+  async getTransactionTypes() {
+    const res = await fetch(`${API_BASE_URL}/api/v1/analytics/transaction-types`);
+    if (!res.ok) throw new Error("Failed to load transaction channel analytics");
+    return await res.json();
+  },
+
+  async getConsensusRegimenAnalytics() {
+    const res = await fetch(`${API_BASE_URL}/api/v1/analytics/consensus-regimen`);
+    if (!res.ok) throw new Error("Failed to load consensus regimen analytics");
+    return await res.json();
+  },
+
+
   // 2. Sales Ingestion
   async previewSalesFile(file) {
     const formData = new FormData();

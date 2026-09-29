@@ -52,6 +52,8 @@ from api.schemas import (
     ReviewActionRequest,
     ReviewActionResponse,
     CustomerRefillHistoryResponse,
+    TransactionChannelSummary,
+    ConsensusRegimenAnalyticsSummary,
 )
 from api.services import EnterpriseServices
 from refillcare.engine.persistence import RefillPersistenceManager
@@ -101,6 +103,20 @@ def get_kpi_summary(db: Session = Depends(get_db)):
     """Retrieve executive operations summary KPIs."""
     srv = EnterpriseServices(db)
     return srv.get_operations_kpi()
+
+
+@app.get("/api/v1/analytics/transaction-types", response_model=TransactionChannelSummary, tags=["Analytics"])
+def get_transaction_types_summary(db: Session = Depends(get_db)):
+    """Retrieve dynamic transaction-channel classification breakdown (Customer vs B2B vs Unknown)."""
+    srv = EnterpriseServices(db)
+    return srv.get_transaction_channel_kpis()
+
+
+@app.get("/api/v1/analytics/consensus-regimen", response_model=ConsensusRegimenAnalyticsSummary, tags=["Analytics"])
+def get_consensus_regimen_analytics(db: Session = Depends(get_db)):
+    """Retrieve clinical dosage regimen prevalence (OD/BD/QOD/TID) and human consensus benchmarks."""
+    srv = EnterpriseServices(db)
+    return srv.get_consensus_regimen_analytics()
 
 
 # ------------------------------------------------------------------------------
@@ -385,8 +401,8 @@ def get_customer_refill_history(customer_id: str, db: Session = Depends(get_db))
         cycles_list.append({
             "cycle_id": c.cycle_id,
             "item_id": c.item_id,
-            "last_purchase_date": c.last_purchase_date.strftime("%Y-%m-%d"),
-            "expected_refill_date": c.expected_refill_date.strftime("%Y-%m-%d"),
+            "last_purchase_date": c.last_purchase_date.strftime("%Y-%m-%d") if c.last_purchase_date else "-",
+            "expected_refill_date": c.expected_refill_date.strftime("%Y-%m-%d") if c.expected_refill_date else None,
             "is_active": c.is_active,
             "superseded_by_purchase_date": c.superseded_by_purchase_date.strftime("%Y-%m-%d") if c.superseded_by_purchase_date else None,
             "stages": stages_list,

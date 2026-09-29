@@ -36,11 +36,18 @@ RefillCare solves these clinical and behavioral failure modes through:
 
 ```mermaid
 flowchart TD
-    subgraph Data_Layer ["1. Data Ingestion & Storage"]
+    subgraph Data_Layer ["1. Data Ingestion & Channel Isolation"]
         Raw["Raw Pharmacy Transactions<br/>(customer_data_fields.csv)"]
         Salt["Master Chemical Salt Catalog<br/>(SALT WISE ITEMS.xlsx)"]
-        Parquet["Clean Parquet Store<br/>(purchase_history.parquet)"]
-        Raw --> Ingest[Ingestion Pipeline]
+        Classifier{"Transaction Classifier<br/>(transaction_classifier.py)"}
+        B2B["B2B / Inter-Store (SB/...)<br/>- Ineligible for RefillCare<br/>- Preserved for B2B Audit"]
+        Clean["Customer Retail Sales (S0/...)<br/>- 100% RefillCare Eligible"]
+        Parquet["Clean Parquet Store<br/>(purchase_history.parquet / 0 SB Rows)"]
+        
+        Raw --> Classifier
+        Classifier -->|SB/ Prefix| B2B
+        Classifier -->|S0/ Prefix| Clean
+        Clean --> Ingest[Ingestion Pipeline]
         Salt --> Ingest
         Ingest --> Parquet
     end
@@ -91,6 +98,88 @@ The current codebase represents a complete, rigorously validated **Version 1.0**
 - **Invoice Grouping:** Aggregated multi-line purchases on the same invoice date into single purchase events to prevent artificial 0-day interval spikes.
 - **Pack Unit Parsing:** Built regex-based parsing to extract tablet quantities from packaging descriptions (`1X10`, `1X15`, `1X30`, `100ML`, `BOTTLE`).
 - **Data Persistence:** Stored clean transactional data in compressed Parquet format (`clean_transactions.parquet` and `purchase_history.parquet`), achieving 90% reduction in query latency compared to raw CSVs.
+
+### Phase 2.5: Transaction-Channel Classification & B2B/Inter-Store (SB/) Isolation Layer
+
+RefillCare V1 is designed specifically for **individual customer medication refill reminders**. The source pharmacy dataset contains two fundamentally distinct transaction streams:
+1. **Customer Sales (`S0/...` prefix):** Purchases made by individual patients from Pharma Hubb Medical Store. These are 100% valid for RefillCare customer refill modeling.
+2. **Inter-Store / B2B Transactions (`SB/...` prefix):** Wholesale inventory purchases and stock transfers made by other medical stores or businesses. These are **B2B / inter-store wholesale transactions**, not individual patient medication purchases.
+3. **Unknown Transactions:** Any unverified transaction prefixes are safety-gated and excluded by default.
+
+#### Upstream Isolation Architecture
+To prevent B2B wholesale transactions from contaminating derived patient features, the classification and filtering occur **at the very earliest ingestion boundary**, upstream of customer history construction, cadence median calculations, Path A/Path B routing, ML datasets, and reminder queues:
+
+```text
+Raw Transactions
+       ↓
+Normalize Transaction Number (case & whitespace insensitive)
+       ↓
+Transaction Channel Classification
+       ↓
+ ┌──────────────────────────────────────────────┐
+ │ SB/ → B2B_INTER_STORE (EXCLUDED FROM REFILL) │
+ │       Preserved with metadata for B2B audit  │
+ └──────────────────────────────────────────────┘
+       ↓
+Customer Transactions (S0/... -> CUSTOMER_SALE)
+       ↓
+Customer-Item Purchase History (purchase_history.parquet)
+       ↓
+Feature Engineering (36 Leakage-Free Features)
+       ↓
+ML Training / Path A / Path B Routing
+       ↓
+Refill Decision & 6-Stage Reminder Lifecycle
+```
+
+#### Core Contamination Protections
+1. **Purchase Count Protection:** An inter-store transaction (`SB/`) never increments a customer's `purchase_count`. A customer with 5 customer purchases and 1 SB purchase evaluates to `purchase_count = 5`, preventing false promotion to Path A ($\ge 6$).
+2. **Latest Purchase Recency Protection:** An inter-store transaction does not update `last_purchase_date`. If a customer bought on 2026-08-01 (`S0/`) and an SB wholesale entry occurred on 2026-09-15 (`SB/`), the customer's active date remains 2026-08-01, preserving churn and inactivity detection integrity.
+3. **Historical Cadence Median Protection:** B2B wholesale transactions are completely invisible to interval calculations ($d_i - d_{i-1}$), preventing artificial interval distortion.
+4. **Path B Recurrence Protection:** B2B transactions cannot satisfy Path B 3-month ($\ge 2$ distinct months) or 6-month ($\ge 3$ distinct months) recurrence criteria.
+5. **Zero Reminder Generation:** B2B transactions never create a `RefillDecision`, `ReminderCycle`, `ReminderStage`, or WhatsApp message.
+6. **Raw Data Preservation:** Raw records are preserved with canonical channel metadata:
+   - `transaction_type = B2B_INTER_STORE`
+   - `refillcare_eligible = FALSE`
+   - `exclusion_reason = INTER_STORE_TRANSACTION`
+
+#### ML Dataset Isolation & Hard Assertions
+Enforced strict upstream assertions across all Parquet datasets. Prior to training or testing, datasets assert zero `SB/` transactions:
+```python
+assert not dataset["transaction_number"].astype(str).str.strip().str.upper().str.startswith("SB/").any()
+```
+- **`purchase_history.parquet`:** 815,553 clean customer rows (**0 `SB/` rows**)
+- **`train.parquet`:** 468,817 rows (**0 `SB/` rows**)
+- **`validation.parquet`:** 12,821 rows (**0 `SB/` rows**)
+- **`test.parquet`:** 7,553 rows (**0 `SB/` rows**)
+- **`training_dataset.parquet`:** 489,191 rows (**0 `SB/` rows**)
+
+#### Before vs. After Impact Audit
+A full quantitative audit was executed across the 878,676 transactions in `clean_transactions.parquet` to quantify the contamination prevented:
+
+| Pipeline Dimension | Before Filtering (Contaminated) | After Filtering (Clean RefillCare) | Impact / Contamination Prevented |
+| :--- | :--- | :--- | :--- |
+| **Raw Clean Transactions** | 878,676 | 878,676 | Annotated with channel metadata |
+| **Customer Retail Sales (`S0/...`)** | 878,676 | 876,163 | **876,163** eligible transactions |
+| **B2B Inter-Store (`SB/...`)** | Included | 2,513 | **2,513** wholesale records excluded |
+| **Unknown Transactions** | 0 | 0 | 0 unknown records |
+| **Customer-Item Pairs** | 325,773 | 324,301 | **1,472 B2B-only pairs purged** |
+| **Path A Candidates ($\ge 6$ Buys)** | 27,106 | 27,055 | **51 false promotions prevented** |
+| **Path B Candidates ($< 6$ Buys)** | 298,667 | 297,246 | Clean retail recurrence cohort |
+| **B2B Customer Accounts** | 26 accounts | 26 accounts | Isolated from clinical pipeline |
+| **B2B Cohort Path A Decisions** | 51 | **0** | **100% false Path A eliminated** |
+| **B2B Cohort Eligible Predictions**| 2 | **0** | **100% false predictions eliminated**|
+| **B2B Cohort Reminder Cycles** | 2 | **0** | **Zero B2B reminder cycles** |
+
+#### Multi-Interface Governance & Transparency
+1. **FastAPI REST API:** Exposed dynamic channel statistics via `GET /api/v1/analytics/transaction-types` returning live JSON with counts for total, customer sales, B2B wholesale, unknown, and eligible records.
+2. **Streamlit Operations UI (`app_refillcare.py`):**
+   - **Tab 1 (Dashboard):** Added live KPI cards for Customer Sales (876,163), B2B Inter-Store (2,513), Unknown (0), and Total Excluded (2,513).
+   - **Tab 4 (Reminders):** Added Channel filter dropdown (`Customer Sales (Default)`, `All Channels`, `B2B / Inter-Store (Audit Only)`).
+   - **Tab 5 (Review):** Added dedicated `"B2B / Inter-Store Excluded Records (Audit)"` review view.
+3. **Frontend SPA Portal (`frontend/`):** Added live Transaction Channel Overview grid and interactive channel filtering with B2B isolation warning banner.
+4. **Regression Test Suite (`tests/refillcare/test_transaction_filtering.py`):** 11 automated test cases verifying all 10 specifications (classification, case normalization, purchase count isolation, Path A/B protection, recency preservation, dataset cleanliness, and reminder cycle isolation). All 11 tests pass with 100% success.
+
 
 ### Phase 3: Clinical Feature Engineering
 - **Leakage-Free Temporal Splits:** Engineered 36 features using only historical transactions strictly prior to the current purchase event.
@@ -156,6 +245,53 @@ If a patient repurchases their medication while an active cycle has pending futu
 - It updates the previous cycle's pending stages to `SUPERSEDED_BY_PURCHASE`.
 - It creates a brand-new cycle with updated stages starting from the new purchase date.
 - **Result:** Zero duplicate or irrelevant messages sent to patients.
+
+---
+
+### Phase 18: Generalized Human-Level ML & Dimensionally Correct Consensus Architecture (Path A Refinement)
+
+#### 1. Clinical Context & Behavioral Motivation
+In retail pharmacy practice, stable chronic patients do not purchase identical quantities at rigid mathematical intervals. Real humans exhibit natural purchase variations:
+1. **Multi-Pack Stocking Up:** Buying 2 or 3 months of medication in advance (e.g. 60 or 90 tablets instead of their typical 30 tablets). A static cadence median would spam the patient at Day 30 while 30+ tablets remain at home.
+2. **Emergency Partial Strip Purchases:** Buying a partial 10-day strip when finances or availability are limited. A static 30-day cadence would alert them on Day 25—15 days after their medication physically ran out.
+3. **Early Top-Ups with Carryover Inventory:** Visiting the pharmacy early (e.g. after 18 days when they still have 12 days of medicine left at home) and purchasing another 60 tablets. Total home inventory becomes $60 + 12 = 72$ tablets, requiring their next reminder to push out to $\ge 45$ days.
+4. **Post-Lapse Restarts:** Returning after an extended gap ($>45$ days). Residual inventory from the prior visit is exhausted ($0$), resetting the baseline cleanly without carrying forward phantom stock.
+
+> **Engineering Principle:** These scenarios were diagnosed via representative case studies (e.g. Murlikrishna purchasing 60 tablets of Reclide XR 60mg; Narasimulu purchasing 10 tablets of Revlamer 400mg), but the implementation contains **zero customer-specific hardcoding**. All decisions emerge from a generalized multi-signal consensus engine.
+
+#### 2. Six-Signal Consensus Architecture
+The updated Path A engine integrates six independent clinical and behavioral signals:
+1. **Macro Historical Cadence:** Long-term median interval across all historical purchases.
+2. **Recent Cadence:** Exponentially smoothed recent visit interval ($I_{\text{recent}}$).
+3. **Estimated Consumption Velocity ($V_{\text{cons}}$):** Evaluated strictly point-in-time, excluding early top-up gaps to prevent rate inflation, anchored to typical pack consumption.
+4. **Estimated Residual Home Inventory ($R_{\text{inv}}$):** Leftover units from prior purchases if the visit occurred before previous stock was exhausted ($R_{\text{inv}} = \max(0, U_{\text{prior}} - V_{\text{cons}} \times \Delta t_{\text{elapsed}})$). Resets to $0$ if $\Delta t_{\text{elapsed}} \ge 45\text{d}$.
+5. **Dimensionally Correct Days of Supply ($D_{\text{supply}}$):**
+   $$\text{Effective Units} = U_{\text{latest}} + R_{\text{inv}}$$
+   $$D_{\text{supply}} = \frac{\text{Effective Units}}{V_{\text{cons}}} \quad [\text{units} / (\text{units/day}) = \text{days}]$$
+6. **Point-in-Time Machine Learning Model:** A 28-feature `HistGradientBoostingRegressor` trained strictly on pre-cutoff data ($\le \text{2026-07-31}$) optimizing absolute error ($L_1$ loss).
+7. **Physical Supply Guardrails:**
+   $$\text{Lower Bound} = \max(7\text{d}, D_{\text{supply}} \times 0.65)$$
+   $$\text{Upper Bound} = \max(10\text{d}, D_{\text{supply}} \times 1.50)$$
+
+#### 3. Four-Way Chronological Holdout Benchmark (August 2026 Holdout Actuals)
+Evaluated on 3,950 established chronic purchase transitions in August 2026:
+
+| Strategy | MAE (days) | Median AE | RMSE | Acc (±3d) | Acc (±7d) | Acc (±14d) | Premature Spam Risk | Stock-Out Risk |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Strategy A: Historical Median Baseline** | 20.29d | 10.0d | 33.25d | 26.2% | 42.9% | 59.9% | 45.3% | 28.5% |
+| **Strategy B: Simple Quantity Scaling** | 22.76d | 11.0d | 36.79d | 23.3% | 38.8% | 56.3% | 44.1% | 32.6% |
+| **Strategy C: Production XGBoost Model** | 25.59d | 13.0d | 40.52d | 16.9% | 35.3% | 53.1% | 39.3% | 43.8% |
+| **Strategy D: Human-Level Consensus Hybrid** | 22.98d | 11.0d | 38.23d | 21.3% | 36.6% | 58.5% | 45.2% | 33.5% |
+
+#### 4. Case Study Behavioral Outcomes
+- **Murlikrishna (Reclide XR 60mg):**
+  - Purchase: 4 strips (60 tablets) on 2026-08-20 after earlier purchase on 2026-08-03.
+  - Previous Logic: Median = 18d $\rightarrow$ Scheduled Day +5 alert on Sept 24, spamming customer with 25+ tablets remaining.
+  - New Consensus Engine: Predicted interval $= 48\text{d}$ $\rightarrow$ Next refill scheduled for October 7, 2026. Day +5 alert on Sept 24 completely suppressed.
+- **Narasimulu (Revlamer 400mg):**
+  - Purchase: 1 strip (10 tablets) on 2026-07-01.
+  - Previous Logic: Median = 28d $\rightarrow$ Next reminder at Day 25, 15 days after tablets ran out.
+  - New Consensus Engine: Predicted interval $= 10\text{d}$ $\rightarrow$ Next refill scheduled for July 11, 2026. Patient safely alerted before medication exhaustion.
 
 ---
 
@@ -225,9 +361,9 @@ python run_train.py
 streamlit run app_refillcare.py
 
 # 6. Launch FastAPI Enterprise REST API & SPA Web App
-uvicorn api.main:app --reload --port 8000
-# Access Swagger Docs at: http://localhost:8000/docs
-# Access SPA Dashboard at:   http://localhost:8000
+uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+# Access Swagger Docs at: http://127.0.0.1:8000/docs
+# Access SPA Dashboard at:   http://127.0.0.1:8000/
 
 # 7. Launch Standalone Broadcast Tools (Optional)
 streamlit run whatsapp_campaigns/app_text_campaign.py
@@ -404,9 +540,9 @@ streamlit run app_refillcare.py
 
 #### Option B: FastAPI Enterprise REST API & SPA Portal
 ```bash
-uvicorn api.main:app --reload --port 8000
-# Access Swagger Documentation: http://localhost:8000/docs
-# Access SPA Dashboard:         http://localhost:8000
+uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
+# Access Swagger Documentation: http://127.0.0.1:8000/docs
+# Access SPA Dashboard:         http://127.0.0.1:8000/
 ```
 
 ### 4. Running the Daily Simulation Pipeline

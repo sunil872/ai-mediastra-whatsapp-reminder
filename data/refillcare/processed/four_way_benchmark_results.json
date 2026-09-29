@@ -1,0 +1,46 @@
+[
+  {
+    "strategy": "Strategy A: Current Historical Median Baseline",
+    "mae": 20.29,
+    "med_ae": 10.0,
+    "rmse": 33.25,
+    "acc_3d": 26.2,
+    "acc_7d": 42.9,
+    "acc_14d": 59.9,
+    "early_prediction_pct": 45.3,
+    "late_prediction_pct": 28.5
+  },
+  {
+    "strategy": "Strategy B: Simple Quantity-Scaled Baseline",
+    "mae": 22.76,
+    "med_ae": 11.0,
+    "rmse": 36.79,
+    "acc_3d": 23.3,
+    "acc_7d": 38.8,
+    "acc_14d": 56.3,
+    "early_prediction_pct": 44.1,
+    "late_prediction_pct": 32.6
+  },
+  {
+    "strategy": "Strategy C: Existing Production XGBoost Model",
+    "mae": 25.59,
+    "med_ae": 13.0,
+    "rmse": 40.52,
+    "acc_3d": 16.9,
+    "acc_7d": 35.3,
+    "acc_14d": 53.1,
+    "early_prediction_pct": 39.3,
+    "late_prediction_pct": 43.8
+  },
+  {
+    "strategy": "Strategy D: Proposed Human-Level Hybrid Engine",
+    "mae": 22.98,
+    "med_ae": 11.0,
+    "rmse": 38.23,
+    "acc_3d": 21.3,
+    "acc_7d": 36.6,
+    "acc_14d": 58.5,
+    "early_prediction_pct": 45.2,
+    "late_prediction_pct": 33.5
+  }
+]

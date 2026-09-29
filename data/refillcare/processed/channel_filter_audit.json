@@ -1,0 +1,18 @@
+{
+  "raw_transaction_count": 878676,
+  "customer_transaction_count": 876163,
+  "b2b_transaction_count": 2513,
+  "unknown_transaction_count": 0,
+  "customer_item_pairs_before": 325773,
+  "customer_item_pairs_after": 324301,
+  "pairs_purged": 1472,
+  "path_a_before": 27106,
+  "path_a_after": 27055,
+  "path_a_false_promotions_prevented": 51,
+  "path_b_before": 298667,
+  "path_b_after": 297246,
+  "eligible_predictions_before": 2,
+  "eligible_predictions_after": 0,
+  "reminder_cycles_before": 2,
+  "reminder_cycles_after": 0
+}

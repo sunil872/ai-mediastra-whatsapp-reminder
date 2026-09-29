@@ -10,7 +10,7 @@ Includes complete entities for:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from sqlalchemy import (
     Column,
@@ -26,7 +26,7 @@ from sqlalchemy import (
     JSON,
     UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from database.connection import Base
 
 
@@ -70,6 +70,9 @@ class SalesTransactionModel(Base):
     mobile_no = Column(String(32), nullable=True, index=True)
     salt_composition = Column(String(255), nullable=True)
     net_amount = Column(Float, nullable=True)
+    transaction_type = Column(String(32), default="CUSTOMER_SALE", nullable=False, index=True)
+    refillcare_eligible = Column(Boolean, default=True, nullable=False, index=True)
+    exclusion_reason = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     batch = relationship("ImportBatchModel", back_populates="transactions")
@@ -115,19 +118,19 @@ class ModelRegistryModel(Base):
     """ML Model versioning, hyperparameter registry, and artifact lineage."""
     __tablename__ = "model_registry"
 
-    version_id = Column(String(64), primary_key=True, index=True)  # e.g., "v1.0.0", "v1.1.0"
-    model_name = Column(String(128), default="RefillCare-Hybrid-PathAB", nullable=False)
-    model_type = Column(String(64), default="LightGBM_Heuristic_Hybrid", nullable=False)
-    artifact_path = Column(String(512), nullable=False)  # path to .pkl / .joblib bundle
-    dataset_cutoff_date = Column(Date, nullable=False)
-    training_sample_count = Column(Integer, default=0, nullable=False)
-    hyperparameters = Column(JSON, nullable=True)
-    metrics_train = Column(JSON, nullable=True)  # MAE, within_3d, within_7d
-    metrics_val = Column(JSON, nullable=True)
-    is_active_production = Column(Boolean, default=False, nullable=False, index=True)
-    created_by = Column(String(64), default="system", nullable=False)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    version_id: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)  # e.g., "v1.0.0", "v1.1.0"
+    model_name: Mapped[str] = mapped_column(String(128), default="RefillCare-Hybrid-PathAB", nullable=False)
+    model_type: Mapped[str] = mapped_column(String(64), default="LightGBM_Heuristic_Hybrid", nullable=False)
+    artifact_path: Mapped[str] = mapped_column(String(512), nullable=False)  # path to .pkl / .joblib bundle
+    dataset_cutoff_date: Mapped[date] = mapped_column(Date, nullable=False)
+    training_sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    hyperparameters: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    metrics_train: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # MAE, within_3d, within_7d
+    metrics_val: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    is_active_production: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     training_runs = relationship("TrainingRunModel", back_populates="model_version_rel")
 
@@ -228,108 +231,108 @@ class WhatsAppDeliveryLogModel(Base):
     """Audit trail of all WhatsApp messages sent via Xinno gateway."""
     __tablename__ = "whatsapp_delivery_logs"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    reminder_id = Column(String(64), nullable=True, index=True)
-    phone_number = Column(String(32), nullable=False, index=True)
-    customer_name = Column(String(255), nullable=True)
-    template_name = Column(String(64), nullable=False)
-    xinno_message_id = Column(String(128), nullable=True, index=True)
-    is_dry_run = Column(Boolean, default=True, nullable=False)
-    status = Column(String(32), default="PENDING", nullable=False)  # SUCCESS, FAILED, DRY_RUN_SUCCESS
-    http_status_code = Column(Integer, nullable=True)
-    response_payload = Column(Text, nullable=True)
-    error_detail = Column(Text, nullable=True)
-    dispatched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reminder_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    phone_number: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    customer_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    template_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    xinno_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    is_dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False)  # SUCCESS, FAILED, DRY_RUN_SUCCESS
+    http_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dispatched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class RefillDecisionModel(Base):
     """Unified single-source-of-truth RefillDecision entity."""
     __tablename__ = "refill_decisions"
 
-    decision_id = Column(String(64), primary_key=True, index=True)
-    cycle_id = Column(String(64), nullable=False, index=True)
-    customer_id = Column(String(64), nullable=False, index=True)
-    customer_name = Column(String(255), nullable=True)
-    mobile_no = Column(String(32), nullable=True, index=True)
-    item_id = Column(String(64), nullable=False, index=True)
-    item_name = Column(String(255), nullable=True)
-    customer_item_key = Column(String(128), nullable=False, index=True)
+    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+    cycle_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    mobile_no: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    customer_item_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
-    path = Column(String(32), nullable=False)  # PATH_A, PATH_B, INELIGIBLE
-    purchase_count = Column(Integer, default=0, nullable=False)
-    is_eligible = Column(Boolean, default=False, nullable=False, index=True)
+    path: Mapped[str] = mapped_column(String(32), nullable=False)  # PATH_A, PATH_B, INELIGIBLE
+    purchase_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_eligible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
 
-    stability_tier = Column(String(32), default="UNSTABLE", nullable=False, index=True)
-    cadence_median = Column(Float, nullable=True)
-    cadence_norm_mad = Column(Float, nullable=True)
-    cadence_drift = Column(Float, nullable=True)
-    dos_days = Column(Float, nullable=True)
-    units_purchased = Column(Float, nullable=True)
+    stability_tier: Mapped[str] = mapped_column(String(32), default="UNSTABLE", nullable=False, index=True)
+    cadence_median: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    cadence_norm_mad: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    cadence_drift: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dos_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    units_purchased: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    prediction_method = Column(String(64), default="NONE", nullable=False)
-    predicted_interval_days = Column(Integer, nullable=True)
-    last_purchase_date = Column(Date, nullable=False, index=True)
-    expected_refill_date = Column(Date, nullable=True, index=True)
-    decision_reason = Column(Text, nullable=True)
+    prediction_method: Mapped[str] = mapped_column(String(64), default="NONE", nullable=False)
+    predicted_interval_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_purchase_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    expected_refill_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
+    decision_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
-    cycles = relationship("ReminderCycleModel", back_populates="decision")
+    cycles: Mapped[List[ReminderCycleModel]] = relationship("ReminderCycleModel", back_populates="decision")
 
 
 class ReminderCycleModel(Base):
     """Lifecycle state of an active or historical reminder cycle for a customer-item pair."""
     __tablename__ = "reminder_cycles"
 
-    cycle_id = Column(String(64), primary_key=True, index=True)
-    customer_item_key = Column(String(128), nullable=False, index=True)
-    customer_id = Column(String(64), nullable=False, index=True)
-    item_id = Column(String(64), nullable=False, index=True)
-    decision_id = Column(String(64), ForeignKey("refill_decisions.decision_id"), nullable=True, index=True)
+    cycle_id: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+    customer_item_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    customer_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    decision_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("refill_decisions.decision_id"), nullable=True, index=True)
 
-    last_purchase_date = Column(Date, nullable=False, index=True)
-    expected_refill_date = Column(Date, nullable=False, index=True)
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    last_purchase_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    expected_refill_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
-    superseded_at = Column(DateTime, nullable=True)
-    superseded_by_purchase_date = Column(Date, nullable=True)
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    superseded_by_purchase_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
-    decision = relationship("RefillDecisionModel", back_populates="cycles")
-    stages = relationship("ReminderStageModel", back_populates="cycle", cascade="all, delete-orphan")
+    decision: Mapped[Optional[RefillDecisionModel]] = relationship("RefillDecisionModel", back_populates="cycles")
+    stages: Mapped[List[ReminderStageModel]] = relationship("ReminderStageModel", back_populates="cycle", cascade="all, delete-orphan")
 
 
 class ReminderStageModel(Base):
     """Individual stage within a 6-stage reminder cycle (-7d, -3d, -1d, 0d, +2d, +5d)."""
     __tablename__ = "reminder_stages"
 
-    reminder_id = Column(String(64), primary_key=True, index=True)
-    cycle_id = Column(String(64), ForeignKey("reminder_cycles.cycle_id"), nullable=False, index=True)
-    customer_id = Column(String(64), nullable=False, index=True)
-    item_id = Column(String(64), nullable=False, index=True)
-    customer_item_key = Column(String(128), nullable=False, index=True)
+    reminder_id: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+    cycle_id: Mapped[str] = mapped_column(String(64), ForeignKey("reminder_cycles.cycle_id"), nullable=False, index=True)
+    customer_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_item_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
-    stage_offset = Column(Integer, nullable=False)  # -7, -3, -1, 0, 2, 5
-    target_send_date = Column(Date, nullable=False, index=True)
-    expected_refill_date = Column(Date, nullable=False, index=True)
+    stage_offset: Mapped[int] = mapped_column(Integer, nullable=False)  # -7, -3, -1, 0, 2, 5
+    target_send_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    expected_refill_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
-    status = Column(String(32), default="PENDING", nullable=False, index=True)  # PENDING, APPROVED, REJECTED, SENT, FAILED, SUPERSEDED_BY_PURCHASE, CANCELLED
-    message_text = Column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False, index=True)  # PENDING, APPROVED, REJECTED, SENT, FAILED, SUPERSEDED_BY_PURCHASE, CANCELLED
+    message_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    sent_at = Column(DateTime, nullable=True)
-    provider_msg_id = Column(String(128), nullable=True, index=True)
-    failure_reason = Column(Text, nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    provider_msg_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
-    cycle = relationship("ReminderCycleModel", back_populates="stages")
+    cycle: Mapped[ReminderCycleModel] = relationship("ReminderCycleModel", back_populates="stages")
 
     __table_args__ = (
         UniqueConstraint("cycle_id", "stage_offset", name="uq_cycle_stage_offset"),

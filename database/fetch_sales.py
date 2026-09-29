@@ -33,22 +33,27 @@ def fetch_purchase_history(
         df = pd.read_parquet(PURCHASE_HISTORY_PATH)
     elif CLEAN_TRANSACTIONS_PATH.exists():
         df = pd.read_parquet(CLEAN_TRANSACTIONS_PATH)
-    elif db is not None:
-        query = db.query(SalesTransactionModel)
-        df = pd.read_sql(query.statement, db.bind)
+    elif db is not None and db.bind is not None:
+        from sqlalchemy import text
+        df = pd.read_sql(text("SELECT * FROM sales_transactions"), db.bind)
     else:
         df = pd.DataFrame()
 
     if df.empty:
         return df
 
+    # Defense-in-depth: Exclude B2B / Inter-Store (SB/) transactions from customer purchase history
+    if "invoice_number" in df.columns or "refillcare_eligible" in df.columns:
+        from refillcare.data.transaction_classifier import filter_eligible_customer_transactions
+        df = filter_eligible_customer_transactions(df, invoice_col="invoice_number")
+
     # Apply date filters if requested
     if "invoice_date" in df.columns:
         df["_dt"] = pd.to_datetime(df["invoice_date"], errors="coerce")
         if start_date:
-            df = df[df["_dt"] >= pd.Timestamp(start_date)]
+            df = df.loc[df["_dt"] >= pd.Timestamp(start_date)]
         if end_date:
-            df = df[df["_dt"] <= pd.Timestamp(end_date)]
-        df = df.drop(columns=["_dt"], errors="ignore")
+            df = df.loc[df["_dt"] <= pd.Timestamp(end_date)]
+        df = pd.DataFrame(df).drop(columns=["_dt"], errors="ignore")
 
-    return df
+    return pd.DataFrame(df)

@@ -177,15 +177,32 @@ class UnifiedRefillDecisionEngine:
         quantities: Optional[List[float]] = None,
         packings: Optional[List[Optional[str]]] = None,
         as_of_date: Optional[date] = None,
+        transaction_numbers: Optional[List[str]] = None,
     ) -> RefillDecision:
-        """Evaluate a single customer-item purchase history deterministically."""
+        """Evaluate a single customer-item purchase history deterministically.
+
+        Excludes any B2B (SB/) or Unknown transactions if transaction_numbers are provided.
+        """
+        # Upstream transaction channel filter: Exclude B2B / Inter-Store (SB/) transactions
+        if transaction_numbers:
+            from refillcare.data.transaction_classifier import classify_transaction
+            valid_indices = [
+                idx for idx, tn in enumerate(transaction_numbers)
+                if classify_transaction(tn)[1]
+            ]
+            if len(valid_indices) < len(dates):
+                dates = [dates[i] for i in valid_indices if i < len(dates)]
+                if quantities:
+                    quantities = [quantities[i] for i in valid_indices if i < len(quantities)]
+                if packings:
+                    packings = [packings[i] for i in valid_indices if i < len(packings)]
+
         # Filter out future transactions if as_of_date is provided
         if as_of_date:
             dates = [d for d in dates if d <= as_of_date]
 
         dates = sorted(dates)
         purchase_count = len(dates)
-        last_date = dates[-1] if dates else date.today()
         cust_item_key = f"{str(customer_id).strip()}_{str(item_id).strip()}"
 
         # Clean mobile number
@@ -193,6 +210,33 @@ class UnifiedRefillDecisionEngine:
         if mobile_no and str(mobile_no).strip():
             p_norm, _ = normalize_to_whatsapp_number(mobile_no)
             clean_phone = p_norm
+
+        if purchase_count == 0:
+            return RefillDecision(
+                customer_id=str(customer_id),
+                customer_name=str(customer_name),
+                mobile_no=clean_phone,
+                item_id=str(item_id),
+                item_name=str(item_name),
+                customer_item_key=cust_item_key,
+                path=PATH_INELIGIBLE,
+                purchase_count=0,
+                is_eligible=False,
+                stability_tier=STABILITY_UNSTABLE,
+                cadence_median=None,
+                cadence_norm_mad=None,
+                cadence_drift=None,
+                dos_days=None,
+                units_purchased=None,
+                prediction_method=PRED_NONE,
+                predicted_interval_days=None,
+                last_purchase_date=as_of_date or date.today(),
+                expected_refill_date=None,
+                decision_reason="No eligible customer transactions found (B2B/Inter-Store or unknown transactions excluded).",
+                cycle_id=f"RC-{customer_id}-{item_id}-NONE",
+            )
+
+        last_date = dates[-1]
 
         # Compute consecutive intervals
         intervals: List[float] = []
@@ -229,19 +273,20 @@ class UnifiedRefillDecisionEngine:
                 else:
                     units_hist = [30.0] * len(dates)
 
+                cad_med_val = float(cadence_med) if cadence_med is not None else 30.0
                 latest_u = units_hist[-1] if units_hist else (latest_units or 30.0)
                 prior_u = units_hist[:-1] if len(units_hist) > 1 else units_hist
                 recent_prior = prior_u[-5:] if len(prior_u) >= 5 else prior_u
                 typical_u = float(np.median(recent_prior)) if recent_prior else latest_u
                 qty_ratio = latest_u / typical_u if typical_u > 0 else 1.0
                 latest_gap = (dates[-1] - dates[-2]).days if len(dates) >= 2 else 0
-                is_lapsed_restart = (latest_gap > 1.5 * cadence_med)
+                is_lapsed_restart = (latest_gap > 1.5 * cad_med_val)
 
                 # Check 1: Bulk Purchase Safety Guardrail (>=90 units and extreme divergence)
                 is_bulk = (
                     latest_u >= 90.0
                     and (
-                        (dos_days is not None and (dos_days - cadence_med) > 45.0)
+                        (dos_days is not None and (dos_days - cad_med_val) > 45.0)
                         or (qty_ratio >= 2.5)
                     )
                 )
@@ -257,7 +302,7 @@ class UnifiedRefillDecisionEngine:
                         purchase_count=purchase_count,
                         is_eligible=False,
                         stability_tier=stability_tier,
-                        cadence_median=cadence_med,
+                        cadence_median=cad_med_val,
                         cadence_norm_mad=norm_mad,
                         cadence_drift=drift,
                         dos_days=dos_days,
@@ -266,38 +311,33 @@ class UnifiedRefillDecisionEngine:
                         predicted_interval_days=None,
                         last_purchase_date=last_date,
                         expected_refill_date=None,
-                        decision_reason=f"BULK_PURCHASE_DIVERGENCE: Historical median={int(round(cadence_med))}d vs Latest Units={int(latest_u)}u (DOS={round(dos_days, 1) if dos_days else '-'}d) indicates bulk purchase. Pharmacist review required.",
+                        decision_reason=f"BULK_PURCHASE_DIVERGENCE: Historical median={int(round(cad_med_val))}d vs Latest Units={int(latest_u)}u (DOS={round(dos_days, 1) if dos_days else '-'}d) indicates bulk purchase. Pharmacist review required.",
                         cycle_id=f"RC-{customer_id}-{item_id}-{last_date.strftime('%Y%m%d')}",
                     )
 
-                # Quantity-Aware Cadence Scaling & Post-Lapse Reset
-                if qty_ratio < 0.8:
-                    # Partial purchase (e.g. 1 strip of 10 instead of usual 20 tabs)
-                    scaled_interval = round(cadence_med * qty_ratio)
-                    predicted_interval = max(5, min(int(scaled_interval), int(latest_u)))
-                    reason_rule = f"Partial Purchase Scaled ({int(latest_u)}u vs typical {int(typical_u)}u, ratio {qty_ratio:.0%}: {predicted_interval}d)"
-                elif qty_ratio > 1.3 and latest_u < 90.0:
-                    # Multi-pack purchase (e.g. 2-month supply = 60 tabs)
-                    scaled_interval = round(cadence_med * qty_ratio)
-                    predicted_interval = max(15, min(180, int(scaled_interval)))
-                    reason_rule = f"Multi-Pack Scaled ({int(latest_u)}u vs typical {int(typical_u)}u, ratio {qty_ratio:.0%}: {predicted_interval}d)"
-                elif is_lapsed_restart and latest_u <= 30:
-                    # Post-lapse restart with single strip
-                    predicted_interval = min(int(round(cadence_med)), int(latest_u))
-                    reason_rule = f"Post-Lapse Reset ({latest_gap}d gap > 1.5x cadence {int(cadence_med)}d, capped at {int(latest_u)}u: {predicted_interval}d)"
-                else:
-                    # Standard recurring cadence
-                    predicted_interval = int(round(cadence_med))
-                    reason_rule = f"Personal Historical Median ({predicted_interval}d)"
+                # Multi-Signal Human-Level Consensus & Point-in-Time Features
+                from refillcare.features.point_in_time import compute_point_in_time_features_single
+                from refillcare.models.supply_hybrid import evaluate_human_hybrid_prediction
 
-                # Check 2: Divergence Guardrail for MEDIUM-SAFE against scaled interval
-                is_divergent = (
-                    stability_tier == STABILITY_MEDIUM_SAFE
-                    and dos_days is not None
-                    and abs(dos_days - predicted_interval) > 30.0
-                    and latest_u >= 60.0
+                feats = compute_point_in_time_features_single(
+                    dates=dates,
+                    quantities=quantities,
+                    packings=packings,
+                    item_name=item_name,
                 )
-                if is_divergent:
+
+                consensus = evaluate_human_hybrid_prediction(
+                    features=feats,
+                    stability_tier=stability_tier,
+                    cadence_median=cad_med_val,
+                )
+
+                predicted_interval = consensus["predicted_interval_days"]
+                reason_rule = consensus["consensus_reason"]
+                review_required = consensus["review_required"]
+
+                # Check 2: Model-Supply Divergence Guardrail (routes to Pharmacist Review)
+                if review_required:
                     return RefillDecision(
                         customer_id=str(customer_id),
                         customer_name=str(customer_name),
@@ -318,7 +358,7 @@ class UnifiedRefillDecisionEngine:
                         predicted_interval_days=None,
                         last_purchase_date=last_date,
                         expected_refill_date=None,
-                        decision_reason=f"PREDICTION_DOS_DIVERGENCE: Scaled interval={predicted_interval}d vs DOS={round(dos_days, 1)}d exceeds safety tolerance. Pharmacist review required.",
+                        decision_reason=reason_rule,
                         cycle_id=f"RC-{customer_id}-{item_id}-{last_date.strftime('%Y%m%d')}",
                     )
 
@@ -551,15 +591,21 @@ class UnifiedRefillDecisionEngine:
         if df.empty:
             return pd.DataFrame(), []
 
-        # Ensure datetime
         df_clean = df.copy()
+
+        # Upstream transaction channel filter: Strictly filter out B2B (SB/) or Unknown transactions
+        if "invoice_number" in df_clean.columns or "refillcare_eligible" in df_clean.columns:
+            from refillcare.data.transaction_classifier import filter_eligible_customer_transactions
+            df_clean = filter_eligible_customer_transactions(df_clean, invoice_col="invoice_number")
+
+        # Ensure datetime
         if not pd.api.types.is_datetime64_any_dtype(df_clean["invoice_date"]):
             df_clean["invoice_date"] = pd.to_datetime(df_clean["invoice_date"], errors="coerce")
 
         if as_of_date:
-            df_clean = df_clean[df_clean["invoice_date"].dt.date <= as_of_date]
+            df_clean = df_clean.loc[df_clean["invoice_date"].dt.date <= as_of_date]
 
-        df_clean = df_clean.sort_values("invoice_date").reset_index(drop=True)
+        df_clean = pd.DataFrame(df_clean).sort_values("invoice_date").reset_index(drop=True)
 
         trajectories = {}
         cids = df_clean["customerId"].astype(str).values
@@ -587,17 +633,17 @@ class UnifiedRefillDecisionEngine:
                     "packings": [],
                 }
             t = trajectories[key]
-            if pd.notna(cnames[i]):
+            if bool(pd.notna(cnames[i])):
                 t["cname"] = cnames[i]
-            if pd.notna(inames[i]):
+            if bool(pd.notna(inames[i])):
                 t["iname"] = inames[i]
-            if pd.notna(mobiles[i]):
+            if bool(pd.notna(mobiles[i])):
                 t["mobile"] = mobiles[i]
             ts = inv_dates[i]
-            if pd.notna(ts):
+            if bool(pd.notna(ts)):
                 t["dates"].append(pd.Timestamp(ts).date())
-                t["qtys"].append(qtys[i] if pd.notna(qtys[i]) else None)
-                t["packings"].append(packings[i] if pd.notna(packings[i]) else None)
+                t["qtys"].append(qtys[i] if bool(pd.notna(qtys[i])) else None)
+                t["packings"].append(packings[i] if bool(pd.notna(packings[i])) else None)
 
         decisions: List[RefillDecision] = []
         records_list: List[Dict[str, Any]] = []

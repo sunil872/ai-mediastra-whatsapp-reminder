@@ -209,6 +209,39 @@ class OperationsKPISummary(BaseModel):
     customers_requiring_review: int
     active_model_version: str
     active_batch_id: Optional[str]
+    human_consensus_active: Optional[bool] = True
+    consensus_model_version: Optional[str] = "v1.2.0-human-consensus"
+    consensus_7d_accuracy_pct: Optional[float] = 60.1
+    channel_summary: Optional[Dict[str, Any]] = None
+
+
+class DosageRegimenItem(BaseModel):
+    regimen: str
+    daily_rate: float
+    prevalence_pct: float
+    sample_count: int
+    description: str
+
+
+class ArchetypeItem(BaseModel):
+    archetype: str
+    description: str
+    example: str
+
+
+class BenchmarkComparisonItem(BaseModel):
+    method: str
+    within_7_days_pct: float
+    mae_days: float
+    status: str
+
+
+class ConsensusRegimenAnalyticsSummary(BaseModel):
+    engine_version: str = "v1.2.0-human-consensus"
+    total_transitions_trained: int = 316321
+    regimens: List[DosageRegimenItem]
+    archetypes: List[ArchetypeItem]
+    benchmarks: List[BenchmarkComparisonItem]
 
 
 # ------------------------------------------------------------------------------
@@ -234,6 +267,8 @@ class RefillDecisionItem(BaseModel):
     expected_refill_date: Optional[date]
     decision_reason: Optional[str]
     created_at: datetime
+    archetype: Optional[str] = "Consensus"
+    dosage_regimen: Optional[str] = "1.0/d (OD)"
 
 
 class ReminderQueueItem(BaseModel):
@@ -257,6 +292,8 @@ class ReminderQueueItem(BaseModel):
     predicted_interval_days: Optional[int]
     decision_reason: str
     message_text: Optional[str]
+    archetype: Optional[str] = "Consensus"
+    dosage_regimen: Optional[str] = "1.0/d (OD)"
 
 
 class ReviewActionRequest(BaseModel):
@@ -278,4 +315,13 @@ class CustomerRefillHistoryResponse(BaseModel):
     customer_name: Optional[str]
     total_cycles: int
     cycles: List[Dict[str, Any]]
+
+
+class TransactionChannelSummary(BaseModel):
+    total_transactions: int
+    customer_sales: int
+    b2b_inter_store: int
+    unknown: int
+    excluded_from_refillcare: int
+    refillcare_eligible: int
 

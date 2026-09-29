@@ -21,7 +21,6 @@ import numpy as np
 from refillcare.data.dates import parse_pharmacy_dates, format_date_dd_mm_yyyy, UI_DATE_FORMAT
 from refillcare.data.history import create_purchase_history
 from refillcare.data.packing import enrich_total_units_purchased
-from refillcare.features.engineering import build_feature_dataset
 from refillcare.models.prediction import generate_batch_predictions
 from refillcare.models.supply_hybrid import calculate_hybrid_refill_date
 from reminder.scheduler import evaluate_refill_eligibility, RefillReminderScheduler
@@ -108,6 +107,14 @@ def validate_monthly_sales_data(
     renamed = normalize_sales_dataframe(df)
     total_received = len(renamed)
 
+    # Classify transaction channels (S0/ -> CUSTOMER_SALE, SB/ -> B2B_INTER_STORE, other -> UNKNOWN)
+    from refillcare.data.transaction_classifier import (
+        classify_transactions_df,
+        get_transaction_channel_summary,
+    )
+    renamed = classify_transactions_df(renamed, invoice_col="invoice_number", allow_generic_customer=True)
+    channel_summary = get_transaction_channel_summary(renamed)
+
     # Date range parsing using strict pharmacy date parsing
     date_diagnostics: Dict[str, Any] = {}
     if "invoice_date" in renamed.columns:
@@ -134,6 +141,7 @@ def validate_monthly_sales_data(
     # 2. Non-empty customerId
     # 3. Non-empty itemId
     # 4. Numeric quantity > 0
+    # 5. Channel eligibility: Must be CUSTOMER_SALE (S0/ prefix); SB/ and UNKNOWN are excluded!
     valid_mask = pd.Series(True, index=renamed.index)
 
     if "invoice_date" in renamed.columns:
@@ -161,13 +169,22 @@ def validate_monthly_sales_data(
         qty_num = pd.to_numeric(renamed["quantity"], errors="coerce")
         valid_mask &= qty_num.notna() & (qty_num > 0)
 
+    # Channel exclusion gate: SB/ and UNKNOWN transactions are NEVER valid for customer refillcare
+    if "refillcare_eligible" in renamed.columns:
+        valid_mask &= (renamed["refillcare_eligible"] == True)
+
     valid_df = renamed[valid_mask].copy().reset_index(drop=True)
     review_df = renamed[~valid_mask].copy().reset_index(drop=True)
 
-    # Customer breakdown
-    cust_col = "customerId" if "customerId" in renamed.columns else "customerName"
-    if cust_col in renamed.columns:
-        uploaded_cust_set = set(renamed[cust_col].dropna().astype(str).str.strip().unique())
+    # For review records without an explicit exclusion reason, assign validation failure reason
+    if "exclusion_reason" in review_df.columns:
+        needs_reason = review_df["exclusion_reason"].isna() | (review_df["exclusion_reason"] == "")
+        review_df.loc[needs_reason, "exclusion_reason"] = "VALIDATION_FAILED"
+
+    # Customer breakdown (only considering valid customer sales)
+    cust_col = "customerId" if "customerId" in valid_df.columns else "customerName"
+    if cust_col in valid_df.columns:
+        uploaded_cust_set = set(valid_df[cust_col].dropna().astype(str).str.strip().unique())
         uploaded_cust_set.discard("")
         unique_customers = len(uploaded_cust_set)
 
@@ -193,6 +210,11 @@ def validate_monthly_sales_data(
         "records_received": total_received,
         "valid_records": len(valid_df),
         "records_requiring_review": len(review_df),
+        "customer_sales_count": channel_summary["customer_sales"],
+        "b2b_inter_store_count": channel_summary["b2b_inter_store"],
+        "unknown_transaction_count": channel_summary["unknown"],
+        "excluded_from_refillcare": channel_summary["excluded_from_refillcare"],
+        "transaction_channel_summary": channel_summary,
         "new_customers": new_customers,
         "existing_customers": existing_customers,
         "unique_customers": unique_customers,
@@ -291,15 +313,20 @@ def process_monthly_sales_data(
 
     # Detect duplicates against existing history
     if existing_history_df is not None and not existing_history_df.empty:
-        exist_df = existing_history_df.copy()
-        exist_df["_dt"] = pd.to_datetime(exist_df["invoice_date"], errors="coerce")
         valid_clean["_dt"] = pd.to_datetime(valid_clean["invoice_date"], errors="coerce")
+        upload_cids = set(valid_clean["customerId"].dropna().astype(str).str.strip().str.lower())
 
-        exist_cids = exist_df["customerId"].dropna().astype(str).str.strip().str.lower().tolist()
-        exist_iids = exist_df["itemId"].dropna().astype(str).str.strip().str.lower().tolist()
-        exist_dts = exist_df["_dt"].dt.strftime("%Y-%m-%d").fillna("").tolist()
-
-        exist_keys = set(zip(exist_cids, exist_iids, exist_dts))
+        # Filter existing history strictly to candidate customers in upload to prevent memory spikes
+        exist_sub = existing_history_df[existing_history_df["customerId"].astype(str).str.strip().str.lower().isin(upload_cids)].copy()
+        if not exist_sub.empty:
+            exist_sub["_dt"] = pd.to_datetime(exist_sub["invoice_date"], errors="coerce")
+            exist_cids = exist_sub["customerId"].astype(str).str.strip().str.lower().tolist()
+            exist_iids = exist_sub["itemId"].astype(str).str.strip().str.lower().tolist()
+            exist_dts = exist_sub["_dt"].dt.strftime("%Y-%m-%d").fillna("").tolist()
+            exist_keys = set(zip(exist_cids, exist_iids, exist_dts))
+            del exist_cids, exist_iids, exist_dts, exist_sub
+        else:
+            exist_keys = set()
 
         is_existing_mask = valid_clean.apply(
             lambda r: (
@@ -313,6 +340,7 @@ def process_monthly_sales_data(
         existing_dupes_in_upload = int(is_existing_mask.sum())
         records_to_append = valid_clean[~is_existing_mask].drop(columns=["_dt"], errors="ignore").copy()
         existing_duplicates_skipped = intra_file_dupes + existing_dupes_in_upload
+        del exist_keys
     else:
         records_to_append = valid_clean.drop(columns=["_dt"], errors="ignore").copy() if "_dt" in valid_clean.columns else valid_clean.copy()
         existing_duplicates_skipped = intra_file_dupes
@@ -562,6 +590,7 @@ def generate_updated_predictions(
         working_hist = enrich_total_units_purchased(working_hist)
 
     # Build feature dataset from purchase history
+    from refillcare.features.engineering import build_feature_dataset
     feature_df = build_feature_dataset(working_hist)
 
     feature_df["invoice_date"] = pd.to_datetime(feature_df["invoice_date"], errors="coerce")
@@ -851,6 +880,7 @@ def ingest_monthly_sales_pipeline(
         outcome_metrics = storage.match_and_update_prediction_outcomes(valid_new_df)
 
     # 6. Build feature dataset for active latest purchase events
+    from refillcare.features.engineering import build_feature_dataset
     feature_df = build_feature_dataset(combined_history_df)
 
     # Isolate the latest purchase event per customer + medicine

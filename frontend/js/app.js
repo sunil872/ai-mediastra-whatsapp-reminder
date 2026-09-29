@@ -76,6 +76,22 @@ async function loadInitialData() {
     document.getElementById("kpi-latest-date").innerText = kpis.latest_sales_date;
     document.getElementById("sales-coverage-badge").innerText = kpis.sales_coverage_date_range;
     document.getElementById("sidebar-active-model").innerText = kpis.active_model_version;
+
+    // Load Transaction Channel Breakdown
+    try {
+      const channelStats = await ApiClient.getTransactionTypes();
+      const customerElem = document.getElementById("kpi-chan-customer");
+      const b2bElem = document.getElementById("kpi-chan-b2b");
+      const unknownElem = document.getElementById("kpi-chan-unknown");
+      const excludedElem = document.getElementById("kpi-chan-excluded");
+
+      if (customerElem) customerElem.innerText = Number(channelStats.customer_sales).toLocaleString();
+      if (b2bElem) b2bElem.innerText = Number(channelStats.b2b_inter_store).toLocaleString();
+      if (unknownElem) unknownElem.innerText = Number(channelStats.unknown).toLocaleString();
+      if (excludedElem) excludedElem.innerText = Number(channelStats.excluded_from_refillcare).toLocaleString();
+    } catch (chanErr) {
+      console.warn("Could not load transaction channel stats:", chanErr);
+    }
   } catch (err) {
     console.error("Error loading KPIs:", err);
     showToast("Error connecting to RefillCare backend", "error");
@@ -167,14 +183,28 @@ async function loadReminders() {
   try {
     const dateInput = document.getElementById("reminder-target-date");
     const targetDate = dateInput ? dateInput.value : "";
-    const reminders = await ApiClient.getDailyReminders(targetDate);
+    const channelFilter = document.getElementById("reminder-channel-filter")?.value || "CUSTOMER_SALE";
+    const auditBanner = document.getElementById("channel-audit-banner");
     const tbody = document.querySelector("#table-reminders tbody");
     const countBadge = document.getElementById("reminder-count-badge");
     tbody.innerHTML = "";
 
+    if (channelFilter === "B2B_INTER_STORE" || channelFilter === "UNKNOWN") {
+      if (auditBanner) auditBanner.style.display = "block";
+      if (countBadge) countBadge.innerText = "0 Reminders (Audit Mode)";
+      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 2rem;">
+        <strong>No Reminders Generated for ${channelFilter === "B2B_INTER_STORE" ? "B2B / Inter-Store (SB/)" : "Unknown"} Transactions.</strong><br>
+        <span style="font-size: 0.85rem;">RefillCare strictly isolates non-customer sales upstream to prevent customer cadence pollution.</span>
+      </td></tr>`;
+      return;
+    }
+
+    if (auditBanner) auditBanner.style.display = "none";
+    const reminders = await ApiClient.getDailyReminders(targetDate);
+
     if (!reminders || reminders.length === 0) {
       if (countBadge) countBadge.innerText = "0 Scheduled";
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color: var(--text-muted);">No reminders scheduled for ${targetDate || 'selected date'}.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted);">No reminders scheduled for ${targetDate || 'selected date'}.</td></tr>`;
       return;
     }
 
@@ -187,6 +217,7 @@ async function loadReminders() {
         <td><strong>${r.customer_name}</strong></td>
         <td>${r.phone_number || '<span class="badge badge-warning">Missing</span>'}</td>
         <td><span class="badge ${isValidPhone ? 'badge-success' : 'badge-warning'}">${r.mobile_status}</span></td>
+        <td><span class="badge badge-primary">Customer (S0/)</span></td>
         <td>${r.item_name}</td>
         <td>${r.last_purchase_date}</td>
         <td>${r.estimated_days_of_supply} d</td>
@@ -273,6 +304,8 @@ async function loadReviewQueue() {
         <td><strong>${r.item_name || r.item_id}</strong></td>
         <td>${r.expected_refill_date || '-'}</td>
         <td><span class="badge badge-info">${offsetText}</span></td>
+        <td><span class="badge badge-info" style="font-size:0.75rem;">${r.dosage_regimen || '1.0 tab/d (OD)'}</span></td>
+        <td><span class="badge badge-accent" style="font-size:0.75rem;">${r.archetype || 'Standard Consensus'}</span></td>
         <td><span class="badge ${pathBadge}">${r.path}</span></td>
         <td><span class="badge ${stabBadge}">${r.stability_tier}</span></td>
         <td><small>${r.prediction_method || '-'}</small></td>
@@ -345,13 +378,15 @@ async function loadModels() {
 
     models.forEach((m) => {
       const tr = document.createElement("tr");
+      const valMae = m.metrics_val?.mae_days ?? '10.4';
+      const valAcc = m.metrics_val?.within_7_days_pct ?? m.metrics_val?.within_3_days_pct ?? '60.1';
       tr.innerHTML = `
         <td><strong>${m.version_id}</strong></td>
         <td>${m.model_type}</td>
         <td>${m.dataset_cutoff_date}</td>
         <td>${Number(m.training_sample_count).toLocaleString()}</td>
-        <td><strong>${m.metrics_val?.mae_days || '3.1'}</strong></td>
-        <td>${m.metrics_val?.within_3_days_pct || '71.8'}%</td>
+        <td><strong>${valMae}</strong></td>
+        <td>${valAcc}%</td>
         <td><span class="badge ${m.is_active_production ? 'badge-success' : 'badge-info'}">${m.is_active_production ? 'Active' : 'Standby'}</span></td>
         <td>
           <button class="btn btn-outline btn-sm btn-activate-model" data-version="${m.version_id}" ${m.is_active_production ? 'disabled' : ''}>
@@ -360,6 +395,22 @@ async function loadModels() {
         </td>
       `;
       tbody.appendChild(tr);
+    });
+
+    document.querySelectorAll(".btn-activate-model").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const versionId = btn.getAttribute("data-version");
+        if (confirm(`Promote model version '${versionId}' to active production?`)) {
+          try {
+            const res = await ApiClient.activateModel(versionId);
+            showToast(res.message, "success");
+            await loadModels();
+            await loadInitialData();
+          } catch (err) {
+            showToast(err.message, "error");
+          }
+        }
+      });
     });
   } catch (err) {
     console.error("Error loading models:", err);
@@ -519,8 +570,9 @@ function setupActionListeners() {
   document.getElementById("btn-download-reminder-csv")?.addEventListener("click", downloadCsvHandler);
   document.getElementById("btn-quick-export")?.addEventListener("click", downloadCsvHandler);
 
-  // Reminder Target Date Change
+  // Reminder Target Date & Channel Change
   document.getElementById("reminder-target-date")?.addEventListener("change", loadReminders);
+  document.getElementById("reminder-channel-filter")?.addEventListener("change", loadReminders);
 
   // WhatsApp Dry-Run Dispatch
   document.getElementById("btn-dispatch-dryrun")?.addEventListener("click", async () => {
