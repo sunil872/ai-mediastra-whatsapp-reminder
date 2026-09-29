@@ -325,3 +325,59 @@ class TransactionChannelSummary(BaseModel):
     excluded_from_refillcare: int
     refillcare_eligible: int
 
+
+# ------------------------------------------------------------------------------
+# Med-Sync & Quantile Uncertainty Schemas
+# ------------------------------------------------------------------------------
+class SyncedMedicationItemSchema(BaseModel):
+    item_id: str
+    item_name: str
+    last_purchase_date: str
+    expected_refill_date: str
+    predicted_interval_days: Optional[int] = None
+    stability_tier: str
+    dos_days: Optional[float] = None
+    quantile_p10_date: Optional[str] = None
+    quantile_p90_date: Optional[str] = None
+    is_anchor: bool = False
+
+
+class MedSyncBundleSchema(BaseModel):
+    bundle_id: str
+    customer_id: str
+    customer_name: str
+    mobile_no: Optional[str] = None
+    anchor_item_id: str
+    anchor_item_name: str
+    anchor_refill_date: str
+    window_start_date: str
+    window_end_date: str
+    synced_items: List[SyncedMedicationItemSchema] = []
+    total_items_count: int
+    message_reduction_count: int
+    bundled_message_text: str
+    earliest_p10_date: Optional[str] = None
+    latest_p90_date: Optional[str] = None
+    status: str = "PENDING"
+    created_at: Optional[str] = None
+
+
+class MedSyncImpactSummarySchema(BaseModel):
+    total_patients_analyzed: int
+    total_prescriptions_synced: int
+    total_dispatches_generated: int
+    multi_item_bundles_count: int
+    single_item_bundles_count: int
+    multi_item_bundle_rate_pct: float
+    individual_messages_saved: int
+    message_reduction_rate_pct: float
+    max_items_in_single_bundle: int
+    avg_items_per_bundle: float
+
+
+class MedSyncBundlesResponse(BaseModel):
+    sync_window_days: int
+    impact_summary: MedSyncImpactSummarySchema
+    bundles: List[MedSyncBundleSchema]
+
+

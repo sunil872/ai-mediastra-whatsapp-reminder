@@ -37,6 +37,9 @@ from database.models import (
     PredictionOutcomeModel,
     ReminderScheduleModel,
     WhatsAppDeliveryLogModel,
+    RefillDecisionModel,
+    ReminderCycleModel,
+    ReminderStageModel,
 )
 from refillcare.data.dates import (
     parse_pharmacy_dates,
@@ -50,6 +53,7 @@ from refillcare.data.monthly_ingestion import (
     generate_updated_predictions,
     evaluate_prediction_outcomes,
     determine_mobile_status,
+    format_display_phone_10digits,
 )
 from refillcare.models.prediction import generate_batch_predictions
 from reminder.scheduler import (
@@ -328,14 +332,23 @@ class EnterpriseServices:
     # --------------------------------------------------------------------------
     # 3. REMINDER SCHEDULE & EXPORT SERVICES
     # --------------------------------------------------------------------------
-    def get_daily_reminders(self, target_date: date, mobile_filter: str = "All") -> List[Dict[str, Any]]:
-        """Get reminder queue scheduled for a target date."""
+    def get_daily_reminders(
+        self,
+        target_date: Optional[date] = None,
+        target_month: Optional[str] = None,
+        mobile_filter: str = "All",
+    ) -> List[Dict[str, Any]]:
+        """Get reminder queue scheduled for a target date or full target month (YYYY-MM)."""
         from refillcare.engine.persistence import RefillPersistenceManager
 
         # 1. Primary: Query persistent review queue from enterprise.db
         try:
             pm = RefillPersistenceManager()
-            queue = pm.get_today_review_queue(self.db, target_date=target_date)
+            if target_month:
+                queue = pm.get_monthly_review_queue(self.db, target_month=target_month)
+            else:
+                dt = target_date or date.today()
+                queue = pm.get_today_review_queue(self.db, target_date=dt)
         except Exception:
             queue = []
 
@@ -367,7 +380,8 @@ class EnterpriseServices:
                     "reminder_id": r["reminder_id"],
                     "customer_id": str(r.get("customer_id", "")),
                     "customer_name": str(r.get("customer_name", "Unknown")),
-                    "phone_number": phone,
+                    "phone_number": format_display_phone_10digits(phone),
+                    "raw_phone_number": phone,
                     "mobile_status": mob_stat,
                     "item_id": str(r.get("item_id", "")),
                     "item_name": str(r.get("item_name", "Unknown Medication")),
@@ -381,7 +395,6 @@ class EnterpriseServices:
             return items
 
         # Fallback to prediction snapshots (for backward compatibility with mock/test environments)
-        target_str = target_date.strftime("%Y-%m-%d")
         snapshots_list = self.storage.get_prediction_snapshots()
         if not snapshots_list:
             return []
@@ -390,7 +403,13 @@ class EnterpriseServices:
         if "reminder_date" not in df.columns:
             return []
 
-        df = pd.DataFrame(df[df["reminder_date"].astype(str) == target_str])
+        if target_month:
+            df = pd.DataFrame(df[df["reminder_date"].astype(str).str.startswith(str(target_month).strip())])
+        else:
+            dt = target_date or date.today()
+            target_str = dt.strftime("%Y-%m-%d")
+            df = pd.DataFrame(df[df["reminder_date"].astype(str) == target_str])
+
         if mobile_filter == "Valid" and "mobile_status" in df.columns:
             df = pd.DataFrame(df[df["mobile_status"] == "Valid"])
         elif mobile_filter == "Missing" and "mobile_status" in df.columns:
@@ -415,16 +434,56 @@ class EnterpriseServices:
             })
         return items
 
-    def export_reminder_csv(self, target_date: date) -> bytes:
-        """Export standard 10-column delivery-ready CSV with valid mobile numbers."""
+    def export_reminder_csv(
+        self,
+        target_date: Optional[date] = None,
+        target_month: Optional[str] = None,
+    ) -> bytes:
+        """Export standard 10-column delivery-ready CSV with valid mobile numbers for date or month."""
         from reminder.reminder_engine import RefillReminderEngine
 
-        reminders = self.get_daily_reminders(target_date, mobile_filter="Valid")
+        reminders = self.get_daily_reminders(target_date=target_date, target_month=target_month, mobile_filter="Valid")
         if not reminders:
             return RefillReminderEngine.build_10_column_export_csv(pd.DataFrame())
 
         df = pd.DataFrame(reminders)
         return RefillReminderEngine.build_10_column_export_csv(df)
+
+    def export_reminder_json(
+        self,
+        target_date: Optional[date] = None,
+        target_month: Optional[str] = None,
+        mobile_filter: str = "All",
+    ) -> Dict[str, Any]:
+        """Export reminder records as full structured JSON format for date or month."""
+        reminders = self.get_daily_reminders(target_date=target_date, target_month=target_month, mobile_filter=mobile_filter)
+        filter_label = f"Month: {target_month}" if target_month else f"Date: {(target_date or date.today()).strftime('%Y-%m-%d')}"
+        return {
+            "query_filter": filter_label,
+            "target_date": target_date.strftime("%Y-%m-%d") if target_date else None,
+            "target_month": target_month,
+            "total_records": len(reminders),
+            "generated_at": datetime.utcnow().isoformat(),
+            "records": reminders,
+        }
+
+    def list_available_reminder_months(self) -> List[str]:
+        """Retrieve distinct scheduled reminder months (YYYY-MM) from enterprise database."""
+        try:
+            from database.models import ReminderStageModel
+            results = (
+                self.db.query(ReminderStageModel.target_send_date)
+                .distinct()
+                .order_by(ReminderStageModel.target_send_date.asc())
+                .all()
+            )
+            months = set()
+            for row in results:
+                if row[0]:
+                    months.add(row[0].strftime("%Y-%m"))
+            return sorted(list(months))
+        except Exception:
+            return ["2026-09"]
 
     # --------------------------------------------------------------------------
     # 4. MODEL REGISTRY SERVICES
@@ -701,10 +760,16 @@ class EnterpriseServices:
         from refillcare.data.transaction_classifier import get_transaction_channel_summary
         clean_tx_path = PROJECT_ROOT / "data" / "refillcare" / "processed" / "clean_transactions.parquet"
         if clean_tx_path.exists():
-            df = pd.read_parquet(clean_tx_path)
+            try:
+                df = pd.read_parquet(clean_tx_path, columns=["transaction_type", "refillcare_eligible"])
+            except Exception:
+                df = pd.read_parquet(clean_tx_path)
             return get_transaction_channel_summary(df)
         elif HISTORY_PARQUET_PATH.exists():
-            df = pd.read_parquet(HISTORY_PARQUET_PATH)
+            try:
+                df = pd.read_parquet(HISTORY_PARQUET_PATH, columns=["transaction_type", "refillcare_eligible"])
+            except Exception:
+                df = pd.read_parquet(HISTORY_PARQUET_PATH)
             return get_transaction_channel_summary(df)
         return {
             "total_transactions": 0,
@@ -713,6 +778,189 @@ class EnterpriseServices:
             "unknown": 0,
             "excluded_from_refillcare": 0,
             "refillcare_eligible": 0,
+        }
+
+    # --------------------------------------------------------------------------
+    # 9. MED-SYNC & QUANTILE UNCERTAINTY SERVICES
+    # --------------------------------------------------------------------------
+    def get_med_sync_bundles(
+        self,
+        sync_window_days: int = 8,
+        pharmacy_name: str = "Mediastra Pharmacy",
+        customer_id: Optional[str] = None,
+        target_month: Optional[str] = None,
+        target_date: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Generate patient-grouped Med-Sync bundles and operational impact metrics for a target date or month."""
+        from refillcare.engine.med_sync import MedSyncEngine
+        query = self.db.query(RefillDecisionModel).filter(RefillDecisionModel.is_eligible == True)
+        if customer_id:
+            query = query.filter(RefillDecisionModel.customer_id == customer_id)
+        decisions_db = query.all()
+
+        records: List[Dict[str, Any]] = []
+        if decisions_db:
+            for d in decisions_db:
+                records.append({
+                    "customer_id": d.customer_id,
+                    "customer_name": d.customer_name,
+                    "mobile_no": d.mobile_no,
+                    "item_id": d.item_id,
+                    "item_name": d.item_name,
+                    "is_eligible": d.is_eligible,
+                    "stability_tier": d.stability_tier,
+                    "predicted_interval_days": d.predicted_interval_days,
+                    "last_purchase_date": d.last_purchase_date,
+                    "expected_refill_date": d.expected_refill_date,
+                    "dos_days": d.dos_days,
+                })
+        else:
+            snapshots = self.storage.get_prediction_snapshots()
+            if snapshots:
+                for s in snapshots:
+                    records.append({
+                        "customer_id": s.get("customer_id", ""),
+                        "customer_name": s.get("customer_name", "Valued Patient"),
+                        "mobile_no": s.get("phone_number"),
+                        "item_id": s.get("item_id", ""),
+                        "item_name": s.get("item_name", ""),
+                        "is_eligible": True,
+                        "stability_tier": s.get("stability_tier", "MEDIUM-SAFE"),
+                        "predicted_interval_days": s.get("predicted_interval_days") or s.get("estimated_days_of_supply"),
+                        "last_purchase_date": s.get("last_purchase_date"),
+                        "expected_refill_date": s.get("expected_refill_date"),
+                        "dos_days": s.get("estimated_days_of_supply"),
+                    })
+
+        # Determine latest sales date to establish next-month prediction horizon
+        latest_sales_dt = None
+        for r in records:
+            lpd = r.get("last_purchase_date")
+            if lpd:
+                try:
+                    if isinstance(lpd, str):
+                        dt = datetime.strptime(lpd[:10], "%Y-%m-%d").date()
+                    elif isinstance(lpd, (datetime, date)):
+                        dt = lpd if isinstance(lpd, date) else lpd.date()
+                    else:
+                        dt = None
+                    if dt and (latest_sales_dt is None or dt > latest_sales_dt):
+                        latest_sales_dt = dt
+                except Exception:
+                    pass
+
+        if latest_sales_dt:
+            if latest_sales_dt.month == 12:
+                target_next_year = latest_sales_dt.year + 1
+                target_next_month = 1
+            else:
+                target_next_year = latest_sales_dt.year
+                target_next_month = latest_sales_dt.month + 1
+            last_sales_month_str = latest_sales_dt.strftime("%B %Y")
+        else:
+            target_next_year = 2026
+            target_next_month = 9
+            last_sales_month_str = "August 2026"
+
+        default_target_month_key = f"{target_next_year}-{target_next_month:02d}"
+
+        engine = MedSyncEngine(sync_window_days=sync_window_days, default_pharmacy_name=pharmacy_name)
+        all_bundles = engine.cluster_patient_decisions(records, sync_window_days=sync_window_days, pharmacy_name=pharmacy_name)
+
+        # Build available months list
+        available_tuples = sorted(list(set((b.anchor_refill_date.year, b.anchor_refill_date.month) for b in all_bundles)))
+        target_tuple = (target_next_year, target_next_month)
+        future_tuples = [t for t in available_tuples if t >= target_tuple]
+        past_tuples = [t for t in available_tuples if t < target_tuple]
+        ordered_tuples = ([target_tuple] if target_tuple in available_tuples else []) + [t for t in future_tuples if t != target_tuple] + past_tuples
+
+        available_months = []
+        for y, m in ordered_tuples:
+            m_key = f"{y}-{m:02d}"
+            m_name = date(y, m, 1).strftime("%B %Y")
+            available_months.append({
+                "key": m_key,
+                "label": f"🎯 {m_name} (Next Month Default)" if (y, m) == target_tuple else f"📅 {m_name}",
+                "year": y,
+                "month": m,
+                "is_default": (y, m) == target_tuple,
+            })
+        available_months.append({
+            "key": "ALL",
+            "label": "🌐 All Future Months",
+            "year": 0,
+            "month": 0,
+            "is_default": False,
+        })
+
+        # Apply target date or target month filter
+        if target_date:
+            filtered_bundles = [
+                b for b in all_bundles
+                if b.anchor_refill_date == target_date
+            ]
+            selected_target = target_date.strftime("%Y-%m-%d")
+            filter_mode = "DATE"
+        elif target_month is not None and target_month != "ALL":
+            try:
+                sel_y, sel_m = map(int, target_month.split("-"))
+                filtered_bundles = [
+                    b for b in all_bundles
+                    if b.anchor_refill_date.year == sel_y and b.anchor_refill_date.month == sel_m
+                ]
+            except Exception:
+                filtered_bundles = all_bundles
+            selected_target = target_month
+            filter_mode = "MONTH"
+        elif target_month == "ALL":
+            filtered_bundles = all_bundles
+            selected_target = "ALL"
+            filter_mode = "MONTH"
+        else:
+            # Default to target next month
+            try:
+                sel_y, sel_m = map(int, default_target_month_key.split("-"))
+                filtered_bundles = [
+                    b for b in all_bundles
+                    if b.anchor_refill_date.year == sel_y and b.anchor_refill_date.month == sel_m
+                ]
+            except Exception:
+                filtered_bundles = all_bundles
+            selected_target = default_target_month_key
+            filter_mode = "MONTH"
+
+        impact = engine.summarize_sync_impact(filtered_bundles)
+
+        # Format bundles with 10-digit mobile number
+        formatted_bundles = []
+        for b in filtered_bundles:
+            bd = b.to_dict()
+            bd["raw_mobile_no"] = b.mobile_no or ""
+            bd["mobile_no"] = format_display_phone_10digits(b.mobile_no or "")
+            formatted_bundles.append(bd)
+
+        return {
+            "sync_window_days": sync_window_days,
+            "filter_mode": filter_mode,
+            "selected_target": selected_target,
+            "selected_target_month": selected_target if filter_mode == "MONTH" else default_target_month_key,
+            "default_target_month": default_target_month_key,
+            "last_sales_month": last_sales_month_str,
+            "available_months": available_months,
+            "impact_summary": impact,
+            "bundles": formatted_bundles,
+        }
+
+    def get_quantile_uncertainty_metrics(self) -> Dict[str, Any]:
+        """Retrieve 3-head Quantile uncertainty envelope benchmark metrics."""
+        import json
+        report_path = PROJECT_ROOT / "data" / "refillcare" / "processed" / "chronic_model_benchmark_report.json"
+        if report_path.exists():
+            with open(report_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {
+            "status": "not_trained",
+            "message": "Benchmark report not found. Train via scripts/train_chronic_specialized_model.py.",
         }
 
     # --------------------------------------------------------------------------

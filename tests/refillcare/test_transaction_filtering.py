@@ -271,7 +271,16 @@ class TestDatasetAndReminderIsolation:
         for name, path in splits.items():
             if not path.exists():
                 pytest.skip(f"Dataset {path} not found")
-            df = pd.read_parquet(path)
+            try:
+                import pyarrow.parquet as pq
+                schema_cols = pq.read_schema(path).names
+                candidate_cols = [c for c in ["transaction_number", "Transaction Number", "transaction_id", "inv_no"] if c in schema_cols]
+                if candidate_cols:
+                    df = pd.read_parquet(path, columns=candidate_cols)
+                else:
+                    df = pd.DataFrame()
+            except Exception:
+                df = pd.read_parquet(path)
             for col in ["transaction_number", "Transaction Number", "transaction_id", "inv_no"]:
                 if col in df.columns:
                     sb_mask = (

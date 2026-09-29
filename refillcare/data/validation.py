@@ -4,7 +4,7 @@ Provides automated validation checks across raw, cleaned, aggregated, and histor
 datasets to ensure zero corruption, no date leakage, and high reliability.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, cast
 import pandas as pd
 import numpy as np
 
@@ -51,10 +51,10 @@ def validate_dataset(
     # 1. Raw Data Checks
     if raw_df is not None:
         raw_total = len(raw_df)
-        raw_missing_cust = int(raw_df["customerId"].isna().sum()) if "customerId" in raw_df.columns else 0
-        raw_missing_item = int(raw_df["itemId"].isna().sum()) if "itemId" in raw_df.columns else 0
-        raw_missing_phone = int(raw_df["MOBILE_NO"].isna().sum()) if "MOBILE_NO" in raw_df.columns else 0
-        raw_exact_dups = int(raw_df.duplicated().sum())
+        raw_missing_cust = int(cast(Any, raw_df["customerId"].isna().sum())) if "customerId" in raw_df.columns else 0
+        raw_missing_item = int(cast(Any, raw_df["itemId"].isna().sum())) if "itemId" in raw_df.columns else 0
+        raw_missing_phone = int(cast(Any, raw_df["MOBILE_NO"].isna().sum())) if "MOBILE_NO" in raw_df.columns else 0
+        raw_exact_dups = int(cast(Any, raw_df.duplicated().sum()))
 
         report["metrics"]["raw_total_rows"] = raw_total
         report["metrics"]["raw_missing_customerId"] = raw_missing_cust
@@ -70,9 +70,9 @@ def validate_dataset(
     # 2. Clean Data Checks
     if clean_df is not None:
         clean_total = len(clean_df)
-        clean_missing_cust = int(clean_df["customerId"].isna().sum()) if "customerId" in clean_df.columns else 0
-        clean_missing_item = int(clean_df["itemId"].isna().sum()) if "itemId" in clean_df.columns else 0
-        clean_missing_date = int(clean_df["invoice_date"].isna().sum()) if "invoice_date" in clean_df.columns else 0
+        clean_missing_cust = int(cast(Any, clean_df["customerId"].isna().sum())) if "customerId" in clean_df.columns else 0
+        clean_missing_item = int(cast(Any, clean_df["itemId"].isna().sum())) if "itemId" in clean_df.columns else 0
+        clean_missing_date = int(cast(Any, clean_df["invoice_date"].isna().sum())) if "invoice_date" in clean_df.columns else 0
         clean_mfg_present = "mfgDate" in clean_df.columns
 
         report["metrics"]["clean_total_rows"] = clean_total
@@ -98,12 +98,12 @@ def validate_dataset(
         event_keys = ["customerId", "invoice_number", "invoice_date", "itemId"]
         present_keys = [k for k in event_keys if k in aggregated_df.columns]
         if len(present_keys) == 4:
-            dup_events = int(aggregated_df.duplicated(subset=present_keys).sum())
+            dup_events = int(cast(Any, aggregated_df.duplicated(subset=present_keys).sum()))
         else:
             dup_events = 0
 
         # Check negative or zero quantities
-        neg_or_zero_qty = int((aggregated_df["quantity"] <= 0).sum()) if "quantity" in aggregated_df.columns else 0
+        neg_or_zero_qty = int(cast(Any, (aggregated_df["quantity"] <= 0).sum())) if "quantity" in aggregated_df.columns else 0
 
         report["metrics"]["aggregated_purchase_events"] = agg_total
         report["metrics"]["duplicate_purchase_events"] = dup_events
@@ -116,7 +116,7 @@ def validate_dataset(
     # 4. SALT Master Checks
     if salt_df is not None:
         salt_total = len(salt_df)
-        salt_dup_codes = int(salt_df.duplicated(subset=["Code"]).sum()) if "Code" in salt_df.columns else 0
+        salt_dup_codes = int(cast(Any, salt_df.duplicated(subset=["Code"]).sum())) if "Code" in salt_df.columns else 0
         report["metrics"]["salt_master_total_items"] = salt_total
         report["metrics"]["salt_master_duplicate_codes"] = salt_dup_codes
 
@@ -127,20 +127,20 @@ def validate_dataset(
     # 5. History and Interval Checks
     if history_df is not None:
         hist_total = len(history_df)
-        unique_customers = int(history_df["customerId"].nunique()) if "customerId" in history_df.columns else 0
-        unique_items = int(history_df["itemId"].nunique()) if "itemId" in history_df.columns else 0
+        unique_customers = int(cast(Any, history_df["customerId"].nunique())) if "customerId" in history_df.columns else 0
+        unique_items = int(cast(Any, history_df["itemId"].nunique())) if "itemId" in history_df.columns else 0
 
         # Unique customerId + itemId combinations
         if "customerId" in history_df.columns and "itemId" in history_df.columns:
-            combos = int(history_df.groupby(["customerId", "itemId"]).ngroups)
+            combos = int(cast(Any, history_df.groupby(["customerId", "itemId"]).ngroups))
         else:
             combos = 0
 
         # Check negative intervals
         if "days_since_previous_purchase" in history_df.columns:
             valid_intervals = history_df["days_since_previous_purchase"].dropna()
-            negative_intervals = int((valid_intervals < 0).sum())
-            zero_intervals = int((valid_intervals == 0).sum())
+            negative_intervals = int(cast(Any, (valid_intervals < 0).sum()))
+            zero_intervals = int(cast(Any, (valid_intervals == 0).sum()))
         else:
             negative_intervals = 0
             zero_intervals = 0
@@ -154,8 +154,8 @@ def validate_dataset(
 
         # Check SALT enrichment coverage if column exists
         if "salt_composition" in history_df.columns:
-            enriched_items = int(history_df["salt_composition"].notna().sum())
-            unmatched_items = int(history_df["salt_composition"].isna().sum())
+            enriched_items = int(cast(Any, history_df["salt_composition"].notna().sum()))
+            unmatched_items = int(cast(Any, history_df["salt_composition"].isna().sum()))
         else:
             enriched_items, unmatched_items = 0, 0
 

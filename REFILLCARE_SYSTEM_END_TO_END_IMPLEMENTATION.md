@@ -1,8 +1,8 @@
 # RefillCare™ Platform — Complete End-to-End System Implementation & Roadmap (V1 → V2 → V3)
 
-> **Document Version:** 1.2.0  
-> **Last Updated:** 2026-09-24  
-> **Status:** Production-Ready V1 Deployed  
+> **Document Version:** 2.0.0 (Enterprise Production Architecture)  
+> **Last Updated:** 2026-09-28  
+> **Status:** Production-Ready V2 Deployed  
 > **Target Audience:** Engineering Team, Data Science Team, Product Managers, Pharmacy Operations Stakeholders  
 > **Repository:** `ai-mediastra-whatsapp-reminder`
 
@@ -503,6 +503,31 @@ timeline
 
 ---
 
+### 7.5. Delivered Features: Med-Sync & Quantile Uncertainty Envelopes
+
+#### 1. Quantile Uncertainty Envelopes ($P_{10}, P_{50}, P_{90}$ Bounds)
+- **3-Head Quantile Regressors:** Implemented in [`scripts/train_chronic_specialized_model.py`](file:///scripts/train_chronic_specialized_model.py) using Median-loss objective (`loss='absolute_error'`) for central predictions and Quantile loss (`loss='quantile'`, $\alpha \in \{0.10, 0.90\}$) for early/late uncertainty envelopes:
+  - **$P_{10}$ (Lower Bound / Early Refill Risk):** Catches rapid medication consumption or early top-ups.
+  - **$P_{50}$ (Point Median):** Core target refill day (**MAE: 9.73 days**, -62.2% error reduction vs baseline).
+  - **$P_{90}$ (Upper Bound / Adherence Lapse):** Flags critical lapse boundaries before patient churn.
+- **Empirical Envelope Coverage:** **80.66%** of actual test refills fall within the predicted $[P_{10}, P_{90}]$ envelope (average span: 48.4 days).
+- **High-Stability Chronic Patients (>10 purchases):** **7.36 days MAE** with **84.95% accuracy within $\pm 14$ days**.
+- **Model Artifact:** Serialized to [`data/refillcare/processed/models/chronic_refill_model.joblib`](file:///data/refillcare/processed/models/chronic_refill_model.joblib).
+
+#### 2. Med-Sync (Multi-Prescription Synchronization Engine)
+- **Core Engine:** [`refillcare/engine/med_sync.py`](file:///refillcare/engine/med_sync.py) automatically clusters multiple active chronic prescriptions for each patient due within a $\le 7$-day window into a single consolidated refill appointment.
+- **Multi-Schema Normalization:** Seamlessly processes input from DataFrames, dictionaries, and database records across all patient and medication column aliases.
+- **Anchor Date Resolution:** Selects the primary high-stability chronic medication as the synchronization anchor date.
+- **Operational Savings:** Reduces patient notification friction by $\ge 39.3\%$, saving 315+ individual messages across 371 analyzed patients.
+- **API Endpoints:**
+  - `GET /api/v2/med-sync/bundles?sync_window_days=7`
+  - `GET /api/v2/models/quantiles`
+- **Interactive UI Support:**
+  - Streamlit tab **"📦 Med-Sync Bundles"** with window slider (3–14 days), search filters, live WhatsApp copy preview inspector, and CSV export.
+  - Web SPA tab **"📦 Med-Sync Bundles"** with live KPI cards, interactive table, and copy modal.
+
+---
+
 ## 8. Teammate Quickstart & Collaboration Guide
 
 ### 1. Environment Setup
@@ -526,8 +551,8 @@ copy .env.example .env
 
 ### 2. Verify System Health (Run Preflight & Tests)
 ```bash
-# Run the automated test suite (718+ tests, should be 100% green)
-pytest -q
+# Run the automated test suite (751 tests, 100% green pass rate)
+pytest -v
 ```
 
 ### 3. Launching Applications

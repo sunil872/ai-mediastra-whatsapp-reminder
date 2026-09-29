@@ -36,6 +36,10 @@
         <span class="nav-icon">📅</span>
         <span>Daily Reminder List</span>
       </a>
+      <a class="nav-item" data-tab="tab-medsync">
+        <span class="nav-icon">📦</span>
+        <span>Med-Sync Bundling</span>
+      </a>
       <a class="nav-item" data-tab="tab-review">
         <span class="nav-icon">⚠️</span>
         <span>Clinical Review Queue</span>
@@ -316,23 +320,32 @@
         </div>
       </section>
 
-      <!-- TAB 4: DAILY REMINDER LIST -->
+      <!-- TAB 4: REMINDER LIST (DATE OR MONTH) -->
       <section id="tab-reminders" class="tab-pane">
         <div class="card">
           <div class="card-header">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <h3 class="card-title">📅 Daily Operational Reminder List</h3>
+              <h3 class="card-title">📅 Customer Reminder List</h3>
               <span class="badge badge-info" id="reminder-count-badge">Loading...</span>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+              <select id="reminder-view-mode" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main); font-weight: 600;">
+                <option value="DATE" selected>Filter by Date</option>
+                <option value="MONTH">Filter by Month</option>
+              </select>
+              <input type="date" id="reminder-target-date" value="2026-09-24" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              <select id="reminder-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main); font-weight: 600;">
+                <option value="2026-09" selected>September 2026 (2026-09)</option>
+              </select>
               <select id="reminder-channel-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main);">
                 <option value="CUSTOMER_SALE" selected>Customer Sales (Default)</option>
                 <option value="ALL">All Channels</option>
                 <option value="B2B_INTER_STORE">B2B / Inter-Store (Audit Only)</option>
                 <option value="UNKNOWN">Unknown Channels</option>
               </select>
-              <input type="date" id="reminder-target-date" value="2026-09-24" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
-              <button class="btn btn-primary" id="btn-download-reminder-csv">📥 Download 10-Col Delivery CSV</button>
+              <input type="text" id="reminder-search-input" placeholder="Search Customer / Phone..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); width: 190px;">
+              <button class="btn btn-primary" id="btn-download-reminder-csv">📥 Download CSV</button>
+              <button class="btn btn-outline" id="btn-download-reminder-json">📥 Download JSON</button>
             </div>
           </div>
           <div id="channel-audit-banner" style="display: none; padding: 0.75rem 1rem; margin-bottom: 1rem; border-radius: 8px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); font-size: 0.85rem; color: #d97706;">
@@ -360,12 +373,105 @@
         </div>
       </section>
 
-      <!-- TAB 5: CLINICAL REVIEW QUEUE -->
+      <!-- TAB 5: MED-SYNC (PRESCRIPTION BUNDLING) -->
+      <section id="tab-medsync" class="tab-pane">
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">📦 Med-Sync: Multi-Prescription Synchronization</h3>
+              <p style="color: var(--text-secondary); margin-top: 0.25rem;">
+                Automatically groups active chronic prescriptions due within a dynamic window (≤ 8 days) into a single coordinated refill appointment, cutting customer friction by 50%+.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+              <div>
+                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Filter Mode</label>
+                <select id="medsync-view-mode" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
+                  <option value="MONTH" selected>Filter by Month</option>
+                  <option value="DATE">Filter by Date</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Prediction Target</label>
+                <select id="medsync-month-select" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
+                  <option value="">Auto Next Month</option>
+                </select>
+                <input type="date" id="medsync-target-date" value="2026-09-24" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              </div>
+              <div>
+                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Sync Window: <span id="sync-window-val">8</span> days</label>
+                <input type="range" id="sync-window-slider" min="3" max="14" value="8" style="cursor: pointer; vertical-align: middle;">
+              </div>
+              <div>
+                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Filter Customer / Phone</label>
+                <input type="text" id="medsync-search" placeholder="Search Customer / Phone / Med..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); width: 210px;">
+              </div>
+              <div style="padding-top: 1rem;">
+                <button class="btn btn-outline" id="btn-refresh-medsync">🔄 Cluster Prescriptions</button>
+              </div>
+            </div>
+          </div>
+          <div id="medsync-month-banner" style="background: rgba(37, 99, 235, 0.08); border-left: 4px solid var(--primary); padding: 0.6rem 1rem; border-radius: 4px; margin-top: 0.75rem; font-size: 0.9rem;">
+            🎯 <strong>Prediction Month:</strong> <span id="medsync-active-month-text">Loading...</span>
+          </div>
+          
+          <div class="kpi-grid" style="margin-top: 1rem;">
+            <div class="kpi-card">
+              <div class="kpi-title">Prescriptions Synced</div>
+              <div class="kpi-value" id="medsync-total-prescriptions">-</div>
+              <div class="kpi-sub">Total active items evaluated</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">Appointment Bundles</div>
+              <div class="kpi-value" id="medsync-total-bundles">-</div>
+              <div class="kpi-sub">Consolidated dispatches</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">Multi-Item Bundles</div>
+              <div class="kpi-value" id="medsync-multi-bundles">-</div>
+              <div class="kpi-sub">≥ 2 medications synchronized</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title">Messages Saved</div>
+              <div class="kpi-value" id="medsync-saved-messages" style="color: var(--success);">-</div>
+              <div class="kpi-sub" id="medsync-friction-rate">0% friction reduction</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📋 Synchronized Patient Refill Bundles</h3>
+          </div>
+          <div class="table-responsive" style="max-height: 540px;">
+            <table class="data-table" id="table-medsync-bundles">
+              <thead>
+                <tr>
+                  <th>Patient Name</th>
+                  <th>Mobile Number</th>
+                  <th>Anchor Medication</th>
+                  <th>Synced Prescriptions</th>
+                  <th>Anchor Due Date</th>
+                  <th>Quantile Envelope (P10 → P90)</th>
+                  <th>Items</th>
+                  <th>Reduction</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: CLINICAL REVIEW QUEUE -->
       <section id="tab-review" class="tab-pane">
         <div class="card">
           <div class="card-header">
             <h3 class="card-title">⚠️ Today's Refill Reminder & Clinical Review Queue</h3>
             <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <input type="text" id="review-search-cust" placeholder="Search Customer..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              <input type="text" id="review-search-med" placeholder="Search Medicine..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
               <input type="date" id="review-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
               <select id="review-path-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main);">
                 <option value="">All Paths</option>

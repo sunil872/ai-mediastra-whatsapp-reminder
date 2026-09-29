@@ -216,31 +216,60 @@ def evaluate_outcomes(db: Session = Depends(get_db)):
 # ------------------------------------------------------------------------------
 @app.get("/api/v1/reminders/daily", response_model=List[ReminderItem], tags=["Reminders"])
 def get_daily_reminders(
-    target_date: Optional[date] = Query(None, description="Target reminder date (defaults to today)"),
+    target_date: Optional[date] = Query(None, description="Target reminder date (defaults to today if month not set)"),
+    target_month: Optional[str] = Query(None, description="Target reminder month in YYYY-MM format (e.g. 2026-09)"),
     mobile_status: str = Query("All", description="All, Valid, Missing"),
     db: Session = Depends(get_db),
 ):
-    """Get scheduled reminders for a specific date."""
+    """Get scheduled reminders for a specific date or full target month."""
     srv = EnterpriseServices(db)
-    dt = target_date or date.today()
-    return srv.get_daily_reminders(target_date=dt, mobile_filter=mobile_status)
+    return srv.get_daily_reminders(target_date=target_date, target_month=target_month, mobile_filter=mobile_status)
 
 
 @app.get("/api/v1/reminders/export-csv", tags=["Reminders"])
 def export_reminder_csv(
     target_date: Optional[date] = Query(None, description="Target reminder date"),
+    target_month: Optional[str] = Query(None, description="Target reminder month in YYYY-MM format (e.g. 2026-09)"),
     db: Session = Depends(get_db),
 ):
     """Download delivery-ready CSV with 10 standard columns for valid mobile numbers."""
     srv = EnterpriseServices(db)
-    dt = target_date or date.today()
-    csv_bytes = srv.export_reminder_csv(target_date=dt)
-    filename = f"refill_reminders_{dt.strftime('%Y%m%d')}.csv"
+    csv_bytes = srv.export_reminder_csv(target_date=target_date, target_month=target_month)
+    label = target_month.replace("-", "") if target_month else (target_date or date.today()).strftime("%Y%m%d")
+    filename = f"refill_reminders_{label}.csv"
     return Response(
         content=csv_bytes,
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@app.get("/api/v1/reminders/export-json", tags=["Reminders"])
+def export_reminder_json(
+    target_date: Optional[date] = Query(None, description="Target reminder date"),
+    target_month: Optional[str] = Query(None, description="Target reminder month in YYYY-MM format (e.g. 2026-09)"),
+    mobile_status: str = Query("All", description="All, Valid, Missing"),
+    db: Session = Depends(get_db),
+):
+    """Download full structured JSON for scheduled reminders on a date or full month."""
+    import json
+    srv = EnterpriseServices(db)
+    data = srv.export_reminder_json(target_date=target_date, target_month=target_month, mobile_filter=mobile_status)
+    label = target_month.replace("-", "") if target_month else (target_date or date.today()).strftime("%Y%m%d")
+    filename = f"refill_reminders_{label}.json"
+    return Response(
+        content=json.dumps(data, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.get("/api/v1/reminders/months", response_model=List[str], tags=["Reminders"])
+def list_reminder_months(db: Session = Depends(get_db)):
+    """List distinct available scheduled reminder months."""
+    srv = EnterpriseServices(db)
+    return srv.list_available_reminder_months()
+
 
 
 # ------------------------------------------------------------------------------
@@ -417,7 +446,37 @@ def get_customer_refill_history(customer_id: str, db: Session = Depends(get_db))
 
 
 # ------------------------------------------------------------------------------
-# 8. FRONTEND STATIC ASSETS & SPA ROUTING
+# 8. MED-SYNC & QUANTILE UNCERTAINTY ENDPOINTS
+# ------------------------------------------------------------------------------
+@app.get("/api/v2/med-sync/bundles", tags=["Med-Sync Multi-Prescription Bundling"])
+def get_med_sync_bundles(
+    sync_window_days: int = Query(8, ge=1, le=30, description="Max days gap between prescriptions to cluster"),
+    pharmacy_name: str = Query("Mediastra Pharmacy", description="Pharmacy name for templated messages"),
+    customer_id: Optional[str] = Query(None, description="Optional filter by patient ID"),
+    target_month: Optional[str] = Query(None, description="Optional prediction target month filter, e.g. '2026-09' or 'ALL'"),
+    target_date: Optional[date] = Query(None, description="Optional prediction target date filter, e.g. '2026-09-24'"),
+    db: Session = Depends(get_db),
+):
+    """Retrieve synchronized multi-prescription reminder bundles and message reduction stats for a target date or month."""
+    services = EnterpriseServices(db)
+    return services.get_med_sync_bundles(
+        sync_window_days=sync_window_days,
+        pharmacy_name=pharmacy_name,
+        customer_id=customer_id,
+        target_month=target_month,
+        target_date=target_date,
+    )
+
+
+@app.get("/api/v2/models/quantiles", tags=["Quantile Uncertainty Envelopes"])
+def get_model_quantile_envelope(db: Session = Depends(get_db)):
+    """Retrieve 3-head Quantile uncertainty envelope (P10, P50, P90) metrics and coverage report."""
+    services = EnterpriseServices(db)
+    return services.get_quantile_uncertainty_metrics()
+
+
+# ------------------------------------------------------------------------------
+# 9. FRONTEND STATIC ASSETS & SPA ROUTING
 # ------------------------------------------------------------------------------
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")

@@ -1,0 +1,246 @@
+{
+  "curation_summary": {
+    "train_initial": 468817,
+    "val_initial": 12821,
+    "test_initial": 7553,
+    "train_chronic_filtered": 326606,
+    "val_chronic": 11997,
+    "test_chronic": 7130,
+    "retention_rate_pct": 69.67
+  },
+  "overall_test_comparison": {
+    "HistoricalMedianBaseline": {
+      "count": 7130,
+      "mae": 25.71,
+      "median_abs_error": 7.0,
+      "rmse": 107.36,
+      "r2": -82.6211,
+      "within_1_day_pct": 17.05,
+      "within_3_days_pct": 32.44,
+      "within_7_days_pct": 51.4,
+      "within_14_days_pct": 69.64,
+      "actual_mean": 18.88,
+      "actual_median": 17.0,
+      "predicted_mean": 39.91,
+      "predicted_median": 25.0
+    },
+    "ChronicSpecializedXGBoost": {
+      "count": 7130,
+      "mae": 9.73,
+      "median_abs_error": 6.82,
+      "rmse": 13.42,
+      "r2": -0.3063,
+      "within_1_day_pct": 9.35,
+      "within_3_days_pct": 26.41,
+      "within_7_days_pct": 50.91,
+      "within_14_days_pct": 75.2,
+      "actual_mean": 18.88,
+      "actual_median": 17.0,
+      "predicted_mean": 25.07,
+      "predicted_median": 25.07
+    }
+  },
+  "quantile_uncertainty_envelope": {
+    "p10_p90_coverage_pct": 80.66,
+    "avg_uncertainty_span_days": 48.4,
+    "p10_mean": 10.72,
+    "p50_mean": 25.07,
+    "p90_mean": 59.13
+  },
+  "stratified_by_history_depth": {
+    "1-2 Purchases (Early Developing)": {
+      "count": 1182,
+      "model_metrics": {
+        "count": 1182,
+        "mae": 14.47,
+        "median_abs_error": 13.16,
+        "rmse": 17.24,
+        "r2": -0.8061,
+        "within_1_day_pct": 3.38,
+        "within_3_days_pct": 9.9,
+        "within_7_days_pct": 25.55,
+        "within_14_days_pct": 54.06,
+        "actual_mean": 17.63,
+        "actual_median": 14.5,
+        "predicted_mean": 28.85,
+        "predicted_median": 27.59
+      },
+      "baseline_metrics": {
+        "count": 1182,
+        "mae": 58.75,
+        "median_abs_error": 16.0,
+        "rmse": 217.59,
+        "r2": -286.7094,
+        "within_1_day_pct": 8.88,
+        "within_3_days_pct": 16.5,
+        "within_7_days_pct": 28.0,
+        "within_14_days_pct": 44.84,
+        "actual_mean": 17.63,
+        "actual_median": 14.5,
+        "predicted_mean": 72.16,
+        "predicted_median": 30.0
+      }
+    },
+    "3-5 Purchases (Stabilizing)": {
+      "count": 1009,
+      "model_metrics": {
+        "count": 1009,
+        "mae": 12.99,
+        "median_abs_error": 9.58,
+        "rmse": 17.24,
+        "r2": -1.2132,
+        "within_1_day_pct": 5.15,
+        "within_3_days_pct": 17.05,
+        "within_7_days_pct": 38.16,
+        "within_14_days_pct": 62.93,
+        "actual_mean": 18.81,
+        "actual_median": 17.0,
+        "predicted_mean": 29.03,
+        "predicted_median": 28.79
+      },
+      "baseline_metrics": {
+        "count": 1009,
+        "mae": 61.96,
+        "median_abs_error": 13.5,
+        "rmse": 153.76,
+        "r2": -175.1193,
+        "within_1_day_pct": 10.41,
+        "within_3_days_pct": 20.81,
+        "within_7_days_pct": 35.18,
+        "within_14_days_pct": 51.34,
+        "actual_mean": 18.81,
+        "actual_median": 17.0,
+        "predicted_mean": 76.43,
+        "predicted_median": 30.0
+      }
+    },
+    "6-10 Purchases (Recurring Chronic)": {
+      "count": 1000,
+      "model_metrics": {
+        "count": 1000,
+        "mae": 10.16,
+        "median_abs_error": 6.97,
+        "rmse": 14.31,
+        "r2": -0.4009,
+        "within_1_day_pct": 9.3,
+        "within_3_days_pct": 25.4,
+        "within_7_days_pct": 50.1,
+        "within_14_days_pct": 74.2,
+        "actual_mean": 20.07,
+        "actual_median": 18.0,
+        "predicted_mean": 26.53,
+        "predicted_median": 26.36
+      },
+      "baseline_metrics": {
+        "count": 1000,
+        "mae": 18.29,
+        "median_abs_error": 7.0,
+        "rmse": 39.87,
+        "r2": -9.8691,
+        "within_1_day_pct": 14.7,
+        "within_3_days_pct": 29.3,
+        "within_7_days_pct": 50.3,
+        "within_14_days_pct": 68.6,
+        "actual_mean": 20.07,
+        "actual_median": 18.0,
+        "predicted_mean": 33.58,
+        "predicted_median": 25.75
+      }
+    },
+    ">10 Purchases (High-Stability Chronic)": {
+      "count": 3939,
+      "model_metrics": {
+        "count": 3939,
+        "mae": 7.36,
+        "median_abs_error": 5.08,
+        "rmse": 10.42,
+        "r2": 0.1501,
+        "within_1_day_pct": 12.24,
+        "within_3_days_pct": 34.02,
+        "within_7_days_pct": 62.0,
+        "within_14_days_pct": 84.95,
+        "actual_mean": 18.97,
+        "actual_median": 17.0,
+        "predicted_mean": 22.56,
+        "predicted_median": 20.86
+      },
+      "baseline_metrics": {
+        "count": 3939,
+        "mae": 8.4,
+        "median_abs_error": 5.0,
+        "rmse": 13.96,
+        "r2": -0.5257,
+        "within_1_day_pct": 21.81,
+        "within_3_days_pct": 41.0,
+        "within_7_days_pct": 62.86,
+        "within_14_days_pct": 82.03,
+        "actual_mean": 18.97,
+        "actual_median": 17.0,
+        "predicted_mean": 22.48,
+        "predicted_median": 20.0
+      }
+    }
+  },
+  "top_features": [
+    {
+      "feature": "historical_interval_median",
+      "importance": 0.3063
+    },
+    {
+      "feature": "has_multiple_prior_purchases",
+      "importance": 0.2023
+    },
+    {
+      "feature": "days_since_first_purchase",
+      "importance": 0.0591
+    },
+    {
+      "feature": "purchase_count_so_far",
+      "importance": 0.0525
+    },
+    {
+      "feature": "quantity",
+      "importance": 0.0505
+    },
+    {
+      "feature": "quantity_vs_avg_ratio",
+      "importance": 0.0487
+    },
+    {
+      "feature": "historical_interval_mean",
+      "importance": 0.0485
+    },
+    {
+      "feature": "days_since_previous_purchase",
+      "importance": 0.0383
+    },
+    {
+      "feature": "historical_interval_max",
+      "importance": 0.0323
+    },
+    {
+      "feature": "last_purchase_interval",
+      "importance": 0.028
+    },
+    {
+      "feature": "avg_historical_quantity",
+      "importance": 0.0257
+    },
+    {
+      "feature": "is_recurring_history",
+      "importance": 0.0204
+    },
+    {
+      "feature": "historical_interval_min",
+      "importance": 0.0171
+    },
+    {
+      "feature": "is_first_purchase",
+      "importance": 0.011
+    },
+    {
+      "feature": "historical_interval_cv",
+      "importance": 0.0104
+    }
+  ]
+}

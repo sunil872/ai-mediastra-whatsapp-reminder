@@ -20,11 +20,19 @@ from refillcare.engine.decision_types import (
     STAGE_PLUS_5,
     STAGE_OFFSETS,
 )
+from refillcare.engine.med_sync import (
+    MedSyncBundle,
+    MedSyncEngine,
+    SyncedMedicationItem,
+)
 
 __all__ = [
     "RefillDecision",
     "ReminderCycleState",
     "ReminderStage",
+    "MedSyncEngine",
+    "MedSyncBundle",
+    "SyncedMedicationItem",
     "PATH_A",
     "PATH_B",
     "PATH_INELIGIBLE",

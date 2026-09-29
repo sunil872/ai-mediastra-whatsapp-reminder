@@ -241,6 +241,25 @@ def determine_mobile_status(phone: Any) -> str:
     return "Invalid format"
 
 
+def format_display_phone_10digits(phone: Any) -> str:
+    """Format phone number to standard 10-digit display (strips leading 91 or 0 if valid 10-digit base)."""
+    if phone is None or pd.isna(phone):
+        return "-"
+    s = str(phone).strip()
+    if not s or s.lower() in ("nan", "none", "-", "null", "n/a", "0", ""):
+        return "-"
+    digits = "".join(filter(str.isdigit, s))
+    if len(digits) == 12 and digits.startswith("91") and digits[2] in "6789":
+        return digits[2:]
+    elif len(digits) == 11 and digits.startswith("0") and digits[1] in "6789":
+        return digits[1:]
+    elif len(digits) == 10 and digits[0] in "6789":
+        return digits
+    elif len(digits) >= 10:
+        return digits[-10:]
+    return s if s else "-"
+
+
 def process_monthly_sales_data(
     sales_input: Union[pd.DataFrame, Any],
     existing_history_df: Optional[pd.DataFrame] = None,
@@ -615,8 +634,19 @@ def generate_updated_predictions(
     eligible_rows: List[Dict[str, Any]] = []
     ineligible_rows: List[Dict[str, Any]] = []
 
+    from refillcare.data.medication_classifier import classify_medication
+
     for _, row in preds_df.iterrows():
         rec_dict = row.to_dict()
+        med_val = str(rec_dict.get("itemName", rec_dict.get("itemId", "")))
+        pack_val = str(rec_dict.get("packing", ""))
+        med_class = classify_medication(med_val, packing=pack_val)
+        if not med_class["is_chronic_eligible"]:
+            rec_dict["Reason for Ineligibility"] = f"Excluded: {med_class['exclusion_reason']} ({med_class['category']})"
+            rec_dict["Pilot Tier"] = "Tier C (Excluded / Non-Chronic)"
+            ineligible_rows.append(rec_dict)
+            continue
+
         p_cnt = int(rec_dict.get("purchase_count_so_far", rec_dict.get("purchase_seq", 1)))
         elig = evaluate_refill_eligibility(rec_dict, min_purchase_count=2)
 

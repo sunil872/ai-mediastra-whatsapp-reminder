@@ -246,6 +246,35 @@ class UnifiedRefillDecisionEngine:
         # Compute DOS/EDS
         dos_days, latest_units = self.compute_dos(dates, quantities, packings, item_name)
 
+        # Medication therapy classification gate: Exclude generic OTC / FMCG / Acute / Personal Care items
+        from refillcare.data.medication_classifier import classify_medication
+        latest_pack = packings[-1] if packings and len(packings) > 0 else None
+        med_class = classify_medication(item_name, packing=latest_pack)
+        if not med_class["is_chronic_eligible"]:
+            return RefillDecision(
+                customer_id=str(customer_id),
+                customer_name=str(customer_name),
+                mobile_no=clean_phone,
+                item_id=str(item_id),
+                item_name=str(item_name),
+                customer_item_key=cust_item_key,
+                path=PATH_INELIGIBLE,
+                purchase_count=purchase_count,
+                is_eligible=False,
+                stability_tier=STABILITY_UNSTABLE,
+                cadence_median=None,
+                cadence_norm_mad=None,
+                cadence_drift=None,
+                dos_days=dos_days,
+                units_purchased=latest_units,
+                prediction_method=PRED_NONE,
+                predicted_interval_days=None,
+                last_purchase_date=last_date,
+                expected_refill_date=None,
+                decision_reason=f"Excluded: {med_class['exclusion_reason']} ({med_class['category']})",
+                cycle_id=f"RC-{customer_id}-{item_id}-NONCHRONIC",
+            )
+
         # -----------------------------------------------------------------
         # 1. Path A Evaluation (purchase_count >= 6): Cadence-First + Quantity Scaling & DOS Guardrails
         # -----------------------------------------------------------------

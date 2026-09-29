@@ -25,3 +25,10 @@ scratch/
 .DS_Store
 Thumbs.db
 
+# Local Conversation & Session History (Locally preserved, ignored from git)
+conversation_history/
+
+# Local Multi-Format Document Converter (Ignored from git)
+file_to_markdown_converter/
+converted_markdown/
+

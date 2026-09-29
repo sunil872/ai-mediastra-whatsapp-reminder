@@ -108,18 +108,42 @@ export const ApiClient = {
   },
 
   // 4. Reminders
-  async getDailyReminders(targetDate, mobileStatus = "All") {
+  async getDailyReminders(targetDate, targetMonth = null, mobileStatus = "All") {
     let url = `${API_BASE_URL}/api/v1/reminders/daily?mobile_status=${mobileStatus}`;
-    if (targetDate) url += `&target_date=${targetDate}`;
+    if (targetMonth) {
+      url += `&target_month=${encodeURIComponent(targetMonth)}`;
+    } else if (targetDate) {
+      url += `&target_date=${encodeURIComponent(targetDate)}`;
+    }
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch reminders");
     return await res.json();
   },
 
-  getExportCsvUrl(targetDate) {
+  getExportCsvUrl(targetDate, targetMonth = null) {
     let url = `${API_BASE_URL}/api/v1/reminders/export-csv`;
-    if (targetDate) url += `?target_date=${targetDate}`;
+    if (targetMonth) {
+      url += `?target_month=${encodeURIComponent(targetMonth)}`;
+    } else if (targetDate) {
+      url += `?target_date=${encodeURIComponent(targetDate)}`;
+    }
     return url;
+  },
+
+  getExportJsonUrl(targetDate, targetMonth = null) {
+    let url = `${API_BASE_URL}/api/v1/reminders/export-json`;
+    if (targetMonth) {
+      url += `?target_month=${encodeURIComponent(targetMonth)}`;
+    } else if (targetDate) {
+      url += `?target_date=${encodeURIComponent(targetDate)}`;
+    }
+    return url;
+  },
+
+  async getReminderMonths() {
+    const res = await fetch(`${API_BASE_URL}/api/v1/reminders/months`);
+    if (!res.ok) return ["2026-09"];
+    return await res.json();
   },
 
   // 5. Models
@@ -223,5 +247,26 @@ export const ApiClient = {
     if (!res.ok) throw new Error("Failed to fetch customer refill history");
     return await res.json();
   },
+
+  // 7. Med-Sync & Quantile Uncertainty
+  async getMedSyncBundles(syncWindowDays = 8, customerId = null, targetMonth = null, targetDate = null) {
+    let url = `${API_BASE_URL}/api/v2/med-sync/bundles?sync_window_days=${syncWindowDays}`;
+    if (customerId) url += `&customer_id=${encodeURIComponent(customerId)}`;
+    if (targetDate) {
+      url += `&target_date=${encodeURIComponent(targetDate)}`;
+    } else if (targetMonth) {
+      url += `&target_month=${encodeURIComponent(targetMonth)}`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch Med-Sync bundles");
+    return await res.json();
+  },
+
+  async getQuantileMetrics() {
+    const res = await fetch(`${API_BASE_URL}/api/v2/models/quantiles`);
+    if (!res.ok) throw new Error("Failed to fetch Quantile uncertainty metrics");
+    return await res.json();
+  },
 };
+
 

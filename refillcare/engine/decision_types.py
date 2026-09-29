@@ -96,12 +96,24 @@ class RefillDecision:
     cycle_id: str
     created_at: datetime = field(default_factory=datetime.now)
 
+    # Quantile Uncertainty Bounds (P10, P50, P90)
+    quantile_p10_days: Optional[float] = None
+    quantile_p50_days: Optional[float] = None
+    quantile_p90_days: Optional[float] = None
+    quantile_p10_date: Optional[date] = None
+    quantile_p90_date: Optional[date] = None
+    uncertainty_span_days: Optional[float] = None
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         if self.last_purchase_date:
             d["last_purchase_date"] = self.last_purchase_date.strftime("%Y-%m-%d")
         if self.expected_refill_date:
             d["expected_refill_date"] = self.expected_refill_date.strftime("%Y-%m-%d")
+        if self.quantile_p10_date:
+            d["quantile_p10_date"] = self.quantile_p10_date.strftime("%Y-%m-%d")
+        if self.quantile_p90_date:
+            d["quantile_p90_date"] = self.quantile_p90_date.strftime("%Y-%m-%d")
         if self.created_at:
             d["created_at"] = self.created_at.isoformat()
         return d

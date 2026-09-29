@@ -190,3 +190,24 @@ def test_whatsapp_dry_run_dispatch():
     assert data["is_dry_run"] is True
     assert "dispatched_count" in data
     assert "delivery_summary" in data
+
+
+def test_med_sync_bundles_api():
+    """Verify Med-Sync multi-prescription clustering API endpoint."""
+    res = client.get("/api/v2/med-sync/bundles?sync_window_days=7")
+    assert res.status_code == 200
+    data = res.json()
+    assert "sync_window_days" in data
+    assert data["sync_window_days"] == 7
+    assert "impact_summary" in data
+    assert "bundles" in data
+    assert isinstance(data["bundles"], list)
+
+
+def test_quantile_uncertainty_api():
+    """Verify Quantile Uncertainty Envelopes API endpoint."""
+    res = client.get("/api/v2/models/quantiles")
+    assert res.status_code == 200
+    data = res.json()
+    assert ("overall_test_comparison" in data or "quantile_uncertainty_envelope" in data or "status" in data)
+

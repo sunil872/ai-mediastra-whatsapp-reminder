@@ -13,14 +13,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupUploadDropzone();
   setupActionListeners();
   
-  // Default to 2026-09-24 where 346+ validated reminders are scheduled
-  const defaultDate = "2026-09-24";
+  // Dynamic default date (defaults to today's date)
+  const todayStr = new Date().toISOString().split("T")[0];
   const dateInput = document.getElementById("reminder-target-date");
-  if (dateInput && !dateInput.value) dateInput.value = defaultDate;
+  if (dateInput && !dateInput.value) dateInput.value = todayStr;
 
   const reviewDateInput = document.getElementById("review-target-date");
-  if (reviewDateInput && !reviewDateInput.value) reviewDateInput.value = defaultDate;
+  if (reviewDateInput && !reviewDateInput.value) reviewDateInput.value = todayStr;
 
+  await initReminderMonthOptions();
   await loadInitialData();
 });
 
@@ -58,6 +59,7 @@ function setupNavigation() {
       if (tabId === "tab-upload") loadBatches();
       if (tabId === "tab-predictions") loadPredictionSnapshots();
       if (tabId === "tab-reminders") loadReminders();
+      if (tabId === "tab-medsync") loadMedSyncBundles();
       if (tabId === "tab-review") loadReviewQueue();
       if (tabId === "tab-models") loadModels();
     });
@@ -179,11 +181,82 @@ async function loadPredictionSnapshots() {
   }
 }
 
+async function initReminderMonthOptions() {
+  try {
+    const monthSelect = document.getElementById("reminder-target-month");
+    if (!monthSelect) return;
+    const months = await ApiClient.getReminderMonths();
+    if (months && months.length > 0) {
+      monthSelect.innerHTML = "";
+      months.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        try {
+          const [yr, mo] = m.split("-");
+          const dt = new Date(parseInt(yr), parseInt(mo) - 1, 1);
+          const monthName = dt.toLocaleString("default", { month: "long" });
+          opt.innerText = `${monthName} ${yr} (${m})`;
+        } catch (e) {
+          opt.innerText = m;
+        }
+        if (m === "2026-09") opt.selected = true;
+        monthSelect.appendChild(opt);
+      });
+      if (!monthSelect.value && months.length > 0) {
+        monthSelect.value = months[0];
+      }
+    }
+  } catch (err) {
+    console.error("Error initializing reminder months:", err);
+  }
+}
+
+function formatDisplayPhone10(phone) {
+  if (!phone) return "-";
+  const s = String(phone).trim();
+  if (!s || ["nan", "none", "-", "null", "n/a", "0"].includes(s.toLowerCase())) return "-";
+  const digits = s.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91") && "6789".includes(digits[2])) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("0") && "6789".includes(digits[1])) {
+    return digits.slice(1);
+  }
+  if (digits.length === 10 && "6789".includes(digits[0])) {
+    return digits;
+  }
+  if (digits.length >= 10) {
+    return digits.slice(-10);
+  }
+  return s;
+}
+
 async function loadReminders() {
   try {
+    const viewMode = document.getElementById("reminder-view-mode")?.value || "DATE";
     const dateInput = document.getElementById("reminder-target-date");
-    const targetDate = dateInput ? dateInput.value : "";
+    const monthSelect = document.getElementById("reminder-target-month");
+
+    let targetDate = null;
+    let targetMonth = null;
+    let filterLabel = "";
+
+    if (viewMode === "MONTH") {
+      targetMonth = monthSelect ? monthSelect.value : "2026-09";
+      filterLabel = monthSelect?.options[monthSelect.selectedIndex]?.text || targetMonth;
+      if (dateInput) dateInput.style.display = "none";
+      if (monthSelect) monthSelect.style.display = "inline-block";
+    } else {
+      targetDate = dateInput ? dateInput.value : "";
+      filterLabel = targetDate || "selected date";
+      if (dateInput) dateInput.style.display = "inline-block";
+      if (monthSelect) monthSelect.style.display = "none";
+    }
+
     const channelFilter = document.getElementById("reminder-channel-filter")?.value || "CUSTOMER_SALE";
+    const searchQuery = document.getElementById("reminder-search-input")?.value?.trim().toLowerCase() || "";
+    const cleanSearchDigits = searchQuery.replace(/\D/g, "");
+
     const auditBanner = document.getElementById("channel-audit-banner");
     const tbody = document.querySelector("#table-reminders tbody");
     const countBadge = document.getElementById("reminder-count-badge");
@@ -200,22 +273,38 @@ async function loadReminders() {
     }
 
     if (auditBanner) auditBanner.style.display = "none";
-    const reminders = await ApiClient.getDailyReminders(targetDate);
+    const rawReminders = await ApiClient.getDailyReminders(targetDate, targetMonth);
 
-    if (!reminders || reminders.length === 0) {
+    if (!rawReminders || rawReminders.length === 0) {
       if (countBadge) countBadge.innerText = "0 Scheduled";
-      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted);">No reminders scheduled for ${targetDate || 'selected date'}.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted);">No reminders scheduled for ${filterLabel}.</td></tr>`;
       return;
     }
 
+    // Apply Client-Side Search by Customer Name, Phone Number, or Medication
+    const reminders = rawReminders.filter((r) => {
+      if (!searchQuery) return true;
+      const nameMatch = r.customer_name && r.customer_name.toLowerCase().includes(searchQuery);
+      const medMatch = r.item_name && r.item_name.toLowerCase().includes(searchQuery);
+      const phoneStr = String(r.phone_number || "") + " " + String(r.raw_phone_number || "");
+      const phoneMatch = phoneStr.toLowerCase().includes(searchQuery) || (cleanSearchDigits && phoneStr.replace(/\D/g, "").includes(cleanSearchDigits));
+      return nameMatch || medMatch || phoneMatch;
+    });
+
     if (countBadge) countBadge.innerText = `${reminders.length} Scheduled`;
+
+    if (reminders.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 1.5rem;">No reminders match "${searchQuery}".</td></tr>`;
+      return;
+    }
 
     reminders.forEach((r) => {
       const tr = document.createElement("tr");
       const isValidPhone = r.mobile_status === "Valid";
+      const dispPhone = formatDisplayPhone10(r.phone_number);
       tr.innerHTML = `
         <td><strong>${r.customer_name}</strong></td>
-        <td>${r.phone_number || '<span class="badge badge-warning">Missing</span>'}</td>
+        <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-warning">Missing</span>'}</code></td>
         <td><span class="badge ${isValidPhone ? 'badge-success' : 'badge-warning'}">${r.mobile_status}</span></td>
         <td><span class="badge badge-primary">Customer (S0/)</span></td>
         <td>${r.item_name}</td>
@@ -238,13 +327,25 @@ async function loadReviewQueue() {
     const targetDate = dateInput ? dateInput.value : "";
     const pathFilter = document.getElementById("review-path-filter")?.value || "";
     const stabilityFilter = document.getElementById("review-stability-filter")?.value || "";
+    const custQuery = document.getElementById("review-search-cust")?.value?.trim().toLowerCase() || "";
+    const medQuery = document.getElementById("review-search-med")?.value?.trim().toLowerCase() || "";
 
-    const queue = await ApiClient.getTodayReminderQueue(targetDate, pathFilter, stabilityFilter);
+    const rawQueue = await ApiClient.getTodayReminderQueue(targetDate, pathFilter, stabilityFilter);
     const tbody = document.querySelector("#table-review-queue tbody");
     tbody.innerHTML = "";
 
+    const queue = (rawQueue || []).filter((r) => {
+      if (custQuery && !((r.customer_name && r.customer_name.toLowerCase().includes(custQuery)) || (r.customer_id && r.customer_id.toLowerCase().includes(custQuery)))) {
+        return false;
+      }
+      if (medQuery && !((r.item_name && r.item_name.toLowerCase().includes(medQuery)) || (r.item_id && String(r.item_id).toLowerCase().includes(medQuery)))) {
+        return false;
+      }
+      return true;
+    });
+
     if (!queue || queue.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 2rem;">No reminders in the review queue for the selected filters.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12" style="text-align:center; color: var(--text-muted); padding: 2rem;">No reminders in the review queue for the selected filters.</td></tr>`;
       return;
     }
 
@@ -508,9 +609,150 @@ async function handleFileSelected(file) {
 }
 
 // ------------------------------------------------------------------------------
+// 7. Med-Sync (Prescription Bundling)
+// ------------------------------------------------------------------------------
+async function loadMedSyncBundles() {
+  const slider = document.getElementById("sync-window-slider");
+  const windowDays = slider ? parseInt(slider.value, 10) : 8;
+  const syncValLabel = document.getElementById("sync-window-val");
+  if (syncValLabel) syncValLabel.innerText = windowDays;
+
+  const viewMode = document.getElementById("medsync-view-mode")?.value || "MONTH";
+  const monthSelect = document.getElementById("medsync-month-select");
+  const dateInput = document.getElementById("medsync-target-date");
+
+  let targetMonth = null;
+  let targetDate = null;
+
+  if (viewMode === "DATE") {
+    targetDate = dateInput ? dateInput.value : "2026-09-24";
+    if (dateInput) dateInput.style.display = "inline-block";
+    if (monthSelect) monthSelect.style.display = "none";
+  } else {
+    targetMonth = (monthSelect && monthSelect.value) ? monthSelect.value : null;
+    if (dateInput) dateInput.style.display = "none";
+    if (monthSelect) monthSelect.style.display = "inline-block";
+  }
+
+  const searchInput = document.getElementById("medsync-search");
+  const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+  const cleanSearchDigits = query.replace(/\D/g, "");
+
+  try {
+    const data = await ApiClient.getMedSyncBundles(windowDays, null, targetMonth, targetDate);
+    const impact = data.impact_summary || {};
+    const bundles = data.bundles || [];
+    const availableMonths = data.available_months || [];
+    const selectedMonth = data.selected_target_month || "";
+    const lastSalesMonth = data.last_sales_month || "August 2026";
+    const activeTarget = data.selected_target || (viewMode === "DATE" ? targetDate : selectedMonth);
+
+    // Populate month dropdown if empty or not populated
+    if (monthSelect && availableMonths.length > 0 && monthSelect.options.length <= 1) {
+      monthSelect.innerHTML = "";
+      availableMonths.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.key;
+        opt.innerText = m.label;
+        if (m.key === selectedMonth) opt.selected = true;
+        monthSelect.appendChild(opt);
+      });
+    }
+
+    // Update banner text
+    const bannerText = document.getElementById("medsync-active-month-text");
+    if (bannerText) {
+      const activeMonthObj = availableMonths.find(m => m.key === selectedMonth);
+      const activeLabel = viewMode === "DATE" ? `Date: ${targetDate}` : (activeMonthObj ? activeMonthObj.label : selectedMonth);
+      bannerText.innerHTML = `<strong>${activeLabel}</strong> (predicted from uploaded sales up to <strong>${lastSalesMonth}</strong> with <strong>${windowDays}d</strong> sync window) — <strong>${Number(impact.total_prescriptions_synced || 0).toLocaleString()}</strong> prescriptions grouped into <strong>${Number(impact.total_dispatches_generated || 0).toLocaleString()}</strong> bundles.`;
+    }
+
+    const pElem = document.getElementById("medsync-total-prescriptions");
+    const bElem = document.getElementById("medsync-total-bundles");
+    const mElem = document.getElementById("medsync-multi-bundles");
+    const sElem = document.getElementById("medsync-saved-messages");
+    const fElem = document.getElementById("medsync-friction-rate");
+
+    if (pElem) pElem.innerText = Number(impact.total_prescriptions_synced || 0).toLocaleString();
+    if (bElem) bElem.innerText = Number(impact.total_dispatches_generated || 0).toLocaleString();
+    if (mElem) mElem.innerText = Number(impact.multi_item_bundles_count || 0).toLocaleString();
+    if (sElem) sElem.innerText = Number(impact.individual_messages_saved || 0).toLocaleString();
+    if (fElem) fElem.innerText = `${impact.message_reduction_rate_pct || 0}% friction reduction`;
+
+    const tbody = document.querySelector("#table-medsync-bundles tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    const filtered = query
+      ? bundles.filter(b => {
+          const nameMatch = b.customer_name && b.customer_name.toLowerCase().includes(query);
+          const medMatch = b.anchor_item_name && b.anchor_item_name.toLowerCase().includes(query);
+          const syncMedsMatch = (b.synced_items || []).some(it => it.item_name && it.item_name.toLowerCase().includes(query));
+          const phoneStr = String(b.mobile_no || "") + " " + String(b.raw_mobile_no || "");
+          const phoneMatch = phoneStr.toLowerCase().includes(query) || (cleanSearchDigits && phoneStr.replace(/\D/g, "").includes(cleanSearchDigits));
+          return nameMatch || medMatch || syncMedsMatch || phoneMatch;
+        })
+      : bundles;
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-secondary); padding: 2rem;">No synchronized patient bundles found matching criteria.</td></tr>`;
+      return;
+    }
+
+    filtered.slice(0, 100).forEach(b => {
+      const tr = document.createElement("tr");
+      const itemsList = (b.synced_items || []).map(i => `<span class="badge ${i.is_anchor ? 'badge-primary' : 'badge-info'}" style="margin: 2px;">${i.item_name}</span>`).join(" ");
+      const p10p90 = (b.earliest_p10_date && b.latest_p90_date) ? `${b.earliest_p10_date} → ${b.latest_p90_date}` : "± 7d confidence";
+      const reductionBadge = b.message_reduction_count > 0 ? `<span class="badge badge-success">-${b.message_reduction_count} msgs saved</span>` : `<span class="badge badge-secondary">1 msg</span>`;
+      const dispPhone = formatDisplayPhone10(b.mobile_no);
+
+      tr.innerHTML = `
+        <td><strong>${b.customer_name}</strong></td>
+        <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-warning">Missing</span>'}</code></td>
+        <td><strong style="color: var(--primary);">${b.anchor_item_name}</strong></td>
+        <td style="max-width: 280px;">${itemsList}</td>
+        <td>${b.anchor_refill_date}</td>
+        <td><small>${p10p90}</small></td>
+        <td><strong>${b.total_items_count}</strong></td>
+        <td>${reductionBadge}</td>
+        <td><button class="btn btn-sm btn-outline btn-preview-bundle-wa" data-msg="${encodeURIComponent(b.bundled_message_text || '')}">💬 WhatsApp Copy</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.querySelectorAll(".btn-preview-bundle-wa").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const rawMsg = decodeURIComponent(btn.getAttribute("data-msg"));
+        alert(rawMsg || "No message copy available.");
+      });
+    });
+  } catch (err) {
+    console.error("Error loading Med-Sync bundles:", err);
+    showToast(err.message, "error");
+  }
+}
+
+// ------------------------------------------------------------------------------
 // Action Listeners
 // ------------------------------------------------------------------------------
 function setupActionListeners() {
+  // Reminder List Search Listener
+  document.getElementById("reminder-search-input")?.addEventListener("input", loadReminders);
+
+  // Med-Sync Listeners
+  document.getElementById("btn-refresh-medsync")?.addEventListener("click", loadMedSyncBundles);
+  document.getElementById("medsync-view-mode")?.addEventListener("change", () => {
+    loadMedSyncBundles();
+  });
+  document.getElementById("medsync-target-date")?.addEventListener("change", loadMedSyncBundles);
+  document.getElementById("medsync-month-select")?.addEventListener("change", loadMedSyncBundles);
+  document.getElementById("sync-window-slider")?.addEventListener("input", (e) => {
+    const valSpan = document.getElementById("sync-window-val");
+    if (valSpan) valSpan.innerText = e.target.value;
+  });
+  document.getElementById("sync-window-slider")?.addEventListener("change", loadMedSyncBundles);
+  document.getElementById("medsync-search")?.addEventListener("input", loadMedSyncBundles);
+
   // Confirm Ingest
   document.getElementById("btn-confirm-ingest")?.addEventListener("click", async () => {
     if (!activeFile) return;
@@ -562,15 +804,26 @@ function setupActionListeners() {
     }
   });
 
-  // Download Reminder CSV
+  // Download Reminder CSV & JSON Handlers
   const downloadCsvHandler = () => {
-    const targetDate = document.getElementById("reminder-target-date")?.value || "";
-    window.location.href = ApiClient.getExportCsvUrl(targetDate);
+    const viewMode = document.getElementById("reminder-view-mode")?.value || "DATE";
+    const targetDate = viewMode === "DATE" ? (document.getElementById("reminder-target-date")?.value || "") : null;
+    const targetMonth = viewMode === "MONTH" ? (document.getElementById("reminder-target-month")?.value || "") : null;
+    window.location.href = ApiClient.getExportCsvUrl(targetDate, targetMonth);
   };
   document.getElementById("btn-download-reminder-csv")?.addEventListener("click", downloadCsvHandler);
   document.getElementById("btn-quick-export")?.addEventListener("click", downloadCsvHandler);
 
-  // Reminder Target Date & Channel Change
+  document.getElementById("btn-download-reminder-json")?.addEventListener("click", () => {
+    const viewMode = document.getElementById("reminder-view-mode")?.value || "DATE";
+    const targetDate = viewMode === "DATE" ? (document.getElementById("reminder-target-date")?.value || "") : null;
+    const targetMonth = viewMode === "MONTH" ? (document.getElementById("reminder-target-month")?.value || "") : null;
+    window.location.href = ApiClient.getExportJsonUrl(targetDate, targetMonth);
+  });
+
+  // Reminder View Mode, Date, Month & Channel Change
+  document.getElementById("reminder-view-mode")?.addEventListener("change", loadReminders);
+  document.getElementById("reminder-target-month")?.addEventListener("change", loadReminders);
   document.getElementById("reminder-target-date")?.addEventListener("change", loadReminders);
   document.getElementById("reminder-channel-filter")?.addEventListener("change", loadReminders);
 
@@ -602,6 +855,8 @@ function setupActionListeners() {
 
   // Review Queue Filters & Actions
   document.getElementById("btn-refresh-review-queue")?.addEventListener("click", loadReviewQueue);
+  document.getElementById("review-search-cust")?.addEventListener("input", loadReviewQueue);
+  document.getElementById("review-search-med")?.addEventListener("input", loadReviewQueue);
   document.getElementById("review-target-date")?.addEventListener("change", loadReviewQueue);
   document.getElementById("review-path-filter")?.addEventListener("change", loadReviewQueue);
   document.getElementById("review-stability-filter")?.addEventListener("change", loadReviewQueue);

@@ -415,6 +415,96 @@ class RefillPersistenceManager:
 
         return queue
 
+    def get_monthly_review_queue(
+        self,
+        db: Session,
+        target_month: str,
+        path_filter: Optional[str] = None,
+        stability_filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Query all reminder stages scheduled for dispatch in target_month (format: YYYY-MM).
+        Joins with RefillDecisionModel to provide rich explainability.
+        """
+        import calendar
+        try:
+            parts = str(target_month).strip().split("-")
+            year = int(parts[0])
+            month = int(parts[1])
+            start_date = date(year, month, 1)
+            _, last_day = calendar.monthrange(year, month)
+            end_date = date(year, month, last_day)
+        except Exception:
+            start_date = date.today().replace(day=1)
+            _, last_day = calendar.monthrange(start_date.year, start_date.month)
+            end_date = date(start_date.year, start_date.month, last_day)
+
+        query = (
+            db.query(ReminderStageModel, RefillDecisionModel)
+            .join(
+                ReminderCycleModel,
+                ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id,
+            )
+            .outerjoin(
+                RefillDecisionModel,
+                ReminderCycleModel.decision_id == RefillDecisionModel.decision_id,
+            )
+            .filter(
+                ReminderStageModel.target_send_date >= start_date,
+                ReminderStageModel.target_send_date <= end_date,
+                ReminderCycleModel.is_active == True,
+                RefillDecisionModel.is_eligible == True,
+                ReminderStageModel.status.in_([STATUS_PENDING, STATUS_DUE, STATUS_APPROVED]),
+            )
+            .order_by(ReminderStageModel.target_send_date.asc())
+        )
+
+        if path_filter:
+            query = query.filter(RefillDecisionModel.path == path_filter)
+        if stability_filter:
+            query = query.filter(RefillDecisionModel.stability_tier == stability_filter)
+
+        results = query.all()
+        queue: List[Dict[str, Any]] = []
+
+        for stage, dec in results:
+            c_name = dec.customer_name if dec else "Valued Customer"
+            i_name = dec.item_name if dec else stage.item_id
+            phone = dec.mobile_no if dec else None
+            p_masked = mask_phone(phone) if phone else "MISSING"
+            reason = dec.decision_reason if dec else ""
+            arch, regimen = parse_decision_provenance(reason)
+
+            queue.append({
+                "reminder_id": stage.reminder_id,
+                "cycle_id": stage.cycle_id,
+                "customer_item_key": stage.customer_item_key,
+                "customer_id": stage.customer_id,
+                "customer_name": c_name,
+                "phone_number": phone,
+                "masked_phone": p_masked,
+                "item_id": stage.item_id,
+                "item_name": i_name,
+                "purchase_count": dec.purchase_count if dec else 0,
+                "last_purchase_date": dec.last_purchase_date.strftime("%Y-%m-%d") if (dec and dec.last_purchase_date) else None,
+                "stage_offset": stage.stage_offset,
+                "target_send_date": stage.target_send_date.strftime("%Y-%m-%d"),
+                "expected_refill_date": stage.expected_refill_date.strftime("%Y-%m-%d"),
+                "status": stage.status,
+                "path": dec.path if dec else "UNKNOWN",
+                "stability_tier": dec.stability_tier if dec else "UNKNOWN",
+                "prediction_method": dec.prediction_method if dec else "NONE",
+                "historical_median_days": dec.cadence_median if dec else None,
+                "predicted_interval_days": dec.predicted_interval_days if dec else None,
+                "estimated_days_of_supply": dec.dos_days if (dec and dec.dos_days) else (dec.predicted_interval_days if dec else 30.0),
+                "decision_reason": reason,
+                "archetype": arch,
+                "dosage_regimen": regimen,
+                "message_text": stage.message_text,
+            })
+
+        return queue
+
     def approve_reminder_stage(self, db: Session, reminder_id: str) -> Dict[str, Any]:
         """Mark a reminder stage as APPROVED for dispatch."""
         stage = db.query(ReminderStageModel).filter(ReminderStageModel.reminder_id == reminder_id).first()
