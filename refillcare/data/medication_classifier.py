@@ -40,10 +40,21 @@ EXCLUDED_CATEGORIES: Dict[str, List[str]] = {
         "PAIN SPRAY", "BALM", "SPRAY", "LINIMENT", "GEL", "OINTMENT",
     ],
     "ACUTE_AND_PRN_ANALGESICS": [
-        "DOLO", "CALPOL", "PARACETAMOL", "PARACETAMOL 500", "PARACETAMOL 650", "DISPRIN",
-        "SARIDON", "COMBIFLAM", "MEFTAL", "MEFTAL SPAS", "CHESTON COLD", "SINAREST",
-        "LOZENGES", "LOZ", "COUGH LOZ", "STREPSILS", "VICKS COUGH",
+        "DOLO", "DOLO 650", "DOLO 650MG", "DOLO 650MG TAB", "DOLO 500", "DOLO 500MG", "DOLO 250",
+        "DOLO COLD", "DOLO MF", "DOLO-650", "DOLO-500", "DOLOKIND", "DOLOKIND PLUS", "DOLOKIND MR",
+        "DOLOWIN", "DOLONEX", "DOLOPAR", "DOLONEURON", "CALPOL", "CALPOL 650", "CALPOL 500",
+        "CALPOL 250", "CALPOL 120", "CALPOL DROP", "CALPOL T", "PARACETAMOL", "PARACETAMOL 500",
+        "PARACETAMOL 650", "DISPRIN", "SARIDON", "COMBIFLAM", "MEFTAL", "MEFTAL SPAS", "MEFTAL P",
+        "CHESTON COLD", "SINAREST", "SUMO", "NICE", "NIMESULIDE", "NICE TAB", "NIZEN", "NIMPEX",
+        "VOMIKIND", "ONDEM", "EMESET", "AVOMINE", "P-650", "PACIMOL", "CROCYN", "PYRICOOL",
+        "FEVASTIN", "LOZENGES", "LOZ", "COUGH LOZ", "STREPSILS", "VICKS COUGH",
         "ENO", "ENO FRUIT", "GAS-O-FAST", "PUCIT", "DROPS", "ORAL DROPS",
+    ],
+    "PEDIATRIC_AND_KIDS_MEDICATIONS": [
+        "KID", "KIDS", "KIDZ", "PED", "PEDIATRIC", "PAEDIATRIC", "BABY", "INFANT",
+        "KID TAB", "KID SYP", "KID DROPS", "KID SUSP", "KID SUSPENSION", "KID TABLET",
+        "KID TABLETS", "PED DROPS", "PEDIATRIC DROPS", "PAEDIATRIC DROPS",
+        "KIDS NANO DROPS", "PED N/S", "KIDS PRO",
     ],
     "SURGICAL_AND_CONSUMABLES": [
         "SURGICAL", "BANDAGE", "BAND-AID", "BANDAID", "STERILE WATER", "WATER",
@@ -199,11 +210,30 @@ def classify_medication(
     raw_name = str(item_name).strip().upper()
     raw_pack = str(packing or "").strip().upper()
 
-    # 1. Check strong positive chronic markers (highest precedence)
+    # 1. Hard Exclusions (Pediatric/Kids formulations and Acute PRN Analgesics ALWAYS excluded)
+    # Check explicit KID regex
+    if re.search(r"(?:\b|_)(KID|KIDS|KIDZ|PED|PEDIATRIC|PAEDIATRIC)(?:\b|_)", raw_name, re.IGNORECASE):
+        return {
+            "is_chronic_eligible": False,
+            "category": "PEDIATRIC_AND_KIDS_MEDICATIONS",
+            "matched_rule": "PEDIATRIC_KID_KEYWORD_MATCH",
+            "exclusion_reason": "Pediatric / Kid formulation (Non-chronic).",
+        }
+
+    # Check explicit DOLO / PARACETAMOL / CALPOL / Acute Analgesic regex
+    if re.search(r"(?:\b|_)(DOLO|DOLO\s*650|DOLO\s*650MG|DOLO\s*500|CALPOL|PARACETAMOL|MEFTAL|MEFTAL\s*SPAS|DISPRIN|SARIDON|COMBIFLAM)(?:\b|_)", raw_name, re.IGNORECASE):
+        return {
+            "is_chronic_eligible": False,
+            "category": "ACUTE_AND_PRN_ANALGESICS",
+            "matched_rule": "ACUTE_ANALGESIC_EXCLUSION",
+            "exclusion_reason": "Acute / PRN analgesic / antipyretic (Non-chronic).",
+        }
+
+    # 2. Check strong positive chronic markers
     # If item explicitly contains known chronic active molecules/brands, verify it's not topical gel/wash
     is_strong_chronic = any(p.search(raw_name) for p in _CHRONIC_MARKER_REGEX)
 
-    # 2. Check for Non-Chronic / OTC / FMCG / Acute exclusions
+    # 3. Check for Non-Chronic / OTC / FMCG / Acute exclusions
     for category, pattern_list in _EXCLUSION_REGEX_MAP.items():
         for pattern in pattern_list:
             if pattern.search(raw_name):

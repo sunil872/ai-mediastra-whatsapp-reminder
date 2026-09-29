@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
+from refillcare.data.medication_classifier import is_chronic_medication
 from refillcare.data.packing import parse_pack_units
 from refillcare.features.point_in_time import POINT_IN_TIME_FEATURE_COLS
 
@@ -37,8 +38,9 @@ def train_and_serialize_model():
     df = pd.read_parquet(DATA_PATH)
     print(f"Loaded {len(df):,} rows in {time.time() - t0:.1f}s")
 
-    # Filter to eligible customer transactions (S0/ only, non-null customerId)
-    clean = df[(df["refillcare_eligible"] == True) & (df["customerId"].notna()) & (df["itemId"].notna())].copy()
+    # Filter to eligible customer transactions (S0/ only, non-null customerId, chronic maintenance only)
+    is_chronic = df["itemName"].astype(str).apply(is_chronic_medication)
+    clean = df[(df["refillcare_eligible"] == True) & (df["customerId"].notna()) & (df["itemId"].notna()) & is_chronic].copy()
     clean["invoice_date"] = pd.to_datetime(clean["invoice_date"])
 
     # Parse pack units
