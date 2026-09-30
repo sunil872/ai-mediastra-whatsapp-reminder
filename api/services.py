@@ -371,6 +371,8 @@ class EnterpriseServices:
                     stage_label = "-1 day (due tomorrow)"
                 elif stage_val == 0:
                     stage_label = "0 days (due today)"
+                elif stage_val in (40, 45):
+                    stage_label = f"+{stage_val} days (lapsed re-engagement)"
                 elif stage_val > 0:
                     stage_label = f"+{stage_val} days (follow-up)"
                 else:
@@ -530,67 +532,25 @@ class EnterpriseServices:
     # --------------------------------------------------------------------------
     # 5. WHATSAPP GATEWAY DISPATCH
     # --------------------------------------------------------------------------
-    def dispatch_whatsapp_batch(self, reminder_date: date, dry_run: bool = True, batch_size: int = 50) -> Dict[str, Any]:
-        """Dispatch templated WhatsApp messages for scheduled reminders."""
-        reminders = self.get_daily_reminders(reminder_date, mobile_filter="Valid")
-        eligible_subset = reminders[:batch_size]
-
-        logs = []
-        success_count = 0
-        failed_count = 0
-
-        for r in eligible_subset:
-            phone = r["phone_number"]
-            cust_name = r["customer_name"]
-            med_name = r["item_name"]
-            refill_dt = r["expected_refill_date"]
-
-            res = send_template_message(
-                phone_number=phone,
-                customer_name=cust_name,
-                store_name="PHARMA HUBB",
-                dry_run=dry_run,
-            )
-
-            is_ok = res.get("success", False)
-            if is_ok:
-                success_count += 1
-            else:
-                failed_count += 1
-
-            # Log to DB
-            log_entry = WhatsAppDeliveryLogModel(
-                reminder_id=r["reminder_id"],
-                phone_number=phone,
-                customer_name=cust_name,
-                template_name="refill_reminder_v1",
-                xinno_message_id=res.get("message_id") or res.get("provider_msg_id"),
-                is_dry_run=dry_run,
-                status="DRY_RUN_SUCCESS" if dry_run else ("SUCCESS" if is_ok else "FAILED"),
-                http_status_code=res.get("status_code", 200 if dry_run else 500),
-                response_payload=str(res.get("response", {})),
-            )
-            self.db.add(log_entry)
-
-            logs.append({
-                "phone_number": phone,
-                "customer_name": cust_name,
-                "medication_name": med_name,
-                "refill_date": refill_dt,
-                "status": "DRY_RUN_SUCCESS" if dry_run else ("SUCCESS" if is_ok else "FAILED"),
-                "message_id": res.get("message_id", "DRY_RUN_ID"),
-            })
-
-        self.db.commit()
-
-        return {
-            "total_eligible": len(reminders),
-            "dispatched_count": len(eligible_subset),
-            "success_count": success_count,
-            "failed_count": failed_count,
-            "is_dry_run": dry_run,
-            "delivery_summary": logs,
-        }
+    def dispatch_whatsapp_batch(
+        self,
+        reminder_date: Optional[date] = None,
+        target_month: Optional[str] = None,
+        tier_filter: str = "ALL",
+        dry_run: bool = True,
+        batch_size: int = 50,
+    ) -> Dict[str, Any]:
+        """Dispatch templated WhatsApp messages for scheduled reminders using 3-tier engine."""
+        from refillcare.whatsapp import RefillWhatsAppDispatcher
+        dispatcher = RefillWhatsAppDispatcher()
+        return dispatcher.dispatch_batch(
+            db=self.db,
+            target_date=reminder_date,
+            target_month=target_month,
+            tier_filter=tier_filter,
+            dry_run=dry_run,
+            batch_limit=batch_size,
+        )
 
     # --------------------------------------------------------------------------
     # 6. OPERATIONS KPI ANALYTICS
@@ -785,52 +745,85 @@ class EnterpriseServices:
     # --------------------------------------------------------------------------
     def get_med_sync_bundles(
         self,
-        sync_window_days: int = 8,
+        sync_window_days: int = 0,
         pharmacy_name: str = "Mediastra Pharmacy",
         customer_id: Optional[str] = None,
         target_month: Optional[str] = None,
         target_date: Optional[date] = None,
+        lifecycle_tier: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate patient-grouped Med-Sync bundles and operational impact metrics for a target date or month."""
         from refillcare.engine.med_sync import MedSyncEngine
-        query = self.db.query(RefillDecisionModel).filter(RefillDecisionModel.is_eligible == True)
-        if customer_id:
-            query = query.filter(RefillDecisionModel.customer_id == customer_id)
-        decisions_db = query.all()
+        from refillcare.engine.persistence import RefillPersistenceManager
+
+        pm = RefillPersistenceManager()
+        if target_date:
+            queue_list = pm.get_today_review_queue(self.db, target_date=target_date)
+        elif target_month and target_month != "ALL":
+            queue_list = pm.get_monthly_review_queue(self.db, target_month=target_month)
+        else:
+            # Default to Specific Date (Active Target Date: 2026-09-30)
+            target_date = date(2026, 9, 30)
+            queue_list = pm.get_today_review_queue(self.db, target_date=target_date)
 
         records: List[Dict[str, Any]] = []
-        if decisions_db:
-            for d in decisions_db:
+
+        if queue_list:
+            for q in queue_list:
+                if customer_id and q.get("customer_id") != customer_id:
+                    continue
                 records.append({
-                    "customer_id": d.customer_id,
-                    "customer_name": d.customer_name,
-                    "mobile_no": d.mobile_no,
-                    "item_id": d.item_id,
-                    "item_name": d.item_name,
-                    "is_eligible": d.is_eligible,
-                    "stability_tier": d.stability_tier,
-                    "predicted_interval_days": d.predicted_interval_days,
-                    "last_purchase_date": d.last_purchase_date,
-                    "expected_refill_date": d.expected_refill_date,
-                    "dos_days": d.dos_days,
+                    "customer_id": q.get("customer_id", ""),
+                    "customer_name": q.get("customer_name", "Valued Patient"),
+                    "mobile_no": q.get("phone_number"),
+                    "item_id": q.get("item_id", ""),
+                    "item_name": q.get("item_name", ""),
+                    "is_eligible": True,
+                    "stability_tier": q.get("stability_tier", "MEDIUM-SAFE"),
+                    "predicted_interval_days": q.get("predicted_interval_days") or q.get("estimated_days_of_supply"),
+                    "last_purchase_date": q.get("last_purchase_date"),
+                    "expected_refill_date": q.get("target_send_date") or q.get("expected_refill_date"),
+                    "stage_offset": q.get("stage_offset", 0),
+                    "dos_days": q.get("estimated_days_of_supply"),
                 })
         else:
-            snapshots = self.storage.get_prediction_snapshots()
-            if snapshots:
-                for s in snapshots:
+            query = self.db.query(RefillDecisionModel).filter(RefillDecisionModel.is_eligible == True)
+            if customer_id:
+                query = query.filter(RefillDecisionModel.customer_id == customer_id)
+            decisions_db = query.all()
+
+            if decisions_db:
+                for d in decisions_db:
                     records.append({
-                        "customer_id": s.get("customer_id", ""),
-                        "customer_name": s.get("customer_name", "Valued Patient"),
-                        "mobile_no": s.get("phone_number"),
-                        "item_id": s.get("item_id", ""),
-                        "item_name": s.get("item_name", ""),
-                        "is_eligible": True,
-                        "stability_tier": s.get("stability_tier", "MEDIUM-SAFE"),
-                        "predicted_interval_days": s.get("predicted_interval_days") or s.get("estimated_days_of_supply"),
-                        "last_purchase_date": s.get("last_purchase_date"),
-                        "expected_refill_date": s.get("expected_refill_date"),
-                        "dos_days": s.get("estimated_days_of_supply"),
+                        "customer_id": d.customer_id,
+                        "customer_name": d.customer_name,
+                        "mobile_no": d.mobile_no,
+                        "item_id": d.item_id,
+                        "item_name": d.item_name,
+                        "is_eligible": d.is_eligible,
+                        "stability_tier": d.stability_tier,
+                        "predicted_interval_days": d.predicted_interval_days,
+                        "last_purchase_date": d.last_purchase_date,
+                        "expected_refill_date": d.expected_refill_date,
+                        "dos_days": d.dos_days,
                     })
+            else:
+                snapshots = self.storage.get_prediction_snapshots()
+                if snapshots:
+                    for s in snapshots:
+                        records.append({
+                            "customer_id": s.get("customer_id", ""),
+                            "customer_name": s.get("customer_name", "Valued Patient"),
+                            "mobile_no": s.get("phone_number"),
+                            "item_id": s.get("item_id", ""),
+                            "item_name": s.get("item_name", ""),
+                            "is_eligible": True,
+                            "stability_tier": s.get("stability_tier", "MEDIUM-SAFE"),
+                            "predicted_interval_days": s.get("predicted_interval_days") or s.get("estimated_days_of_supply"),
+                            "last_purchase_date": s.get("last_purchase_date"),
+                            "expected_refill_date": s.get("expected_refill_date"),
+                            "dos_days": s.get("estimated_days_of_supply"),
+                        })
 
         # Determine latest sales date to establish next-month prediction horizon
         latest_sales_dt = None
@@ -928,6 +921,13 @@ class EnterpriseServices:
                 filtered_bundles = all_bundles
             selected_target = default_target_month_key
             filter_mode = "MONTH"
+
+        # Apply optional lifecycle tier filter (DUE, FOLLOWUP, LAPSED)
+        if lifecycle_tier and lifecycle_tier.upper() != "ALL":
+            filtered_bundles = [
+                b for b in filtered_bundles
+                if getattr(b, "lifecycle_tier", "DUE").upper() == lifecycle_tier.upper()
+            ]
 
         impact = engine.summarize_sync_impact(filtered_bundles)
 

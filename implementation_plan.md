@@ -45,7 +45,7 @@ flowchart TD
 
     subgraph Persistence_Lifecycle [4. Enterprise Persistence & Lifecycle State Machine]
         MessageComposer --> DB[(Enterprise Database: enterprise.db)]
-        DB --> LifecycleController[6-Stage Lifecycle Scheduler: -7d to +40d]
+        DB --> LifecycleController[7-Stage Lifecycle Scheduler: -7d to +45d]
         LifecycleController --> RepurchaseCheck{Patient Repurchased?}
         RepurchaseCheck -- Yes --> Supersede[Mark Pending Stages: SUPERSEDED_BY_PURCHASE]
         RepurchaseCheck -- No --> DueStage[Active Dispatch Queue]
@@ -112,7 +112,7 @@ The prediction engine dynamically routes transactions based on longitudinal hist
 ## 5. Multi-Stage Lifecycle Management & Auto-Supersession
 
 ### A. Lifecycle Stage Architecture
-RefillCare implements a 6-stage progressive patient engagement lifecycle:
+RefillCare implements a 7-stage progressive patient engagement lifecycle with 3-tier isolation (Due/Advance, Follow-up, +45d Re-engagement):
 
 | Stage Offset | Lifecycle Designation | Clinical Communication Objective |
 | :---: | :--- | :--- |
@@ -122,7 +122,7 @@ RefillCare implements a 6-stage progressive patient engagement lifecycle:
 | **Day 0** | Due Today | Refill due date alert for pickup or immediate delivery dispatch. |
 | **Day +2** | Adherence Follow-up | Gentle check-in for patients who have not yet refilled. |
 | **Day +5** | Urgent Follow-up | Escalation alert highlighting the health risks of therapy interruption. |
-| **Day +40** | Lapsed Re-engagement | Re-engagement outreach for patients with prolonged treatment lapse. |
+| **Day +45** | Re-engagement | Re-engagement outreach for patients with prolonged treatment lapse. |
 
 ### B. Automatic Repurchase Reset (`SUPERSEDED_BY_PURCHASE`)
 - When a patient repurchases their medication on or before a scheduled reminder date, the system marks the purchase event and automatically transitions all remaining pending stages for prior cycles to `SUPERSEDED_BY_PURCHASE`.
@@ -149,17 +149,19 @@ RefillCare implements a 6-stage progressive patient engagement lifecycle:
 1. **Filter by Complete Month:** Displays all consolidated dispatches and reminder stages scheduled throughout an entire operational target month.
 2. **Filter by Specific Date:** Pinpoints the exact operational queue scheduled for dispatch on a specific calendar day.
 
-### B. Dual-Format Operational Exports
+### B. Dual-Format Operational Exports & Technical Diagnostics Toggle
+- **Technical Diagnostics Toggle:** 1-Click checkbox in 📅 Reminder List and 📦 Med-Sync Bundles to hide/show complex quantiles ($P_{10}, P_{90}$) and algorithm details, keeping tables clean and readable for retail store staff.
 - **10-Column Delivery CSV:** Generates standard delivery-ready CSV files containing validated phone numbers, patient names, medications, and delivery addresses.
 - **Structured Clinical JSON:** Produces comprehensive JSON exports containing full clinical metadata, stability tiers, Days-of-Supply calculations, and decision provenance.
 
-### C. Enterprise REST API Surface
+### C. Enterprise REST API Surface & WhatsApp Gateway
+- **WhatsApp 3-Tier Dynamic Gateway:** Unified 6-variable dynamic template engine (`refillcare_medicine_reminder`) with custom pharmacy store name & contact, dynamic 3-tier message routing (`DUE_REFILL`, `REFILL_FOLLOW_UP`, `LAPSED_REENGAGEMENT`), 12-digit phone normalization (`91XXXXXXXXXX`), live high-contrast message preview card, single test dispatch, and batch outreach with missing-mobile safety guards.
 
 ```text
 GET  /api/v2/med-sync/bundles       - Synchronized patient bundles (supports sync_window_days, target_date, target_month)
 GET  /api/v2/models/quantiles       - 3-Head Quantile uncertainty envelope benchmark metrics
-GET  /api/reminders/daily           - Daily scheduled reminder queue (supports date, month, and channel filters)
-GET  /api/reminders/monthly         - Monthly aggregated reminder delivery queue
+GET  /api/reminders/daily           - Daily scheduled reminder queue with refill_function (supports date, month, and channel filters)
+GET  /api/reminders/monthly         - Monthly aggregated reminder delivery queue with refill_function
 POST /api/reminders/{id}/approve    - Manual pharmacist approval of pending reminder stage
 POST /api/reminders/{id}/reject     - Manual pharmacist rejection with clinical reason code
 POST /api/sales/monthly-upload      - Batch sales ingestion with automated schema validation
@@ -172,6 +174,7 @@ POST /api/sales/rollback            - 1-click batch rollback mechanism
 
 ### Verification Criteria
 1. **Zero Data Contamination:** 100% upstream isolation of non-retail transactions.
-2. **Regression-Free Execution:** 100% automated test suite passing across unit, integration, and endpoint suites.
+2. **Regression-Free Execution:** 100% automated test suite passing across unit, integration, and endpoint suites (463+ tests).
 3. **Lifecycle Consistency:** Exact mathematical synchronization between individual prescription stages and Med-Sync appointment bundles.
 4. **Idempotent Persistence:** Robust state management preventing duplicate dispatch generation across batch runs.
+5. **WhatsApp Delivery Safety:** Complete E.164 / 12-digit normalization and missing-phone safety guards preventing failed dispatch attempts.

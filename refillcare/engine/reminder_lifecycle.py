@@ -48,7 +48,7 @@ def get_stage_message_template(
         msg = f"Follow-up: Your medicine refill for {medicine_name} was due on {date_str}. Please let us know if you need assistance."
     elif stage_offset == 5:
         msg = f"Final check: We noticed you haven't refilled your {medicine_name} which was due on {date_str}. Please contact us if you need help."
-    elif stage_offset == 40:
+    elif stage_offset in (40, 45):
         msg = f"Care Check-in: We noticed your medicine refill for {medicine_name} was due on {date_str}. Have you refilled elsewhere, or would you like us to assist with home delivery?"
     else:
         msg = f"Your regular medicine refill for {medicine_name} is due around {date_str}."
@@ -61,6 +61,17 @@ def get_stage_message_template(
         f"Team\n"
         f"{store_name}"
     )
+
+
+def get_lifecycle_stage_tier(stage_offset: int) -> str:
+    """Classify stage offset into one of 3 isolated lifecycle tiers: DUE, FOLLOWUP, or LAPSED."""
+    if stage_offset <= 0:
+        return "DUE"
+    elif stage_offset in (2, 5):
+        return "FOLLOWUP"
+    elif stage_offset in (40, 45):
+        return "LAPSED"
+    return "DUE"
 
 
 class ReminderLifecycleManager:

@@ -450,11 +450,12 @@ def get_customer_refill_history(customer_id: str, db: Session = Depends(get_db))
 # ------------------------------------------------------------------------------
 @app.get("/api/v2/med-sync/bundles", tags=["Med-Sync Multi-Prescription Bundling"])
 def get_med_sync_bundles(
-    sync_window_days: int = Query(8, ge=1, le=30, description="Max days gap between prescriptions to cluster"),
+    sync_window_days: int = Query(0, ge=0, le=30, description="Max days gap between prescriptions to cluster (0 = Exact Same-Date Group-By)"),
     pharmacy_name: str = Query("Mediastra Pharmacy", description="Pharmacy name for templated messages"),
     customer_id: Optional[str] = Query(None, description="Optional filter by patient ID"),
     target_month: Optional[str] = Query(None, description="Optional prediction target month filter, e.g. '2026-09' or 'ALL'"),
     target_date: Optional[date] = Query(None, description="Optional prediction target date filter, e.g. '2026-09-24'"),
+    lifecycle_tier: Optional[str] = Query(None, description="Optional filter by lifecycle tier: DUE, FOLLOWUP, LAPSED, ALL"),
     db: Session = Depends(get_db),
 ):
     """Retrieve synchronized multi-prescription reminder bundles and message reduction stats for a target date or month."""
@@ -465,6 +466,7 @@ def get_med_sync_bundles(
         customer_id=customer_id,
         target_month=target_month,
         target_date=target_date,
+        lifecycle_tier=lifecycle_tier,
     )
 
 

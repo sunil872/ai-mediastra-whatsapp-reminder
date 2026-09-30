@@ -235,7 +235,14 @@ def send_template_message(
     api_url = os.getenv("XINNO_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
     api_key = os.getenv("XINNO_API_KEY", "").strip()
     waba_number = os.getenv("XINNO_WABA_NUMBER", "").strip()
-    template_name = os.getenv("WHATSAPP_TEMPLATE_NAME", "").strip()
+    raw_wa_template = os.getenv("WHATSAPP_TEMPLATE_NAME", "").strip()
+    if raw_wa_template == "Your template name here":
+        template_name = "Your template name here"
+    elif os.getenv("XINNO_TEXT_TEMPLATE_NAME", "").strip():
+        template_name = os.getenv("XINNO_TEXT_TEMPLATE_NAME", "").strip()
+    else:
+        template_name = raw_wa_template
+
     template_language = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE", "en").strip() or "en"
     default_store_name = os.getenv("MEDICAL_STORE_NAME", "PHARMA HUBB").strip() or "PHARMA HUBB"
 

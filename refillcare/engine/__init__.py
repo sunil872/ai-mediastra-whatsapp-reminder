@@ -18,6 +18,7 @@ from refillcare.engine.decision_types import (
     STAGE_DAY_0,
     STAGE_PLUS_2,
     STAGE_PLUS_5,
+    STAGE_PLUS_45,
     STAGE_OFFSETS,
 )
 from refillcare.engine.med_sync import (
@@ -46,5 +47,6 @@ __all__ = [
     "STAGE_DAY_0",
     "STAGE_PLUS_2",
     "STAGE_PLUS_5",
+    "STAGE_PLUS_45",
     "STAGE_OFFSETS",
 ]

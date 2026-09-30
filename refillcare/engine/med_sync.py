@@ -68,6 +68,8 @@ class MedSyncBundle:
     bundled_message_text: str = ""
     earliest_p10_date: Optional[date] = None
     latest_p90_date: Optional[date] = None
+    lifecycle_tier: str = "DUE"  # DUE, FOLLOWUP, or LAPSED
+    refill_function: str = "DUE_REFILL"  # DUE_REFILL, REFILL_FOLLOW_UP, or LAPSED_REENGAGEMENT
     status: str = "PENDING"
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -76,6 +78,17 @@ class MedSyncBundle:
         d["anchor_refill_date"] = self.anchor_refill_date.strftime("%Y-%m-%d")
         d["window_start_date"] = self.window_start_date.strftime("%Y-%m-%d")
         d["window_end_date"] = self.window_end_date.strftime("%Y-%m-%d")
+        d["lifecycle_tier"] = self.lifecycle_tier
+        
+        # Determine standardized refill function
+        if self.lifecycle_tier == "FOLLOWUP":
+            resolved_func = "REFILL_FOLLOW_UP"
+        elif self.lifecycle_tier == "LAPSED":
+            resolved_func = "LAPSED_REENGAGEMENT"
+        else:
+            resolved_func = "DUE_REFILL"
+        d["refill_function"] = self.refill_function or resolved_func
+
         if self.earliest_p10_date:
             d["earliest_p10_date"] = self.earliest_p10_date.strftime("%Y-%m-%d")
         if self.latest_p90_date:
@@ -89,7 +102,7 @@ class MedSyncBundle:
 class MedSyncEngine:
     """Synchronizes multi-prescription refill reminders for pharmacy patients."""
 
-    def __init__(self, sync_window_days: int = 8, default_pharmacy_name: str = "Mediastra Pharmacy"):
+    def __init__(self, sync_window_days: int = 0, default_pharmacy_name: str = "Mediastra Pharmacy"):
         self.sync_window_days = sync_window_days
         self.default_pharmacy_name = default_pharmacy_name
 
@@ -103,7 +116,7 @@ class MedSyncEngine:
 
         Args:
             decisions: List of RefillDecision objects or DataFrame of decisions.
-            sync_window_days: Maximum interval gap in days between items to bundle together (default 8).
+            sync_window_days: Maximum interval gap in days between items to bundle together (default 0).
             pharmacy_name: Pharmacy brand name for message templating.
 
         Returns:
@@ -291,10 +304,35 @@ class MedSyncEngine:
             except Exception:
                 pred_interval_days = 30
 
+            stage_offset_val = _extract_field(r, "stage_offset", "Stage Offset", default=None)
+            if stage_offset_val is not None:
+                try:
+                    st_int = int(stage_offset_val)
+                    if st_int <= 0:
+                        lifecycle_tier = "DUE"
+                    elif st_int in (2, 5):
+                        lifecycle_tier = "FOLLOWUP"
+                    elif st_int in (40, 45):
+                        lifecycle_tier = "LAPSED"
+                    else:
+                        lifecycle_tier = "DUE"
+                except Exception:
+                    lifecycle_tier = "DUE"
+            else:
+                lifecycle_tier = "DUE"
+
+            clean_mobile = mobile if (mobile and str(mobile).strip().lower() not in ("nan", "none", "<na>", "null", "")) else "-"
+
+            # Primary patient key: (Customer Name + Mobile Number)
+            # This ensures distinct customers with identical names but different phone numbers
+            # are preserved as separate patients, while '-' / blank numbers are also preserved.
+            patient_key = f"{cname}::{clean_mobile}"
+
             norm_rec = {
                 "customer_id": cid,
                 "customer_name": cname,
-                "mobile_no": mobile if mobile and mobile.lower() not in ("nan", "none", "-") else "",
+                "mobile_no": clean_mobile if clean_mobile != "-" else "-",
+                "patient_key": patient_key,
                 "item_id": item_id,
                 "item_name": item_name,
                 "last_purchase_date": lpd,
@@ -304,6 +342,7 @@ class MedSyncEngine:
                 "dos_days": dos_days,
                 "quantile_p10_date": _parse_date(p10_raw),
                 "quantile_p90_date": _parse_date(p90_raw),
+                "lifecycle_tier": lifecycle_tier,
                 "_parsed_erd": erd,
             }
             valid_records.append(norm_rec)
@@ -311,20 +350,22 @@ class MedSyncEngine:
         if not valid_records:
             return []
 
-        # Group by customer_id
-        customer_groups: Dict[str, List[Dict[str, Any]]] = {}
+        # Group by (patient_key, lifecycle_tier) to guarantee patient & stage isolation
+        customer_tier_groups: Dict[tuple, List[Dict[str, Any]]] = {}
         for r in valid_records:
-            customer_groups.setdefault(r["customer_id"], []).append(r)
+            key = (r["patient_key"], r["lifecycle_tier"])
+            customer_tier_groups.setdefault(key, []).append(r)
 
         bundles: List[MedSyncBundle] = []
 
-        for cid, cust_items in customer_groups.items():
+        for (pkey, tier), cust_items in customer_tier_groups.items():
             # Sort customer items chronologically by expected_refill_date
             cust_items.sort(key=lambda x: x["_parsed_erd"])
 
-            # Resolve best known customer name and mobile across items
-            cust_name = next((it["customer_name"] for it in cust_items if it["customer_name"] and it["customer_name"] != cid), cid)
-            best_mobile = next((it["mobile_no"] for it in cust_items if it["mobile_no"]), None)
+            # Resolve best known customer_id, customer name and mobile across items
+            cid = next((it["customer_id"] for it in cust_items if it["customer_id"]), pkey.split("::")[0])
+            cust_name = next((it["customer_name"] for it in cust_items if it["customer_name"] and it["customer_name"] != cid), pkey.split("::")[0])
+            best_mobile = next((it["mobile_no"] for it in cust_items if it["mobile_no"] and it["mobile_no"] != "-"), "-")
 
             # Cluster items using a greedy temporal window
             clusters: List[List[Dict[str, Any]]] = []
@@ -392,7 +433,16 @@ class MedSyncEngine:
                 earliest_p10 = min(p10_dates) if p10_dates else None
                 latest_p90 = max(p90_dates) if p90_dates else None
 
-                bundle_uid = f"SYNC_{cid}_{anchor_date.strftime('%Y%m%d')}_{cluster_idx+1}"
+                tier_suffix = f"_{tier.lower()}" if tier != "DUE" else ""
+                clean_mobile_tag = best_mobile.replace("+", "").replace("-", "BLANK") if best_mobile and best_mobile != "-" else "BLANK"
+                bundle_uid = f"SYNC_{cid}_{clean_mobile_tag}_{anchor_date.strftime('%Y%m%d')}{tier_suffix}_{cluster_idx+1}"
+
+                if tier == "FOLLOWUP":
+                    func_tag = "REFILL_FOLLOW_UP"
+                elif tier == "LAPSED":
+                    func_tag = "LAPSED_REENGAGEMENT"
+                else:
+                    func_tag = "DUE_REFILL"
 
                 bundle = MedSyncBundle(
                     bundle_id=bundle_uid,
@@ -409,12 +459,14 @@ class MedSyncEngine:
                     message_reduction_count=reduction,
                     earliest_p10_date=earliest_p10,
                     latest_p90_date=latest_p90,
+                    lifecycle_tier=tier,
+                    refill_function=func_tag,
                 )
                 bundle.bundled_message_text = self.generate_bundle_whatsapp_message(bundle, pharmacy_name=pharmacy)
                 bundles.append(bundle)
 
         logger.info(
-            f"Med-Sync generated {len(bundles)} bundles for {len(customer_groups)} patients "
+            f"Med-Sync generated {len(bundles)} bundles for {len(customer_tier_groups)} patient-stage groups "
             f"(Saved {sum(b.message_reduction_count for b in bundles)} individual messages)."
         )
         return bundles
@@ -425,9 +477,56 @@ class MedSyncEngine:
         pharmacy_name: str = "Mediastra Pharmacy",
         hotline: str = "919876543210",
     ) -> str:
-        """Generate clinical WhatsApp synchronized refill reminder message."""
+        """Generate clinical WhatsApp synchronized refill reminder message based on lifecycle tier."""
         anchor_date_str = bundle.anchor_refill_date.strftime("%d %b %Y")
-        
+        tier = getattr(bundle, "lifecycle_tier", "DUE")
+
+        # 1. LAPSED RE-ENGAGEMENT TIER (+45 Days)
+        if tier == "LAPSED":
+            if bundle.total_items_count == 1:
+                item = bundle.synced_items[0]
+                return (
+                    f"Hello {bundle.customer_name},\n\n"
+                    f"This is a care check-in from *{pharmacy_name}*.\n"
+                    f"We noticed your regular medication *{item.item_name}* was due for refill around *{anchor_date_str}*. "
+                    f"Have you refilled elsewhere, or would you like us to assist with home delivery?\n\n"
+                    f"Reply *YES* to place an order, or call us directly at {hotline}."
+                )
+            items_bullets = "\n".join([f"  • {item.item_name}" for item in bundle.synced_items])
+            return (
+                f"Hello {bundle.customer_name},\n\n"
+                f"🏥 *{pharmacy_name} - Chronic Care Check-in Notice*\n\n"
+                f"We noticed your regular prescription refills due around *{anchor_date_str}* have not been refilled yet:\n\n"
+                f"{items_bullets}\n\n"
+                f"📦 Would you like our clinical team to assist you with home delivery or prescription coordination?\n\n"
+                f"• Reply *1* for Refill & Delivery\n"
+                f"• Reply *2* if already refilled or paused\n"
+                f"• Call our pharmacist hotline: {hotline}"
+            )
+
+        # 2. FOLLOW-UP TIER (+2, +5 Days)
+        if tier == "FOLLOWUP":
+            if bundle.total_items_count == 1:
+                item = bundle.synced_items[0]
+                return (
+                    f"Hello {bundle.customer_name},\n\n"
+                    f"This is a friendly follow-up from *{pharmacy_name}*.\n"
+                    f"Your medication *{item.item_name}* was due for refill on *{anchor_date_str}*.\n\n"
+                    f"Reply *YES* to confirm your refill for pickup or delivery, or call us directly at {hotline}."
+                )
+            items_bullets = "\n".join([f"  • {item.item_name}" for item in bundle.synced_items])
+            return (
+                f"Hello {bundle.customer_name},\n\n"
+                f"🏥 *{pharmacy_name} - Follow-up Refill Reminder*\n\n"
+                f"Friendly reminder regarding your ongoing chronic refills due on *{anchor_date_str}*:\n\n"
+                f"{items_bullets}\n\n"
+                f"📦 We have reserved fresh stock for your medications.\n\n"
+                f"• Reply *1* to Confirm All {bundle.total_items_count} items\n"
+                f"• Reply *2* to Customize or Delay\n"
+                f"• Call our pharmacist hotline: {hotline}"
+            )
+
+        # 3. DUE / ADVANCE TIER (Default: -7, -3, -1, 0 Days)
         if bundle.total_items_count == 1:
             item = bundle.synced_items[0]
             return (
@@ -437,7 +536,6 @@ class MedSyncEngine:
                 f"Reply *YES* to place your refill order for pickup or delivery, or call us directly at {hotline}."
             )
 
-        # Multi-Prescription Bundle
         items_bullets = "\n".join([f"  • {item.item_name}" for item in bundle.synced_items])
         return (
             f"Hello {bundle.customer_name},\n\n"

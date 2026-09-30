@@ -32,7 +32,8 @@ STAGE_MINUS_1 = -1
 STAGE_DAY_0 = 0
 STAGE_PLUS_2 = 2
 STAGE_PLUS_5 = 5
-STAGE_PLUS_40 = 40
+STAGE_PLUS_45 = 45
+STAGE_PLUS_40 = 45  # Backward-compatible alias for 45-day re-engagement
 
 STAGE_OFFSETS = [
     STAGE_MINUS_7,
@@ -41,8 +42,13 @@ STAGE_OFFSETS = [
     STAGE_DAY_0,
     STAGE_PLUS_2,
     STAGE_PLUS_5,
-    STAGE_PLUS_40,
+    STAGE_PLUS_45,
 ]
+
+# Lifecycle Stage Bundle Tiers (Isolated message categories)
+BUNDLE_TIER_DUE = "DUE_STAGE"          # [-7, -3, -1, 0]
+BUNDLE_TIER_FOLLOWUP = "FOLLOWUP_STAGE"# [+2, +5]
+BUNDLE_TIER_LAPSED = "LAPSED_STAGE"    # [+45]
 
 # Lifecycle Stage & Recency Constants
 CHURN_CUTOFF_DAYS = 75

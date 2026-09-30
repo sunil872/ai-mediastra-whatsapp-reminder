@@ -333,7 +333,7 @@
                 <option value="DATE" selected>Filter by Date</option>
                 <option value="MONTH">Filter by Month</option>
               </select>
-              <input type="date" id="reminder-target-date" value="2026-09-24" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+              <input type="date" id="reminder-target-date" value="2026-09-30" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
               <select id="reminder-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main); font-weight: 600;">
                 <option value="2026-09" selected>September 2026 (2026-09)</option>
               </select>
@@ -343,7 +343,8 @@
                 <option value="B2B_INTER_STORE">B2B / Inter-Store (Audit Only)</option>
                 <option value="UNKNOWN">Unknown Channels</option>
               </select>
-              <input type="text" id="reminder-search-input" placeholder="Search Customer / Phone..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); width: 190px;">
+              <input type="text" id="reminder-search-input" placeholder="Search Customer / Phone / Med..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); width: 210px;">
+              <button class="btn btn-danger-search" id="btn-search-reminders">🔍 Search</button>
               <button class="btn btn-primary" id="btn-download-reminder-csv">📥 Download CSV</button>
               <button class="btn btn-outline" id="btn-download-reminder-json">📥 Download JSON</button>
             </div>
@@ -358,7 +359,7 @@
                   <th>Customer Name</th>
                   <th>Mobile Number</th>
                   <th>Mobile Status</th>
-                  <th>Channel</th>
+                  <th>Refill Function</th>
                   <th>Medication</th>
                   <th>Last Purchase</th>
                   <th>Est. Days of Supply</th>
@@ -380,34 +381,44 @@
             <div>
               <h3 class="card-title">📦 Med-Sync: Multi-Prescription Synchronization</h3>
               <p style="color: var(--text-secondary); margin-top: 0.25rem;">
-                Automatically groups active chronic prescriptions due within a dynamic window (≤ 8 days) into a single coordinated refill appointment, cutting customer friction by 50%+.
+                Automatically groups active chronic prescriptions due on the exact same date into a single coordinated refill appointment, cutting customer friction by 50%+.
               </p>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
               <div>
                 <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Filter Mode</label>
                 <select id="medsync-view-mode" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
-                  <option value="MONTH" selected>Filter by Month</option>
-                  <option value="DATE">Filter by Date</option>
+                  <option value="DATE" selected>Filter by Date</option>
+                  <option value="MONTH">Filter by Month</option>
                 </select>
               </div>
               <div>
                 <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Prediction Target</label>
-                <select id="medsync-month-select" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
+                <input type="date" id="medsync-target-date" value="2026-09-30" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
+                <select id="medsync-month-select" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
                   <option value="">Auto Next Month</option>
                 </select>
-                <input type="date" id="medsync-target-date" value="2026-09-24" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
               </div>
               <div>
-                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Sync Window: <span id="sync-window-val">8</span> days</label>
-                <input type="range" id="sync-window-slider" min="3" max="14" value="8" style="cursor: pointer; vertical-align: middle;">
+                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Sync Window: <span id="sync-window-val">0</span> days</label>
+                <input type="range" id="sync-window-slider" min="0" max="14" value="0" style="cursor: pointer; vertical-align: middle;">
+              </div>
+              <div>
+                <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Refill Function / Tier</label>
+                <select id="medsync-tier-select" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-weight: 600;">
+                  <option value="ALL" selected>All Functions</option>
+                  <option value="DUE">DUE_REFILL (Due Soon)</option>
+                  <option value="FOLLOWUP">REFILL_FOLLOW_UP (Follow-up)</option>
+                  <option value="LAPSED">LAPSED_REENGAGEMENT (+45d)</option>
+                </select>
               </div>
               <div>
                 <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-secondary);">Filter Customer / Phone</label>
                 <input type="text" id="medsync-search" placeholder="Search Customer / Phone / Med..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); width: 210px;">
               </div>
-              <div style="padding-top: 1rem;">
-                <button class="btn btn-outline" id="btn-refresh-medsync">🔄 Cluster Prescriptions</button>
+              <div style="padding-top: 1rem; display: flex; gap: 0.5rem;">
+                <button class="btn btn-danger-search" id="btn-search-medsync">🔍 Search</button>
+                <button class="btn btn-outline" id="btn-refresh-medsync">🔄 Refresh</button>
               </div>
             </div>
           </div>
@@ -449,6 +460,7 @@
                 <tr>
                   <th>Patient Name</th>
                   <th>Mobile Number</th>
+                  <th>Refill Function</th>
                   <th>Anchor Medication</th>
                   <th>Synced Prescriptions</th>
                   <th>Anchor Due Date</th>

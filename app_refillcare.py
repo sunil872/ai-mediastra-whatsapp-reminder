@@ -1178,7 +1178,7 @@ def load_v1_reminder_queue_df(target_date: Optional[date] = None, target_month: 
                         elif o == 0: return "0 days (Due Today)"
                         elif o == 2: return "+2 days (Follow-up)"
                         elif o == 5: return "+5 days (Follow-up)"
-                        elif o == 40: return "+40 days (Lapsed Re-engagement)"
+                        elif o in (40, 45): return "+45 days (Re-engagement)"
                         elif o > 0: return f"+{o} days"
                         else: return f"{o} days"
                     except Exception:
@@ -1337,6 +1337,28 @@ def render_app():
         .metric-label {
             font-size: 0.9rem;
             color: #6c757d;
+        }
+        /* Search Buttons Red Background with White Text */
+        div[data-testid="stButton"] button:has(p:contains("Search")),
+        div[data-testid="stButton"] button:has(p:contains("🔍 Search")),
+        button[key="btn_apply_rem_search"],
+        button[key="btn_apply_medsync_search"] {
+            background-color: #dc2626 !important;
+            color: #ffffff !important;
+            border: 1px solid #b91c1c !important;
+            font-weight: 600 !important;
+        }
+        div[data-testid="stButton"] button:hover:has(p:contains("Search")),
+        div[data-testid="stButton"] button:hover:has(p:contains("🔍 Search")) {
+            background-color: #b91c1c !important;
+            color: #ffffff !important;
+            border-color: #991b1b !important;
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35) !important;
+        }
+        div[data-testid="stButton"] button:has(p:contains("Search")) p,
+        div[data-testid="stButton"] button:has(p:contains("🔍 Search")) p {
+            color: #ffffff !important;
+            font-weight: 600 !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -1522,7 +1544,7 @@ def render_app():
         st.markdown(
             "- **Dual-Path Routing:** High-frequency regular patients ($\\ge 6$ buys) receive precision ML forecasting; developing patients (< 6 buys) receive authoritative Days-of-Supply scheduling.\n"
             "- **Multi-Pack Awareness:** Supply intervals dynamically expand for multi-pack purchases, preventing unwanted early messages.\n"
-            "- **6-Stage Lifecycle Outreach:** Gentle, structured messages timed at Day -7, -3, -1, Day 0 (Due Date), and follow-ups (+2d, +5d).\n"
+            "- **7-Stage Lifecycle Outreach:** Gentle, structured messages timed at Day -7, -3, -1, Day 0 (Due Date), follow-ups (+2d, +5d), and Day +45 (Re-engagement).\n"
             "- **Live Repurchase Reset:** Pending reminder alerts are immediately superseded and cancelled the moment a patient repurchases.\n"
             "- **Clean Data Isolation:** Wholesale/B2B transfers (`SB/...`) and non-chronic OTC items (soaps, shampoos, balms, creams) are automatically filtered out."
         )
@@ -1970,8 +1992,8 @@ def render_app():
         else:
             default_date = today_val
 
-        # Filters Row 1: Filter Mode Toggle (Date vs Month), Target Selector, Stage Filter, Clinical Path Filter
-        c_mode_toggle, c_target, c_stage, c_path = st.columns([1.3, 1.8, 2.0, 1.8])
+        # Filters Row 1: Filter Mode Toggle (Date vs Month), Target Selector, Function Filter, Stage Filter, Clinical Path Filter
+        c_mode_toggle, c_target, c_func, c_stage, c_path = st.columns([1.2, 1.5, 1.5, 1.7, 1.5])
         with c_mode_toggle:
             view_mode = st.radio(
                 "Filter Mode",
@@ -2013,18 +2035,31 @@ def render_app():
                 filter_label = month_labels.get(selected_month, selected_month)
                 file_stem = f"reminder_list_{selected_month}"
 
+        with c_func:
+            func_filter_mode = st.selectbox(
+                "Refill Function",
+                [
+                    "All Functions (3-Tier)",
+                    "DUE_REFILL (Due Soon)",
+                    "REFILL_FOLLOW_UP (Follow-up)",
+                    "LAPSED_REENGAGEMENT (+45d)",
+                ],
+                key="reminder_func_selector",
+                help="Segregate reminders by communication purpose: Advance due reminder, Follow-up, or +45d Re-engagement.",
+            )
+
         with c_stage:
             schedule_mode = st.selectbox(
                 "Lifecycle Stage Filter",
                 [
-                    "All Active Stages (-7d, -3d, -1d, 0d, +2d, +5d, +40d)",
+                    "All Active Stages (-7d, -3d, -1d, 0d, +2d, +5d, +45d)",
                     "Stage: -7 days (Due in 7 Days)",
                     "Stage: -3 days (Due in 3 Days)",
                     "Stage: -1 day (Due Tomorrow)",
                     "Stage: 0 days (Due Today)",
                     "Stage: +2 days (Follow-up)",
                     "Stage: +5 days (Follow-up)",
-                    "Stage: +40 days (Lapsed Re-engagement)",
+                    "Stage: +45 days (Re-engagement)",
                 ],
                 key="reminder_schedule_mode_selector",
                 help="Filter by specific patient lifecycle communication stages.",
@@ -2042,10 +2077,10 @@ def render_app():
                 help="Filter between Path A historical cadence patients and Path B developing DOS patients.",
             )
 
-        # Filters Row 2: Customer, Medication, Mobile Status, Transaction Channel
-        c_cust, c_med, c_stat, c_chan = st.columns([2, 2, 1.2, 1.5])
+        # Filters Row 2: Customer, Medication, Mobile Status, Transaction Channel, Search Button
+        c_cust, c_med, c_stat, c_chan, c_btn = st.columns([1.8, 1.8, 1.1, 1.3, 0.9])
         with c_cust:
-            search_cust = st.text_input("Search Customer Name / Phone", key="rem_search_cust")
+            search_cust = st.text_input("Search Customer / Phone", key="rem_search_cust")
         with c_med:
             search_med = st.text_input("Search Medication", key="rem_search_med")
         with c_stat:
@@ -2057,6 +2092,9 @@ def render_app():
                 key="rem_channel_filter",
                 help="Only individual customer sales (S0/...) enter the reminder queue. Select B2B / Inter-Store to audit excluded transactions."
             )
+        with c_btn:
+            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+            st.button("🔍 Search", key="btn_apply_rem_search", use_container_width=True)
 
         # Load queue from persistent enterprise.db for selected date or month
         db_queue_df = load_v1_reminder_queue_df(target_date=selected_date, target_month=selected_month)
@@ -2076,6 +2114,26 @@ def render_app():
                     working_rem_df = pd.DataFrame()
             else:
                 working_rem_df = pd.DataFrame()
+
+        # Ensure Refill Function is populated
+        if not working_rem_df.empty:
+            if "Refill Function" not in working_rem_df.columns:
+                if "refill_function" in working_rem_df.columns:
+                    working_rem_df["Refill Function"] = working_rem_df["refill_function"]
+                elif "stage_offset" in working_rem_df.columns:
+                    from refillcare.whatsapp.template_formatter import get_refill_function
+                    working_rem_df["Refill Function"] = working_rem_df["stage_offset"].apply(get_refill_function)
+                elif "Reminder Stage" in working_rem_df.columns:
+                    def _derive_rf(stg):
+                        s = str(stg).lower()
+                        if "+2" in s or "+5" in s:
+                            return "REFILL_FOLLOW_UP"
+                        elif "+45" in s or "+40" in s or "re-engagement" in s or "lapsed" in s:
+                            return "LAPSED_REENGAGEMENT"
+                        return "DUE_REFILL"
+                    working_rem_df["Refill Function"] = working_rem_df["Reminder Stage"].apply(_derive_rf)
+                else:
+                    working_rem_df["Refill Function"] = "DUE_REFILL"
 
         # Tag channel provenance for transparency
         if not working_rem_df.empty:
@@ -2124,6 +2182,14 @@ def render_app():
         else:
             # Apply Regular Filters
             filtered_reminders = pd.DataFrame(working_rem_df.copy())
+
+            # Refill function filter
+            if func_filter_mode.startswith("DUE_REFILL") and not filtered_reminders.empty and "Refill Function" in filtered_reminders.columns:
+                filtered_reminders = pd.DataFrame(filtered_reminders[filtered_reminders["Refill Function"] == "DUE_REFILL"])
+            elif func_filter_mode.startswith("REFILL_FOLLOW_UP") and not filtered_reminders.empty and "Refill Function" in filtered_reminders.columns:
+                filtered_reminders = pd.DataFrame(filtered_reminders[filtered_reminders["Refill Function"] == "REFILL_FOLLOW_UP"])
+            elif func_filter_mode.startswith("LAPSED_REENGAGEMENT") and not filtered_reminders.empty and "Refill Function" in filtered_reminders.columns:
+                filtered_reminders = pd.DataFrame(filtered_reminders[filtered_reminders["Refill Function"] == "LAPSED_REENGAGEMENT"])
 
             # Lifecycle stage filter
             if schedule_mode.startswith("Stage:") and not filtered_reminders.empty and "Reminder Stage" in filtered_reminders.columns:
@@ -2181,6 +2247,7 @@ def render_app():
             core_display_columns = [
                 "Customer Name",
                 "Mobile Number",
+                "Refill Function",
                 "Medication",
                 "Last Purchase Date",
                 "Estimated Days of Supply",
@@ -2298,7 +2365,7 @@ def render_app():
         target_next_month_str = date(target_next_year, target_next_month, 1).strftime("%B %Y")
 
         # Run Med-Sync Clustering on full active persistent decisions
-        med_sync_engine = MedSyncEngine(sync_window_days=8)
+        med_sync_engine = MedSyncEngine(sync_window_days=0)
         medsync_candidates = load_active_refill_decisions_for_medsync(eligible_df)
 
         # Controls Row 1: View Mode, Target Date/Month, Sync Window, Bundle Type
@@ -2307,21 +2374,21 @@ def render_app():
         with c_vmode:
             medsync_view_mode = st.selectbox(
                 "Filter Mode",
-                ["Complete Month", "Specific Date"],
+                ["Specific Date", "Complete Month"],
                 index=0,
                 key="medsync_view_mode_selector",
-                help="Switch between viewing all bundles for a complete calendar month or pinpointing a specific prediction target date.",
+                help="Switch between pinpointing a specific prediction target date (default) or viewing all bundles for a complete calendar month.",
             )
 
         with c_sync_win:
             sync_window = st.slider(
                 "Sync Window (Days)",
-                min_value=3,
+                min_value=0,
                 max_value=14,
-                value=8,
+                value=0,
                 step=1,
                 key="medsync_window_slider",
-                help="Maximum interval gap between consecutive prescription refill dates to group into a single synchronized delivery bundle (Default: 8 days).",
+                help="0 = Exact Same-Date Group-By (default in QA mode). 1-14 = Multi-Day Synchronized Window.",
             )
 
         # Cluster with chosen window
@@ -2339,7 +2406,7 @@ def render_app():
         for y, m in ordered_tuples:
             m_name = date(y, m, 1).strftime("%B %Y")
             if (y, m) == target_tuple:
-                month_display_map[f"{y}-{m:02d}"] = f"🎯 {m_name} (Next Month Prediction — Default)"
+                month_display_map[f"{y}-{m:02d}"] = f"🎯 {m_name} (Active Prediction Target — Default)"
             else:
                 month_display_map[f"{y}-{m:02d}"] = f"📅 {m_name}"
 
@@ -2348,7 +2415,15 @@ def render_app():
 
         with c_target:
             if medsync_view_mode == "Specific Date":
-                default_target_date = date(target_next_year, target_next_month, 24) if target_next_month else date(2026, 9, 24)
+                if "reminder_selected_date" in st.session_state and st.session_state["reminder_selected_date"] is not None:
+                    default_target_date = st.session_state["reminder_selected_date"]
+                elif today_val in avail_dates:
+                    default_target_date = today_val
+                elif avail_dates:
+                    default_target_date = avail_dates[-1]
+                else:
+                    default_target_date = date.today()
+
                 medsync_selected_date = st.date_input(
                     "Prediction Target Date",
                     value=default_target_date,
@@ -2364,7 +2439,7 @@ def render_app():
                     index=0,
                     format_func=lambda k: month_display_map.get(k, k),
                     key="medsync_month_selector",
-                    help=f"Select prediction target month. By default, RefillCare focuses on the next month ({target_next_month_str}) following the latest uploaded sales data ({last_sales_month_str}).",
+                    help=f"Select prediction target month. By default, RefillCare focuses on the active target month ({target_next_month_str}) following the latest uploaded sales data ({last_sales_month_str}).",
                 )
 
         with c_sync_filt:
@@ -2378,32 +2453,49 @@ def render_app():
                 key="medsync_bundle_filter",
             )
 
-        # Controls Row 2: Customer Name / Phone, Medication, Mobile Status
-        c_sync_cust, c_sync_med, c_sync_status = st.columns([2.5, 2.5, 1.5])
+        # Controls Row 2: Customer Name / Phone, Medication, Mobile Status, Lifecycle Tier, Search Button
+        c_sync_cust, c_sync_med, c_sync_status, c_sync_tier, c_sync_btn = st.columns([1.8, 1.8, 1.1, 1.4, 0.9])
         with c_sync_cust:
-            search_sync_cust = st.text_input("Search Customer Name / Phone", key="medsync_search_cust")
+            search_sync_cust = st.text_input("Search Customer / Phone", key="medsync_search_cust")
         with c_sync_med:
             search_sync_med = st.text_input("Search Medication", key="medsync_search_med")
         with c_sync_status:
             search_sync_status = st.selectbox("Mobile Status", ["All", "Valid", "Missing"], key="medsync_status_filter")
+        with c_sync_tier:
+            search_sync_tier = st.selectbox("Refill Function / Tier", ["All Functions", "DUE_REFILL (Due Soon)", "REFILL_FOLLOW_UP (Follow-up)", "LAPSED_REENGAGEMENT (+45d)"], key="medsync_tier_filter")
+        with c_sync_btn:
+            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+            st.button("🔍 Search", key="btn_apply_medsync_search", use_container_width=True)
 
-        # Filter bundles by selected date or month
+        # Load candidates from scheduled review queue for selected target date/month
         if medsync_view_mode == "Specific Date" and medsync_selected_date:
-            month_filtered_bundles = [
-                b for b in all_bundles
-                if b.anchor_refill_date == medsync_selected_date
-            ]
+            queue_candidates = load_v1_reminder_queue_df(target_date=medsync_selected_date)
             active_target_label = medsync_selected_date.strftime("%d %B %Y")
-        elif selected_month_key == "ALL":
-            month_filtered_bundles = all_bundles
-            active_target_label = "All Months"
-        else:
+        elif selected_month_key and selected_month_key != "ALL":
+            queue_candidates = load_v1_reminder_queue_df(target_month=selected_month_key)
             sel_y, sel_m = map(int, selected_month_key.split("-"))
-            month_filtered_bundles = [
-                b for b in all_bundles
-                if b.anchor_refill_date.year == sel_y and b.anchor_refill_date.month == sel_m
-            ]
             active_target_label = date(sel_y, sel_m, 1).strftime("%B %Y")
+        else:
+            queue_candidates = pd.DataFrame()
+            active_target_label = "All Future Months"
+
+        if not queue_candidates.empty:
+            medsync_input = queue_candidates
+        else:
+            medsync_input = load_active_refill_decisions_for_medsync(eligible_df)
+
+        # Cluster candidate records with selected sync window
+        all_bundles = med_sync_engine.cluster_patient_decisions(medsync_input, sync_window_days=sync_window)
+
+        # Filter by refill function
+        if search_sync_tier.startswith("DUE_REFILL"):
+            month_filtered_bundles = [b for b in all_bundles if getattr(b, "refill_function", "DUE_REFILL") == "DUE_REFILL"]
+        elif search_sync_tier.startswith("REFILL_FOLLOW_UP"):
+            month_filtered_bundles = [b for b in all_bundles if getattr(b, "refill_function", "DUE_REFILL") == "REFILL_FOLLOW_UP"]
+        elif search_sync_tier.startswith("LAPSED_REENGAGEMENT"):
+            month_filtered_bundles = [b for b in all_bundles if getattr(b, "refill_function", "DUE_REFILL") == "LAPSED_REENGAGEMENT"]
+        else:
+            month_filtered_bundles = all_bundles
 
         # Calculate target-specific impact summary
         sync_impact = med_sync_engine.summarize_sync_impact(month_filtered_bundles)
@@ -2438,6 +2530,9 @@ def render_app():
             p90_str = b.latest_p90_date.strftime("%d-%m-%Y") if b.latest_p90_date else "-"
             disp_phone = format_display_phone_10digits(b.mobile_no or "")
 
+            tier_label_map = {"DUE": "Due / Advance", "FOLLOWUP": "Follow-up", "LAPSED": "Lapsed Re-engagement"}
+            tier_disp = tier_label_map.get(getattr(b, "lifecycle_tier", "DUE"), "Due / Advance")
+
             bundle_rows.append({
                 "Bundle ID": b.bundle_id,
                 "Customer ID": b.customer_id,
@@ -2445,6 +2540,8 @@ def render_app():
                 "Mobile Number": disp_phone,
                 "raw_mobile_no": b.mobile_no or "",
                 "Mobile Status": determine_mobile_status(b.mobile_no or ""),
+                "Refill Function": getattr(b, "refill_function", "DUE_REFILL"),
+                "Lifecycle Stage": tier_disp,
                 "Anchor Due Date": b.anchor_refill_date.strftime("%d-%m-%Y"),
                 "Anchor Medication": b.anchor_item_name,
                 "Synced Prescriptions": meds_str,
@@ -2482,19 +2579,31 @@ def render_app():
                     filtered_bundles_df["Synced Prescriptions"].astype(str).str.lower().str.contains(search_sync_med.strip().lower(), na=False)
                 ]
 
-        st.markdown(f"#### 📋 Synchronized Refill Bundles Queue ({len(filtered_bundles_df):,} matching)")
+        t_col1, t_col2 = st.columns([3, 1])
+        with t_col1:
+            st.markdown(f"#### 📋 Synchronized Refill Bundles Queue ({len(filtered_bundles_df):,} matching)")
+        with t_col2:
+            show_tech_medsync = st.checkbox(
+                "⚙️ Technical Diagnostics",
+                value=False,
+                key="chk_show_tech_details_medsync",
+                help="Show internal clinical P10 Early Window and P90 Late Alert quantile bounds.",
+            )
 
-        display_cols = [
+        core_display_cols = [
             "Customer Name",
             "Mobile Number",
+            "Refill Function",
             "Anchor Due Date",
             "Anchor Medication",
             "Synced Prescriptions",
             "Total Meds",
             "Messages Saved",
-            "P10 Early Window",
-            "P90 Late Alert",
         ]
+        if show_tech_medsync:
+            display_cols = core_display_cols + ["P10 Early Window", "P90 Late Alert"]
+        else:
+            display_cols = core_display_cols
 
         if not filtered_bundles_df.empty:
             st.dataframe(
@@ -2524,13 +2633,26 @@ def render_app():
                         matched_row = matched_rows.iloc[0]
                         sample_bundle = matched_row["raw_bundle"]
 
-                        c_msg1, c_msg2 = st.columns([1.5, 1])
+                        c_msg1, c_msg2 = st.columns([1.6, 1.1])
                         with c_msg1:
-                            st.text_area(
-                                "Synchronized WhatsApp Copy",
-                                value=sample_bundle.bundled_message_text,
-                                height=240,
-                                disabled=True,
+                            st.markdown(
+                                f"""
+                                <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
+                                        <div style="display: flex; align-items: center; gap: 8px;">
+                                            <span style="font-size: 1.15rem;">💬</span>
+                                            <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">Synchronized WhatsApp Copy</span>
+                                        </div>
+                                        <span style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
+                                            {getattr(sample_bundle, 'lifecycle_tier', 'DUE')} • {getattr(sample_bundle, 'refill_function', 'DUE_REFILL')}
+                                        </span>
+                                    </div>
+                                    <div style="white-space: pre-wrap; font-size: 0.96rem; line-height: 1.6; color: #0f172a; font-weight: 500;">
+{sample_bundle.bundled_message_text}
+                                    </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
                             )
                         with c_msg2:
                             disp_p = format_display_phone_10digits(sample_bundle.mobile_no or "")
@@ -2857,14 +2979,475 @@ def render_app():
             st.info("No customer records currently requiring review.")
 
     # --------------------------------------------------------------------------
-    # TAB 5: WHATSAPP (ON HOLD)
+    # TAB 5: WHATSAPP 3-TIER REFILL OUTREACH GATEWAY
     # --------------------------------------------------------------------------
     with tab_whatsapp:
-        st.markdown("### 💬 WhatsApp Refill Reminders")
-        st.warning(
-            "⚠️ **WhatsApp automated dispatch is currently ON HOLD.**\n\n"
-            "Please use the **Reminder List** tab to select reminder dates and download the customer CSV for phone calls or manual outreach."
+        from refillcare.whatsapp import (
+            RefillWhatsAppClient,
+            RefillWhatsAppDispatcher,
+            build_dynamic_tier_text,
+            format_full_message_preview,
+            get_tier_for_stage_offset,
         )
+        from database.connection import SessionLocal
+        from database.models import (
+            ReminderCycleModel,
+            ReminderStageModel,
+            WhatsAppDeliveryLogModel,
+            RefillDecisionModel,
+        )
+
+        st.markdown("### 💬 WhatsApp Refill Reminders & 3-Tier Outreach")
+        st.write(
+            "Execute and preview automated patient refill communications using a **single unified WhatsApp template** "
+            "with dynamic content tailored to **Tier 1 (Due / Advance)**, **Tier 2 (Follow-up)**, and **Tier 3 (+45d Re-engagement)**."
+        )
+
+        # Configuration and customization
+        active_store_name = st.session_state.get("wa_custom_store_name", "PHARMA HUBB")
+        active_store_contact = st.session_state.get("wa_custom_store_contact", "+91 9966473474")
+
+        with st.expander("⚙️ WhatsApp Settings & Pharmacy Profile (Click to change Store / Contact)", expanded=False):
+            st.markdown("##### 🏪 Pharmacy Profile & Dynamic Template Defaults")
+            cfg_c1, cfg_c2 = st.columns(2)
+            with cfg_c1:
+                ui_store_name = st.text_input(
+                    "Medical Store Name ({{2}}, {{6}})",
+                    value=active_store_name,
+                    key="wa_ui_store_name",
+                    help="Store name filled into {{2}} and {{6}} in WhatsApp template.",
+                )
+                if ui_store_name != active_store_name:
+                    st.session_state["wa_custom_store_name"] = ui_store_name
+                    active_store_name = ui_store_name
+            with cfg_c2:
+                ui_store_contact = st.text_input(
+                    "Pharmacy Contact Number ({{5}})",
+                    value=active_store_contact,
+                    key="wa_ui_store_contact",
+                    help="Contact phone number filled into {{5}} in WhatsApp template.",
+                )
+                if ui_store_contact != active_store_contact:
+                    st.session_state["wa_custom_store_contact"] = ui_store_contact
+                    active_store_contact = ui_store_contact
+
+            temp_client = RefillWhatsAppClient(store_name=active_store_name, store_contact=active_store_contact)
+            wa_diag = temp_client.get_diagnostic_info()
+
+            st.markdown("---")
+            st.markdown("##### 🔌 Xinno CPaaS Connection Diagnostics")
+            wc1, wc2, wc3, wc4 = st.columns(4)
+            with wc1:
+                st.markdown(f"**WABA Number:** `{wa_diag['waba_number']}`")
+                st.markdown(f"**Language:** `{wa_diag['template_language']}`")
+            with wc2:
+                st.markdown(f"**Active Template:** `{wa_diag['template_name']}`")
+                st.markdown(f"**Active Store:** `{active_store_name}`")
+            with wc3:
+                api_stat_str = "🟢 Configured" if wa_diag["api_key_configured"] else "🔴 Missing Key"
+                st.markdown(f"**API Key Status:** {api_stat_str}")
+                st.markdown(f"**Active Contact:** `{active_store_contact}`")
+            with wc4:
+                st.markdown(f"**API Endpoint:** `{wa_diag['api_url']}`")
+                st.markdown(f"**Parameter Count:** `{wa_diag['param_count']} Variables`")
+
+        wa_client = RefillWhatsAppClient(
+            store_name=active_store_name,
+            store_contact=active_store_contact,
+        )
+        wa_diag = wa_client.get_diagnostic_info()
+
+        # Row 1: Target Controls & Filters
+        st.markdown("#### 🎯 Outreach Target & Lifecycle Stage Selection")
+        wa_mode_val = st.session_state.get("wa_campaign_mode", "Individual Reminders")
+        if wa_mode_val == "Med-Sync Bundles":
+            wcol1, wcol2, wcol3, wcol4, wcol5 = st.columns([1.5, 1.4, 1.6, 1.3, 1.3])
+        else:
+            wcol1, wcol2, wcol3, wcol4 = st.columns([1.5, 1.5, 1.8, 1.2])
+
+        with wcol1:
+            wa_mode = st.radio(
+                "Campaign Mode",
+                ["Individual Reminders", "Med-Sync Bundles"],
+                horizontal=True,
+                key="wa_campaign_mode",
+            )
+
+        with wcol2:
+            wa_filter_mode = st.selectbox(
+                "Target Selection Mode",
+                ["Specific Date", "Complete Month"],
+                key="wa_target_filter_mode",
+            )
+
+        with wcol3:
+            if wa_filter_mode == "Specific Date":
+                wa_sel_date = st.date_input(
+                    "Select Target Send Date",
+                    value=date(2026, 9, 30),
+                    key="wa_sel_date",
+                )
+                wa_sel_month = None
+                wa_target_label = wa_sel_date.strftime("%d %B %Y")
+            else:
+                wa_sel_month = st.selectbox(
+                    "Select Target Prediction Month",
+                    options=avail_months if "avail_months" in locals() and avail_months else ["2026-09", "2026-10"],
+                    index=0,
+                    key="wa_sel_month",
+                )
+                wa_sel_date = None
+                wa_target_label = wa_sel_month
+
+        with wcol4:
+            wa_tier_filter = st.selectbox(
+                "Lifecycle Tier",
+                ["ALL", "DUE (Due / Advance)", "FOLLOWUP (Follow-up)", "LAPSED (+45d Re-engagement)"],
+                key="wa_tier_filter",
+            )
+            raw_tier = wa_tier_filter.split(" ")[0]
+
+        wa_sync_win = 0
+        if wa_mode == "Med-Sync Bundles":
+            with wcol5:
+                wa_sync_win = st.slider(
+                    "Sync Window (Days)",
+                    min_value=0,
+                    max_value=14,
+                    value=0,
+                    step=1,
+                    key="wa_medsync_window_slider",
+                    help="0 = Exact Same-Date Group-By. 1-14 = Multi-Day Window Sync.",
+                )
+
+        # Load candidates from database
+        candidate_records = []
+        with SessionLocal() as db:
+            if wa_mode == "Individual Reminders":
+                q = db.query(ReminderStageModel).join(
+                    ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id
+                ).filter(
+                    ReminderCycleModel.is_active == True,
+                    ReminderStageModel.status.in_(["PENDING", "SCHEDULED", "DRY_RUN_SUCCESS", "FAILED"]),
+                )
+
+                if wa_filter_mode == "Specific Date" and wa_sel_date:
+                    q = q.filter(ReminderStageModel.target_send_date == wa_sel_date)
+                elif wa_sel_month and wa_sel_month != "ALL":
+                    try:
+                        y, m = map(int, wa_sel_month.split("-"))
+                        start_d = date(y, m, 1)
+                        end_d = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+                        q = q.filter(ReminderStageModel.target_send_date >= start_d, ReminderStageModel.target_send_date < end_d)
+                    except Exception:
+                        pass
+
+                if raw_tier == "DUE":
+                    q = q.filter(ReminderStageModel.stage_offset <= 0)
+                elif raw_tier == "FOLLOWUP":
+                    q = q.filter(ReminderStageModel.stage_offset.in_([2, 5]))
+                elif raw_tier == "LAPSED":
+                    q = q.filter(ReminderStageModel.stage_offset.in_([40, 45]))
+
+                stages_found = q.all()
+                for stg in stages_found:
+                    dec = getattr(stg.cycle, "decision", None)
+                    phone = dec.mobile_no if dec and dec.mobile_no else ""
+                    cust_name = dec.customer_name if dec and dec.customer_name else "Valued Customer"
+                    med_name = dec.item_name if dec and dec.item_name else "Prescription Medication"
+                    mob_stat = determine_mobile_status(phone)
+
+                    candidate_records.append({
+                        "reminder_id": stg.reminder_id,
+                        "customer_name": cust_name,
+                        "phone_number": phone,
+                        "mobile_display": format_display_phone_10digits(phone),
+                        "mobile_status": mob_stat,
+                        "medication": med_name,
+                        "expected_refill_date": stg.expected_refill_date,
+                        "target_send_date": stg.target_send_date,
+                        "stage_offset": stg.stage_offset,
+                        "tier": get_tier_for_stage_offset(stg.stage_offset),
+                        "status": stg.status,
+                        "stage_obj": stg,
+                    })
+            else:
+                # Med-Sync Bundles Mode
+                from refillcare.engine.med_sync import MedSyncEngine
+                engine = MedSyncEngine(sync_window_days=wa_sync_win)
+
+                # Load candidates for bundling from persistent queue / decisions
+                if wa_filter_mode == "Specific Date" and wa_sel_date:
+                    medsync_input = load_v1_reminder_queue_df(target_date=wa_sel_date)
+                elif wa_sel_month and wa_sel_month != "ALL":
+                    medsync_input = load_v1_reminder_queue_df(target_month=wa_sel_month)
+                else:
+                    medsync_input = pd.DataFrame()
+
+                is_from_queue = not medsync_input.empty
+                if medsync_input.empty:
+                    medsync_input = load_active_refill_decisions_for_medsync(eligible_df)
+
+                all_bundles = engine.cluster_patient_decisions(medsync_input, sync_window_days=wa_sync_win)
+
+                # Filter bundles by target date / month if not already pre-filtered by queue
+                if is_from_queue:
+                    filtered_b = all_bundles
+                else:
+                    if wa_filter_mode == "Specific Date" and wa_sel_date:
+                        filtered_b = [b for b in all_bundles if b.anchor_refill_date == wa_sel_date]
+                    elif wa_sel_month and wa_sel_month != "ALL":
+                        try:
+                            y_val, m_val = map(int, wa_sel_month.split("-"))
+                            filtered_b = [b for b in all_bundles if b.anchor_refill_date.year == y_val and b.anchor_refill_date.month == m_val]
+                        except Exception:
+                            filtered_b = all_bundles
+                    else:
+                        filtered_b = all_bundles
+
+                # Filter by tier / refill function
+                if raw_tier == "DUE":
+                    filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "DUE" or getattr(b, "refill_function", "DUE_REFILL") == "DUE_REFILL"]
+                elif raw_tier == "FOLLOWUP":
+                    filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "FOLLOWUP" or getattr(b, "refill_function", "DUE_REFILL") == "REFILL_FOLLOW_UP"]
+                elif raw_tier == "LAPSED":
+                    filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "LAPSED" or getattr(b, "refill_function", "DUE_REFILL") == "LAPSED_REENGAGEMENT"]
+
+                for b in filtered_b:
+                    meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
+                    phone_val = b.mobile_no or ""
+                    mob_stat = determine_mobile_status(phone_val)
+                    tier_val = getattr(b, "lifecycle_tier", "DUE")
+
+                    candidate_records.append({
+                        "reminder_id": b.bundle_id,
+                        "customer_name": b.customer_name or "Valued Customer",
+                        "phone_number": phone_val,
+                        "mobile_display": format_display_phone_10digits(phone_val),
+                        "mobile_status": mob_stat,
+                        "medication": ", ".join(meds_list),
+                        "expected_refill_date": b.anchor_refill_date,
+                        "target_send_date": wa_sel_date if wa_sel_date else b.anchor_refill_date,
+                        "stage_offset": 0 if tier_val == "DUE" else (5 if tier_val == "FOLLOWUP" else 45),
+                        "tier": tier_val,
+                        "refill_function": getattr(b, "refill_function", "DUE_REFILL"),
+                        "status": "PENDING",
+                        "bundle_obj": b,
+                    })
+
+        valid_count = sum(1 for r in candidate_records if r["mobile_status"] == "Valid")
+        missing_count = len(candidate_records) - valid_count
+
+        # KPI Summary
+        wk1, wk2, wk3, wk4 = st.columns(4)
+        with wk1:
+            st.metric("Total Scheduled", f"{len(candidate_records):,}")
+        with wk2:
+            st.metric("Delivery Ready (Valid)", f"{valid_count:,}")
+        with wk3:
+            st.metric("Missing Mobile", f"{missing_count:,}")
+        with wk4:
+            st.metric("Active Target", wa_target_label)
+
+        st.markdown("---")
+
+        # Two-Column Layout: Left = Candidate Queue, Right = Live Dynamic Preview & Testing
+        col_queue, col_preview = st.columns([1.4, 1.6])
+
+        with col_queue:
+            st.markdown(f"#### 📋 Candidate Outreach Queue ({len(candidate_records):,} records)")
+            if candidate_records:
+                df_candidates = pd.DataFrame([
+                    {
+                        "Customer": r["customer_name"],
+                        "Mobile": r["mobile_display"],
+                        "Status": r["mobile_status"],
+                        "Medication": r["medication"],
+                        "Stage": f"{r['stage_offset']}d ({r['tier']})",
+                        "Refill Due": r["expected_refill_date"].strftime("%d-%m-%Y") if isinstance(r["expected_refill_date"], date) else str(r["expected_refill_date"]),
+                    }
+                    for r in candidate_records
+                ])
+                st.dataframe(df_candidates, use_container_width=True, hide_index=True, height=360)
+            else:
+                st.info("No reminder stages match the selected date/month and tier filter.")
+
+        with col_preview:
+            st.markdown("#### 📱 Live 3-Tier Message Preview & Dynamic Variable Simulation")
+            
+            # Select customer for preview
+            sample_cust = candidate_records[0] if candidate_records else {
+                "customer_name": "ANIL KUMAR K",
+                "phone_number": "919640568227",
+                "medication": "ATCHOL F",
+                "expected_refill_date": date(2026, 9, 30),
+                "stage_offset": 0,
+                "tier": "DUE",
+            }
+
+            cust_names = [f"{r['customer_name']} — {r['medication']} ({r['tier']})" for r in candidate_records] if candidate_records else [f"{sample_cust['customer_name']} — {sample_cust['medication']} (Sample)"]
+            selected_sample_idx = st.selectbox("Select Patient to Preview WhatsApp Text", range(len(cust_names)), format_func=lambda i: cust_names[i], key="wa_preview_sample_idx")
+            
+            active_preview_record = candidate_records[selected_sample_idx] if candidate_records else sample_cust
+
+            # Generate dynamic preview
+            preview_res = wa_client.preview_message(
+                customer_name=active_preview_record["customer_name"],
+                medications=active_preview_record["medication"],
+                expected_refill_date=active_preview_record["expected_refill_date"],
+                tier=active_preview_record["tier"],
+                stage_offset=active_preview_record["stage_offset"],
+            )
+
+            # Display Crisp, Enterprise-Grade WhatsApp Message Preview Box (High Contrast)
+            st.markdown(
+                f"""
+                <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 1.15rem;">💬</span>
+                            <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">WhatsApp Live Message Preview</span>
+                        </div>
+                        <span style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
+                            {active_preview_record['tier']} • {active_preview_record.get('refill_function', 'DUE_REFILL')}
+                        </span>
+                    </div>
+                    <div style="white-space: pre-wrap; font-size: 0.96rem; line-height: 1.6; color: #0f172a; font-weight: 500;">
+{preview_res['visual_preview']}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Format selected patient's phone number into standard 12-digit 91XXXXXXXXXX format
+            raw_phone_str = str(active_preview_record.get("phone_number", "")).strip()
+            digits_only = "".join(filter(str.isdigit, raw_phone_str))
+            if len(digits_only) == 10:
+                default_12d_phone = f"91{digits_only}"
+            elif len(digits_only) == 12 and digits_only.startswith("91"):
+                default_12d_phone = digits_only
+            elif len(digits_only) == 11 and digits_only.startswith("0"):
+                default_12d_phone = f"91{digits_only[1:]}"
+            else:
+                default_12d_phone = digits_only if digits_only else ""
+
+            # Interactive Single Test Send
+            with st.expander("📲 Send Single Test WhatsApp Message", expanded=True):
+                tc1, tc2, tc3 = st.columns([1.5, 1.0, 1.0])
+                with tc1:
+                    test_phone_input = st.text_input(
+                        "Recipient Phone Number (12 Digits: 91...)",
+                        value=default_12d_phone,
+                        key=f"wa_test_phone_{selected_sample_idx}",
+                        help="Enter full 12-digit phone number with 91 country code (e.g. 919848310930).",
+                    )
+                with tc2:
+                    test_is_dry_run = st.checkbox("Dry-Run Only", value=True, key="wa_single_dry_run")
+                with tc3:
+                    st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+                    btn_send_test = st.button("🚀 Send Test", key="btn_send_single_wa", use_container_width=True)
+
+                # Validation guard on test send
+                mob_check = determine_mobile_status(test_phone_input)
+                if mob_check != "Valid":
+                    st.warning("⚠️ **Missing or Incomplete Mobile Number.** Please enter a valid 10-digit number or 12-digit format (91XXXXXXXXXX) to dispatch.")
+
+                if btn_send_test:
+                    if not test_is_dry_run and mob_check != "Valid":
+                        st.error("🛑 **Dispatch Blocked:** Cannot send live WhatsApp message to a missing or invalid phone number.")
+                    else:
+                        with st.spinner("Dispatching single WhatsApp reminder..."):
+                            test_res = wa_client.send_refill_reminder(
+                                phone_number=test_phone_input,
+                                customer_name=active_preview_record["customer_name"],
+                                medications=active_preview_record["medication"],
+                                expected_refill_date=active_preview_record["expected_refill_date"],
+                                tier=active_preview_record["tier"],
+                                stage_offset=active_preview_record["stage_offset"],
+                                dry_run=test_is_dry_run,
+                            )
+                            if test_res.get("success"):
+                                st.success(f"✅ **{test_res['message']}** (Status: {test_res.get('status_code', 200)})")
+                                st.json(test_res)
+                            else:
+                                st.error(f"❌ **{test_res.get('message', 'Dispatch failed')}**")
+                                st.json(test_res)
+
+        st.markdown("---")
+
+        # Section: Bulk Batch Dispatch Execution
+        st.markdown("#### 🚀 Batch Outreach Execution")
+        bcol1, bcol2, bcol3 = st.columns([1.5, 1.5, 2.0])
+
+        with bcol1:
+            batch_limit = st.slider("Batch Size Limit", min_value=1, max_value=200, value=min(25, max(1, valid_count)), key="wa_batch_limit")
+        with bcol2:
+            bulk_dry_run = st.toggle("🔒 Dry-Run Simulation Guard (Safe)", value=True, key="wa_bulk_dry_run")
+        with bcol3:
+            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+            btn_run_batch = st.button("🚀 Execute Batch WhatsApp Outreach", key="btn_run_batch_wa", use_container_width=True)
+
+        if btn_run_batch:
+            if not candidate_records:
+                st.warning("No candidate records available to dispatch for the selected criteria.")
+            else:
+                dispatcher = RefillWhatsAppDispatcher(client=wa_client)
+                progress_bar = st.progress(0.0)
+                status_text = st.empty()
+
+                with SessionLocal() as db_session:
+                    status_text.text(f"Starting batch dispatch of {batch_limit} records (Dry-run: {bulk_dry_run})...")
+                    if wa_mode == "Med-Sync Bundles":
+                        medsync_bundles_list = [r["bundle_obj"] for r in candidate_records if "bundle_obj" in r]
+                        batch_outcome = dispatcher.dispatch_medsync_batch(
+                            db=db_session,
+                            bundles=medsync_bundles_list,
+                            dry_run=bulk_dry_run,
+                            batch_limit=batch_limit,
+                        )
+                    else:
+                        batch_outcome = dispatcher.dispatch_batch(
+                            db=db_session,
+                            target_date=wa_sel_date,
+                            target_month=wa_sel_month,
+                            tier_filter=raw_tier,
+                            dry_run=bulk_dry_run,
+                            batch_limit=batch_limit,
+                        )
+                    progress_bar.progress(1.0)
+                    status_text.text("Dispatch batch complete!")
+
+                    st.success(
+                        f"🎉 **Batch Completed:** Processed **{batch_outcome['dispatched_count']}** messages "
+                        f"(**{batch_outcome['success_count']}** Success, **{batch_outcome['failed_count']}** Failed). "
+                        f"Mode: `{'DRY RUN' if bulk_dry_run else 'LIVE PRODUCTION'}`"
+                    )
+
+                    if batch_outcome.get("delivery_logs"):
+                        df_logs = pd.DataFrame(batch_outcome["delivery_logs"])
+                        st.dataframe(df_logs, use_container_width=True, hide_index=True)
+
+        # Section: Delivery Audit Log Trail
+        st.markdown("#### 📜 Persistent WhatsApp Delivery Logs & Audit Trail")
+        with SessionLocal() as db_session:
+            db_logs = db_session.query(WhatsAppDeliveryLogModel).order_by(WhatsAppDeliveryLogModel.dispatched_at.desc()).limit(100).all()
+            if db_logs:
+                logs_data = []
+                for lg in db_logs:
+                    logs_data.append({
+                        "Dispatched At": lg.dispatched_at.strftime("%d-%m-%Y %H:%M:%S") if lg.dispatched_at else "-",
+                        "Customer Name": lg.customer_name or "-",
+                        "Phone Number": format_display_phone_10digits(lg.phone_number),
+                        "Template": lg.template_name,
+                        "Status": lg.status,
+                        "HTTP Status": lg.http_status_code or "-",
+                        "Xinno Message ID": lg.xinno_message_id or "-",
+                        "Error / Details": lg.error_detail or "-",
+                    })
+                st.dataframe(pd.DataFrame(logs_data), use_container_width=True, hide_index=True, height=280)
+            else:
+                st.info("No delivery log entries recorded yet.")
 
 
 if __name__ == "__main__":

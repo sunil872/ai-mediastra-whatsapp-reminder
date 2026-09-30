@@ -24,9 +24,10 @@ RefillCare automates the complete operational lifecycle from raw ERP sales inges
   - **Path A (Chronic Adherence, $\ge 6$ Purchases):** Evaluated with Median Absolute Deviation (MAD) stability filtering and 3-Head Quantile XGBoost Regression ($P_{10}, P_{50}, P_{90}$).
   - **Path B (Developing Adherence, $< 6$ Purchases):** Governed by Days-of-Supply (DOS) calculated from verified quantity sold and daily consumption rates with physical safety bounds.
 - **5 Clinical Behavioral Archetypes:** Models multi-pack scaling, early top-up carryover ($R_{inv}$), partial 10-strip clamping, post-lapse reset, and consensus physical bounding ($[0.65, 1.50] \times D_{supply}$).
-- **Med-Sync (Multi-Prescription Synchronization Engine):** Clusters multiple active chronic prescriptions due within an 8-day synchronization window into a single unified appointment reminder, reducing messaging noise by 50%+.
-- **Multi-Stage Lifecycle Management:** Schedules proactive outreach (`-7d`, `-3d`, `-1d`, `0d`, `+2d`, `+5d`, `+40d`) with automatic lifecycle invalidation (`SUPERSEDED_BY_PURCHASE`) upon repurchase.
-- **Pharmacist Review Queue & Dual-Format Exports:** Routes ambiguous or missing-phone records to a clinical review queue, and generates delivery-ready 10-column CSVs and structured JSON payloads on demand.
+- **Med-Sync (Multi-Prescription Synchronization Engine):** Clusters multiple active chronic prescriptions due on the same date (or within configurable sync window: 0 to 14 days) into a single unified appointment reminder, with 3-tier isolation (Due/Advance, Follow-up, +45d Re-engagement), reducing messaging noise by 50%+.
+- **Multi-Stage Lifecycle Management:** Schedules proactive outreach (`-7d`, `-3d`, `-1d`, `0d`, `+2d`, `+5d`, `+45d`) with automatic lifecycle invalidation (`SUPERSEDED_BY_PURCHASE`) upon repurchase.
+- **WhatsApp 3-Tier Dynamic Gateway (`refillcare_medicine_reminder`):** Unified 6-variable dynamic template engine supporting custom store profile, 12-digit (`91XXXXXXXXXX`) phone sanitization, high-contrast message preview, single test dispatch, and batch outreach with missing-mobile safety guards.
+- **Pharmacist Review Queue & Technical Diagnostics Toggle:** Routes ambiguous or missing-phone records to a clinical review queue, provides 1-click Technical Diagnostics toggles to hide/show complex quantiles ($P_{10}, P_{90}$), and generates delivery-ready 10-column CSVs and structured JSON payloads on demand.
 
 ---
 
@@ -58,11 +59,13 @@ RefillCare automates the complete operational lifecycle from raw ERP sales inges
                                  │
                                  ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │ 3. MED-SYNC APPOINTMENT SYNCHRONIZATION ENGINE              │
+  │ 3. MED-SYNC APPOINTMENT SYNCHRONIZATION & 3-TIER ISOLATION  │
   │    (refillcare/engine/med_sync.py)                          │
-  │    • Temporal clustering within default 8-day sync window   │
-  │    • Clinical anchor designation (highest stability tier)   │
-  │    • Consolidated multi-medication WhatsApp copy generation │
+  │    • Groups same-day chronic meds per patient (Name + Phone)│
+  │    • Dynamic 0-14d Sync Window (Exact Same-Day default 0d)  │
+  │    • Tier 1: Due / Advance (Stages -7d, -3d, -1d, 0d)       │
+  │    • Tier 2: Follow-up (Stages +2d, +5d)                    │
+  │    • Tier 3: Lapsed Re-engagement (Stage +45d)              │
   │    • Proactive 30-day box upsell recommendations            │
   └──────────────────────────────┬──────────────────────────────┘
                                  │
@@ -72,7 +75,7 @@ RefillCare automates the complete operational lifecycle from raw ERP sales inges
   │    (refillcare/engine/persistence.py & database/)           │
   │    • Persistent SQLite Database (enterprise.db)             │
   │    • RefillDecisionModel (Audited Rationale & Bounds)       │
-  │    • ReminderCycleModel & 6-Stage Lifecycle Tracking        │
+  │    • ReminderCycleModel & 7-Stage Lifecycle Tracking        │
   │    • Repurchase Auto-Reset (SUPERSEDED_BY_PURCHASE)         │
   └──────────────────────────────┬──────────────────────────────┘
                                  │
@@ -81,9 +84,11 @@ RefillCare automates the complete operational lifecycle from raw ERP sales inges
   │ 5. MULTI-CHANNEL DELIVERY & PHARMACIST INTERFACES           │
   │    • Streamlit Dashboard (app_refillcare.py): Operations,   │
   │      Review Queue, Date/Month Filters, Dual-Format Exports  │
+  │    • WhatsApp Gateway (refillcare/whatsapp/): 6-Variable    │
+  │      Dynamic Template Simulator, Test & Batch Dispatches    │
   │    • FastAPI Application (api/main.py): REST Endpoints      │
   │    • Vanilla HTML/JS Frontend: Real-Time SPA Interface      │
-  │    • WhatsApp CPaaS Integration: Template Message Dispatch  │
+  │    • Technical Diagnostics Toggles (Clean View for Staff)   │
   └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -111,7 +116,11 @@ RefillCare automates the complete operational lifecycle from raw ERP sales inges
 - **Consensus Physical Bounding:** Enforces physical boundaries $[0.65, 1.50] \times D_{supply}$ to prevent statistical model divergence on noisy transaction sequences.
 
 ### C. Med-Sync Appointment Bundling Algorithm
-- Iterates over active patient prescriptions and performs temporal clustering using a configurable synchronization window (default: **8 days**).
+- Iterates over active patient prescriptions and performs grouping using a composite patient key (`Customer Name` + `Mobile Number`).
+- Enforces strict **3-Tier Lifecycle Isolation**:
+  - **Tier 1 (Due / Advance):** Normal scheduled refills (Stages -7d, -3d, -1d, 0d).
+  - **Tier 2 (Follow-up):** Immediate post-due reminders (Stages +2d, +5d).
+  - **Tier 3 (Lapsed Re-engagement):** Long-tail patient winback reminders (Stage +45d).
 - Designates an anchor prescription based on clinical stability tier and earliest refill date.
 - Compiles a consolidated multi-item WhatsApp notification with interactive response options (`1` to Confirm All, `2` to Customize).
 - Operates in dual target modes:
@@ -119,14 +128,14 @@ RefillCare automates the complete operational lifecycle from raw ERP sales inges
   - **Filter by Date:** Pinpoints patient bundles whose primary anchor appointment falls on a specific date.
 
 ### D. Multi-Stage Lifecycle & Repurchase Supersession
-- Schedules patient engagement across 6 strategic lifecycle touchpoints:
+- Schedules patient engagement across 7 strategic lifecycle touchpoints:
   - **Day -7:** Advance refill planning notification.
   - **Day -3:** Refill preparation reminder.
   - **Day -1:** Refill due tomorrow reminder.
   - **Day 0 (Due):** Refill due today alert.
   - **Day +2:** First adherence follow-up.
   - **Day +5:** Urgency follow-up.
-  - **Day +40:** Lapsed patient re-engagement.
+  - **Day +45:** Lapsed patient re-engagement.
 - **Repurchase Auto-Reset:** When a patient purchases their medication on or before a scheduled reminder date, all remaining pending stages for that prescription cycle are automatically transitioned to `SUPERSEDED_BY_PURCHASE` with full audit provenance.
 
 ---
@@ -160,7 +169,7 @@ ai-mediastra-whatsapp-reminder/
 │   ├── reminder_engine.py  # 10-column delivery CSV generation with phone sanitization
 │   ├── send_message.py     # Single/batch WhatsApp dispatch with safety dry-run guard
 │   ├── storage.py          # SQLite snapshot store for review queues
-│   ├── scheduler.py        # Multi-stage schedule utilities (-7d to +40d)
+│   ├── scheduler.py        # Multi-stage schedule utilities (-7d to +45d)
 │   └── message_logs.py     # Audit logging of sent and simulated messages
 │
 ├── services/               # External Communication Integrations

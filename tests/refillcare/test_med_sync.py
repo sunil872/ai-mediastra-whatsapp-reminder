@@ -180,3 +180,110 @@ def test_quantile_uncertainty_model_bundle_integrity():
     assert len(p10) == 5
     assert len(p50) == 5
     assert len(p90) == 5
+
+
+def test_med_sync_stage_tier_isolation():
+    """Verify that DUE (-1d, 0d), FOLLOWUP (+2d, +5d), and LAPSED (+45d) items are strictly isolated into separate bundles."""
+    engine = MedSyncEngine(sync_window_days=7)
+    target = date(2026, 9, 30)
+
+    # 1 customer with:
+    # 2 Due items (Stage 0, -1)
+    # 1 Follow-up item (Stage +5)
+    # 1 Lapsed item (Stage +45)
+    records = [
+        {"customer_id": "C_TEST", "customer_name": "Kiran Kumar", "mobile_no": "9849950003", "item_id": "MED1", "item_name": "Telma 40", "expected_refill_date": target, "stage_offset": 0},
+        {"customer_id": "C_TEST", "customer_name": "Kiran Kumar", "mobile_no": "9849950003", "item_id": "MED2", "item_name": "Concor 5", "expected_refill_date": target, "stage_offset": -1},
+        {"customer_id": "C_TEST", "customer_name": "Kiran Kumar", "mobile_no": "9849950003", "item_id": "MED3", "item_name": "Ecosprin 75", "expected_refill_date": target, "stage_offset": 5},
+        {"customer_id": "C_TEST", "customer_name": "Kiran Kumar", "mobile_no": "9849950003", "item_id": "MED4", "item_name": "Thyronorm 50", "expected_refill_date": target, "stage_offset": 45},
+    ]
+
+    bundles = engine.cluster_patient_decisions(records, sync_window_days=7)
+
+    # Must produce 3 distinct bundles (DUE, FOLLOWUP, LAPSED) — NEVER MERGED TOGETHER
+    assert len(bundles) == 3
+    tier_map = {b.lifecycle_tier: b for b in bundles}
+    assert "DUE" in tier_map
+    assert "FOLLOWUP" in tier_map
+    assert "LAPSED" in tier_map
+
+    # Check DUE bundle
+    b_due = tier_map["DUE"]
+    assert b_due.total_items_count == 2
+    assert "Synchronized Prescription Refill Notice" in b_due.bundled_message_text
+    assert "Telma 40" in b_due.bundled_message_text
+    assert "Concor 5" in b_due.bundled_message_text
+
+    # Check FOLLOWUP bundle
+    b_fup = tier_map["FOLLOWUP"]
+    assert b_fup.total_items_count == 1
+    assert "follow-up" in b_fup.bundled_message_text.lower()
+    assert "Ecosprin 75" in b_fup.bundled_message_text
+
+    # Check LAPSED bundle
+    b_lapsed = tier_map["LAPSED"]
+    assert b_lapsed.total_items_count == 1
+    assert "care check-in" in b_lapsed.bundled_message_text.lower()
+    assert "Thyronorm 50" in b_lapsed.bundled_message_text
+
+
+def test_med_sync_exact_same_day_window_zero():
+    """Verify that sync_window_days=0 performs exact same-date grouping."""
+    engine = MedSyncEngine(sync_window_days=0)
+    target = date(2026, 9, 30)
+
+    # Kiran with 9 medications scheduled on 2026-09-30, and 1 on 2026-10-05
+    records = [
+        {"customer_id": "C_KIRAN", "customer_name": "Kiran", "mobile_no": "9849950003", "item_id": f"MED_{i}", "item_name": f"Medication {i}", "expected_refill_date": target, "stage_offset": 0}
+        for i in range(1, 10)
+    ]
+    records.append({
+        "customer_id": "C_KIRAN", "customer_name": "Kiran", "mobile_no": "9849950003", "item_id": "MED_LATER", "item_name": "Medication Later", "expected_refill_date": date(2026, 10, 5), "stage_offset": 0
+    })
+
+    bundles = engine.cluster_patient_decisions(records, sync_window_days=0)
+
+    # Should form 2 bundles: 1 bundle on 2026-09-30 (9 meds), 1 bundle on 2026-10-05 (1 med)
+    assert len(bundles) == 2
+    b_today = [b for b in bundles if b.anchor_refill_date == target][0]
+    assert b_today.total_items_count == 9
+    assert b_today.message_reduction_count == 8
+    assert b_today.customer_name == "Kiran"
+
+
+def test_med_sync_customer_phone_composite_key():
+    """Verify that patients with identical names but different mobile numbers are not merged, and blank numbers work."""
+    engine = MedSyncEngine(sync_window_days=7)
+    target = date(2026, 9, 28)
+
+    records = [
+        # Ramesh A (mobile 9705606266)
+        {"customer_id": "RAMESH", "customer_name": "RAMESH", "mobile_no": "9705606266", "item_id": "M1", "item_name": "EGLUCENT MIX 25 CART", "expected_refill_date": target},
+        # Ramesh B (mobile 9133928333)
+        {"customer_id": "RAMESH", "customer_name": "RAMESH", "mobile_no": "9133928333", "item_id": "M2", "item_name": "VILDAMAC M 50/ 500MG TAB", "expected_refill_date": target},
+        # D Arun (mobile - / blank)
+        {"customer_id": "D ARUN", "customer_name": "D ARUN", "mobile_no": "-", "item_id": "M3", "item_name": "NEUROBION FORTE TAB", "expected_refill_date": target},
+        # Kiran with 2 meds under same mobile
+        {"customer_id": "KIRAN", "customer_name": "KIRAN", "mobile_no": "9849950003", "item_id": "M4", "item_name": "CONCOR COR 2.5MG TAB", "expected_refill_date": target},
+        {"customer_id": "KIRAN", "customer_name": "KIRAN", "mobile_no": "9849950003", "item_id": "M5", "item_name": "IVABRAD 5MG TAB", "expected_refill_date": target},
+    ]
+
+    bundles = engine.cluster_patient_decisions(records, sync_window_days=7)
+
+    # 4 distinct patients: Ramesh A, Ramesh B, D Arun, Kiran (2 meds) -> 4 bundles total
+    assert len(bundles) == 4
+
+    ramesh_bundles = [b for b in bundles if b.customer_name == "RAMESH"]
+    assert len(ramesh_bundles) == 2
+    ramesh_mobiles = {b.mobile_no for b in ramesh_bundles}
+    assert ramesh_mobiles == {"9705606266", "9133928333"}
+
+    arun_b = [b for b in bundles if b.customer_name == "D ARUN"][0]
+    assert arun_b.mobile_no == "-"
+    assert arun_b.total_items_count == 1
+
+    kiran_b = [b for b in bundles if b.customer_name == "KIRAN"][0]
+    assert kiran_b.mobile_no == "9849950003"
+    assert kiran_b.total_items_count == 2
+    assert kiran_b.message_reduction_count == 1
+

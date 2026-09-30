@@ -249,13 +249,16 @@ export const ApiClient = {
   },
 
   // 7. Med-Sync & Quantile Uncertainty
-  async getMedSyncBundles(syncWindowDays = 8, customerId = null, targetMonth = null, targetDate = null) {
+  async getMedSyncBundles(syncWindowDays = 8, customerId = null, targetMonth = null, targetDate = null, lifecycleTier = null) {
     let url = `${API_BASE_URL}/api/v2/med-sync/bundles?sync_window_days=${syncWindowDays}`;
     if (customerId) url += `&customer_id=${encodeURIComponent(customerId)}`;
     if (targetDate) {
       url += `&target_date=${encodeURIComponent(targetDate)}`;
     } else if (targetMonth) {
       url += `&target_month=${encodeURIComponent(targetMonth)}`;
+    }
+    if (lifecycleTier && lifecycleTier !== "ALL") {
+      url += `&lifecycle_tier=${encodeURIComponent(lifecycleTier)}`;
     }
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch Med-Sync bundles");

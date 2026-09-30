@@ -28,8 +28,8 @@ RefillCare solves these clinical and behavioral failure modes through:
 - **Dual-Path Clinical Decision Routing (Path A vs. Path B):** Segments high-stability chronic regular patients from developing or irregular buyers.
 - **5 Clinical Behavioral Archetypes:** Models multi-pack scaling, early top-up carryover ($R_{inv}$), partial 10-strip clamping, post-lapse reset, and physical consumption bounds ($[0.65, 1.50] \times D_{supply}$).
 - **3-Head Quantile Uncertainty Envelopes ($P_{10}, P_{50}, P_{90}$):** Predicts median point estimates ($P_{50}$) alongside early refill risk ($P_{10}$) and critical lapse bounds ($P_{90}$) with 80.7% empirical test coverage.
-- **Med-Sync (Multi-Prescription Synchronization Engine):** Clusters multiple active chronic prescriptions due within an **8-day synchronization window** into a single consolidated refill appointment, reducing messaging noise by 50%+.
-- **Multi-Stage Lifecycle Management:** Schedules proactive outreach (`Day -7`, `Day -3`, `Day -1`, `Day 0`, `Day +2`, `Day +5`, `Day +40`) with automatic repurchase reset (`SUPERSEDED_BY_PURCHASE`).
+- **Med-Sync (Multi-Prescription Synchronization Engine):** Clusters multiple active chronic prescriptions due on the same date (or within configurable sync window) into a single consolidated refill appointment with 3-tier isolation, reducing messaging noise by 50%+.
+- **Multi-Stage Lifecycle Management:** Schedules proactive outreach (`Day -7`, `Day -3`, `Day -1`, `Day 0`, `Day +2`, `Day +5`, `Day +45`) with automatic repurchase reset (`SUPERSEDED_BY_PURCHASE`).
 - **Clean 10-Digit Display & Multi-Attribute Search:** Displays clean 10-digit mobile numbers for verification and supports real-time searching by Customer Name, 10-Digit Phone, Raw Phone, or Medication.
 - **Dual-Mode Filtering & Exports:** Supports filtering by complete calendar month or single specific date, with dual-format delivery exports (10-column CSV and clinical JSON).
 
@@ -71,7 +71,7 @@ flowchart TD
     end
 
     subgraph Lifecycle_Layer ["4. Enterprise Persistence & Lifecycle Controller"]
-        Archetypes --> Sched[6-Stage Lifecycle Scheduler: -7d to +40d]
+        Archetypes --> Sched[7-Stage Lifecycle Scheduler: -7d to +45d]
         Sched --> DB[(Enterprise Database: enterprise.db)]
         MedSync --> DB
         DB --> Lifecycle["Lifecycle State Machine<br/>(PENDING, DELIVERED, SUPERSEDED)"]
@@ -156,8 +156,8 @@ flowchart TD
 
 ## 5. Multi-Stage Lifecycle Management & Repurchase Supersession
 
-### A. 6-Stage Progressive Patient Lifecycle
-RefillCare manages active communication across 6 strategic touchpoints:
+### A. 7-Stage Progressive Patient Lifecycle
+RefillCare manages active communication across 7 strategic touchpoints with 3-tier isolation (Due/Advance, Follow-up, +45d Re-engagement):
 
 | Stage Offset | Stage Name | Communication Purpose |
 | :---: | :--- | :--- |
@@ -167,15 +167,15 @@ RefillCare manages active communication across 6 strategic touchpoints:
 | **Day 0** | Due Today | Refill due alert for pickup or immediate delivery dispatch. |
 | **Day +2** | Adherence Follow-up | Gentle check-in for patients who have not yet refilled. |
 | **Day +5** | Urgent Follow-up | Escalation alert highlighting the health risks of therapy interruption. |
-| **Day +40** | Lapsed Re-engagement | Re-engagement outreach for patients with prolonged treatment lapse. |
+| **Day +45** | Re-engagement | Re-engagement outreach for patients with prolonged treatment lapse. |
 
-### B. Why Lapsed Stages (+40d) Dispatch in Subsequent Months
+### B. Why Re-engagement Stages (+45d) Dispatch in Subsequent Months
 - **Example (SRINIVAS RAO - BILASHINE TAB):**
   - Last Purchase: `2026-06-27` (48 tablets $\approx$ 48 Days of Supply).
   - Expected Refill Due Date: `2026-06-27` + 48 days = `2026-08-07` (August).
-  - Stage +40d (Lapsed Re-engagement) Dispatch Date:
-    $$2026\text{-}08\text{-}07 + 40\text{ days} = \mathbf{2026\text{-}09\text{-}16}$$
-  - When filtering **September 2026**, this Stage +40d reminder legitimately appears on September 16 as a lapsed re-engagement touchpoint for a patient whose original refill was due in August.
+  - Stage +45d (Re-engagement) Dispatch Date:
+    $$2026\text{-}08\text{-}07 + 45\text{ days} = \mathbf{2026\text{-}09\text{-}21}$$
+  - When filtering **September 2026**, this Stage +45d reminder legitimately appears on September 21 as a lapsed re-engagement touchpoint for a patient whose original refill was due in August.
 
 ### C. Repurchase Auto-Reset (`SUPERSEDED_BY_PURCHASE`)
 - When a patient repurchases medication on or before a scheduled reminder date, the system marks the purchase event and automatically marks all remaining pending stages for prior cycles as `SUPERSEDED_BY_PURCHASE`.
@@ -204,20 +204,21 @@ RefillCare manages active communication across 6 strategic touchpoints:
 
 ### A. Streamlit Pharmacist Operations Dashboard (`app_refillcare.py`)
 - **Tab 1: 📊 Executive Overview:** Real-time KPIs, channel isolation metrics, and stability distribution.
-- **Tab 2: 📥 Ingestion & Batch Management:** File dropzone, date diagnostics, and 1-click batch rollback.
+- **Tab 2: 📥 Data Update:** File dropzone, pre-flight date diagnostics, and 1-click batch rollback.
 - **Tab 3: 🧠 Prediction Diagnostics:** Dual-path routing, 5 archetypes diagnostics, and feature analysis.
-- **Tab 4: 📅 Reminder List:** Date vs. Month view selector, multi-attribute search, lifecycle stage filters, and dual-format exports (10-column CSV & JSON).
-- **Tab 5: 📦 Med-Sync Bundles:** Dynamic 8-day sync window slider (3–14 days), Date vs. Month target toggle, customer/phone search, live WhatsApp message inspector, and CSV export.
+- **Tab 4: 📅 Reminder List:** Date vs. Month view selector, `Refill Function` badges, Technical Diagnostics toggle, multi-attribute search, lifecycle stage filters, and dual-format exports (10-column CSV & JSON).
+- **Tab 5: 📦 Med-Sync Bundles:** Dynamic sync window slider (0–14 days, default 0d), Technical Diagnostics toggle (P10/P90 quantiles default hidden for clean client view), Date vs. Month target toggle, customer/phone search, live WhatsApp message inspector, and CSV export.
 - **Tab 6: ⚠️ Customers Needing Review:** Pharmacist review queue for manual verification and missing phone updates.
+- **Tab 7: 💬 WhatsApp:** Unified 3-tier WhatsApp outreach gateway (`refillcare_medicine_reminder`), dynamic store name (`PHARMA HUBB`) and contact (`+91 9966473474`), 12-digit (`91XXXXXXXXXX`) phone sanitization, high-contrast message preview, single test dispatch, and batch outreach with missing-mobile safety guards.
 
 ### B. Enterprise REST API Endpoints (`api/main.py`)
 
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
-| `/api/v2/med-sync/bundles` | `GET` | Retrieve synchronized patient bundles (supports `sync_window_days=8`, `target_date`, `target_month`). |
+| `/api/v2/med-sync/bundles` | `GET` | Retrieve synchronized patient bundles (supports `sync_window_days`, `target_date`, `target_month`). |
 | `/api/v2/models/quantiles` | `GET` | Retrieve 3-Head Quantile uncertainty envelope benchmark metrics. |
-| `/api/reminders/daily` | `GET` | Fetch daily scheduled reminder queue (supports `target_date` and `target_month`). |
-| `/api/reminders/monthly` | `GET` | Fetch monthly aggregated reminder delivery queue. |
+| `/api/reminders/daily` | `GET` | Fetch daily scheduled reminder queue with `refill_function` (supports `target_date` and `target_month`). |
+| `/api/reminders/monthly` | `GET` | Fetch monthly aggregated reminder delivery queue with `refill_function`. |
 | `/api/reminders/{id}/approve` | `POST` | Pharmacist manual approval of pending reminder stage. |
 | `/api/reminders/{id}/reject` | `POST` | Pharmacist rejection of pending reminder stage with reason code. |
 | `/api/sales/monthly-upload` | `POST` | Ingest and validate monthly sales file with batch traceability. |

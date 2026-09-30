@@ -38,6 +38,7 @@ from refillcare.engine.decision_types import (
     STATUS_SUPERSEDED,
 )
 from refillcare.engine.reminder_lifecycle import get_stage_message_template
+from refillcare.whatsapp.template_formatter import get_refill_function
 from services.xinno_whatsapp import send_template_message
 from utils.validators import mask_phone, normalize_to_whatsapp_number
 
@@ -403,6 +404,7 @@ class RefillPersistenceManager:
                 "status": stage.status,
                 "path": dec.path if dec else "UNKNOWN",
                 "stability_tier": dec.stability_tier if dec else "UNKNOWN",
+                "refill_function": get_refill_function(stage.stage_offset),
                 "prediction_method": dec.prediction_method if dec else "NONE",
                 "historical_median_days": dec.cadence_median if dec else None,
                 "predicted_interval_days": dec.predicted_interval_days if dec else None,
@@ -493,6 +495,7 @@ class RefillPersistenceManager:
                 "status": stage.status,
                 "path": dec.path if dec else "UNKNOWN",
                 "stability_tier": dec.stability_tier if dec else "UNKNOWN",
+                "refill_function": get_refill_function(stage.stage_offset),
                 "prediction_method": dec.prediction_method if dec else "NONE",
                 "historical_median_days": dec.cadence_median if dec else None,
                 "predicted_interval_days": dec.predicted_interval_days if dec else None,

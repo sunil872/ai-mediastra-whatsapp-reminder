@@ -146,6 +146,7 @@ class ReminderItem(BaseModel):
     expected_refill_date: str
     reminder_date: str
     reminder_stage: str
+    refill_function: Optional[str] = "DUE_REFILL"
     delivery_status: str
 
 
@@ -287,6 +288,7 @@ class ReminderQueueItem(BaseModel):
     status: str
     path: str
     stability_tier: str
+    refill_function: Optional[str] = "DUE_REFILL"
     prediction_method: str
     historical_median_days: Optional[float]
     predicted_interval_days: Optional[int]
@@ -347,11 +349,14 @@ class MedSyncBundleSchema(BaseModel):
     customer_id: str
     customer_name: str
     mobile_no: Optional[str] = None
+    raw_mobile_no: Optional[str] = None
     anchor_item_id: str
     anchor_item_name: str
     anchor_refill_date: str
     window_start_date: str
     window_end_date: str
+    lifecycle_tier: Optional[str] = "DUE"
+    refill_function: Optional[str] = "DUE_REFILL"
     synced_items: List[SyncedMedicationItemSchema] = []
     total_items_count: int
     message_reduction_count: int

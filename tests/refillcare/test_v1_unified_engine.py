@@ -169,9 +169,8 @@ def test_7_stage_reminder_creation_and_offsets():
     assert cycle.stages[4].stage_offset == 2
     assert cycle.stages[4].target_send_date == exp + timedelta(days=2)  # 2026-08-01
     assert cycle.stages[5].stage_offset == 5
-    assert cycle.stages[5].target_send_date == exp + timedelta(days=5)  # 2026-08-04
-    assert cycle.stages[6].stage_offset == 40
-    assert cycle.stages[6].target_send_date == exp + timedelta(days=40) # 2026-09-08
+    assert cycle.stages[6].stage_offset == 45
+    assert cycle.stages[6].target_send_date == exp + timedelta(days=45) # 2026-09-13
     assert "Care Check-in" in cycle.stages[6].message_text
 
 
@@ -434,9 +433,9 @@ def test_december_30th_purchase_schedule_and_dates():
     assert cycle.stages[5].stage_offset == 5
     assert cycle.stages[5].target_send_date == date(2027, 2, 3)
 
-    # Stage 7: Day +40 (2027-03-10)
-    assert cycle.stages[6].stage_offset == 40
-    assert cycle.stages[6].target_send_date == date(2027, 3, 10)
+    # Stage 7: Day +45 (2027-03-15)
+    assert cycle.stages[6].stage_offset == 45
+    assert cycle.stages[6].target_send_date == date(2027, 3, 15)
 
 
 def test_repurchase_after_churn_reactivates_new_cycle():
@@ -491,7 +490,7 @@ def test_repurchase_after_churn_reactivates_new_cycle():
     assert new_cycle is not None
     assert new_cycle.stages[0].target_send_date == date(2027, 5, 18)  # Day -7
     assert new_cycle.stages[3].target_send_date == date(2027, 5, 25)  # Day 0
-    assert new_cycle.stages[6].target_send_date == date(2027, 7, 4)   # Day +40
+    assert new_cycle.stages[6].target_send_date == date(2027, 7, 9)   # Day +45
 
 
 def test_phone_number_sanitization_in_csv_export():

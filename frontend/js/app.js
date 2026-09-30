@@ -13,13 +13,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupUploadDropzone();
   setupActionListeners();
   
-  // Dynamic default date (defaults to today's date)
+  // Dynamic default date (defaults to current date e.g. 2026-09-30)
   const todayStr = new Date().toISOString().split("T")[0];
   const dateInput = document.getElementById("reminder-target-date");
-  if (dateInput && !dateInput.value) dateInput.value = todayStr;
+  if (dateInput) dateInput.value = todayStr;
+
+  const medsyncDateInput = document.getElementById("medsync-target-date");
+  if (medsyncDateInput) medsyncDateInput.value = todayStr;
 
   const reviewDateInput = document.getElementById("review-target-date");
-  if (reviewDateInput && !reviewDateInput.value) reviewDateInput.value = todayStr;
+  if (reviewDateInput) reviewDateInput.value = todayStr;
 
   await initReminderMonthOptions();
   await loadInitialData();
@@ -302,11 +305,17 @@ async function loadReminders() {
       const tr = document.createElement("tr");
       const isValidPhone = r.mobile_status === "Valid";
       const dispPhone = formatDisplayPhone10(r.phone_number);
+      const funcName = r.refill_function || "DUE_REFILL";
+      const funcBadge = funcName === "LAPSED_REENGAGEMENT" 
+        ? '<span class="badge badge-danger">LAPSED_REENGAGEMENT</span>' 
+        : (funcName === "REFILL_FOLLOW_UP" 
+            ? '<span class="badge badge-warning">REFILL_FOLLOW_UP</span>' 
+            : '<span class="badge badge-primary">DUE_REFILL</span>');
       tr.innerHTML = `
         <td><strong>${r.customer_name}</strong></td>
         <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-warning">Missing</span>'}</code></td>
         <td><span class="badge ${isValidPhone ? 'badge-success' : 'badge-warning'}">${r.mobile_status}</span></td>
-        <td><span class="badge badge-primary">Customer (S0/)</span></td>
+        <td>${funcBadge}</td>
         <td>${r.item_name}</td>
         <td>${r.last_purchase_date}</td>
         <td>${r.estimated_days_of_supply} d</td>
@@ -613,19 +622,20 @@ async function handleFileSelected(file) {
 // ------------------------------------------------------------------------------
 async function loadMedSyncBundles() {
   const slider = document.getElementById("sync-window-slider");
-  const windowDays = slider ? parseInt(slider.value, 10) : 8;
+  const windowDays = slider ? parseInt(slider.value, 10) : 0;
   const syncValLabel = document.getElementById("sync-window-val");
-  if (syncValLabel) syncValLabel.innerText = windowDays;
+  if (syncValLabel) syncValLabel.innerText = windowDays === 0 ? "0 (Same-Date Group-By)" : windowDays;
 
-  const viewMode = document.getElementById("medsync-view-mode")?.value || "MONTH";
+  const viewMode = document.getElementById("medsync-view-mode")?.value || "DATE";
   const monthSelect = document.getElementById("medsync-month-select");
   const dateInput = document.getElementById("medsync-target-date");
+  const tierFilter = document.getElementById("medsync-tier-select")?.value || "ALL";
 
   let targetMonth = null;
   let targetDate = null;
 
   if (viewMode === "DATE") {
-    targetDate = dateInput ? dateInput.value : "2026-09-24";
+    targetDate = dateInput ? dateInput.value : "2026-09-30";
     if (dateInput) dateInput.style.display = "inline-block";
     if (monthSelect) monthSelect.style.display = "none";
   } else {
@@ -639,7 +649,7 @@ async function loadMedSyncBundles() {
   const cleanSearchDigits = query.replace(/\D/g, "");
 
   try {
-    const data = await ApiClient.getMedSyncBundles(windowDays, null, targetMonth, targetDate);
+    const data = await ApiClient.getMedSyncBundles(windowDays, null, targetMonth, targetDate, tierFilter);
     const impact = data.impact_summary || {};
     const bundles = data.bundles || [];
     const availableMonths = data.available_months || [];
@@ -664,7 +674,8 @@ async function loadMedSyncBundles() {
     if (bannerText) {
       const activeMonthObj = availableMonths.find(m => m.key === selectedMonth);
       const activeLabel = viewMode === "DATE" ? `Date: ${targetDate}` : (activeMonthObj ? activeMonthObj.label : selectedMonth);
-      bannerText.innerHTML = `<strong>${activeLabel}</strong> (predicted from uploaded sales up to <strong>${lastSalesMonth}</strong> with <strong>${windowDays}d</strong> sync window) — <strong>${Number(impact.total_prescriptions_synced || 0).toLocaleString()}</strong> prescriptions grouped into <strong>${Number(impact.total_dispatches_generated || 0).toLocaleString()}</strong> bundles.`;
+      const winLabel = windowDays === 0 ? "0d (Same-Date Group-By)" : `${windowDays}d`;
+      bannerText.innerHTML = `<strong>${activeLabel}</strong> (predicted from uploaded sales up to <strong>${lastSalesMonth}</strong> with <strong>${winLabel}</strong> sync window) — <strong>${Number(impact.total_prescriptions_synced || 0).toLocaleString()}</strong> prescriptions grouped into <strong>${Number(impact.total_dispatches_generated || 0).toLocaleString()}</strong> bundles.`;
     }
 
     const pElem = document.getElementById("medsync-total-prescriptions");
@@ -705,10 +716,19 @@ async function loadMedSyncBundles() {
       const p10p90 = (b.earliest_p10_date && b.latest_p90_date) ? `${b.earliest_p10_date} → ${b.latest_p90_date}` : "± 7d confidence";
       const reductionBadge = b.message_reduction_count > 0 ? `<span class="badge badge-success">-${b.message_reduction_count} msgs saved</span>` : `<span class="badge badge-secondary">1 msg</span>`;
       const dispPhone = formatDisplayPhone10(b.mobile_no);
+      const tierBadge = b.lifecycle_tier === "LAPSED" ? '<span class="badge badge-danger">Lapsed Re-engagement</span>' : (b.lifecycle_tier === "FOLLOWUP" ? '<span class="badge badge-warning">Follow-up</span>' : '<span class="badge badge-primary">Due / Advance</span>');
+
+      const funcName = b.refill_function || (b.lifecycle_tier === "LAPSED" ? "LAPSED_REENGAGEMENT" : (b.lifecycle_tier === "FOLLOWUP" ? "REFILL_FOLLOW_UP" : "DUE_REFILL"));
+      const funcBadge = funcName === "LAPSED_REENGAGEMENT" 
+        ? '<span class="badge badge-danger">LAPSED_REENGAGEMENT</span>' 
+        : (funcName === "REFILL_FOLLOW_UP" 
+            ? '<span class="badge badge-warning">REFILL_FOLLOW_UP</span>' 
+            : '<span class="badge badge-primary">DUE_REFILL</span>');
 
       tr.innerHTML = `
         <td><strong>${b.customer_name}</strong></td>
         <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-warning">Missing</span>'}</code></td>
+        <td>${funcBadge}</td>
         <td><strong style="color: var(--primary);">${b.anchor_item_name}</strong></td>
         <td style="max-width: 280px;">${itemsList}</td>
         <td>${b.anchor_refill_date}</td>
@@ -736,22 +756,37 @@ async function loadMedSyncBundles() {
 // Action Listeners
 // ------------------------------------------------------------------------------
 function setupActionListeners() {
-  // Reminder List Search Listener
+  // Reminder List Search Listeners (Input, Enter Key, and Search Button)
+  document.getElementById("btn-search-reminders")?.addEventListener("click", loadReminders);
   document.getElementById("reminder-search-input")?.addEventListener("input", loadReminders);
+  document.getElementById("reminder-search-input")?.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      loadReminders();
+    }
+  });
 
-  // Med-Sync Listeners
+  // Med-Sync Listeners (Input, Enter Key, Search Button, Filters)
+  document.getElementById("btn-search-medsync")?.addEventListener("click", loadMedSyncBundles);
   document.getElementById("btn-refresh-medsync")?.addEventListener("click", loadMedSyncBundles);
+  document.getElementById("medsync-search")?.addEventListener("input", loadMedSyncBundles);
+  document.getElementById("medsync-search")?.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      loadMedSyncBundles();
+    }
+  });
   document.getElementById("medsync-view-mode")?.addEventListener("change", () => {
     loadMedSyncBundles();
   });
   document.getElementById("medsync-target-date")?.addEventListener("change", loadMedSyncBundles);
   document.getElementById("medsync-month-select")?.addEventListener("change", loadMedSyncBundles);
+  document.getElementById("medsync-tier-select")?.addEventListener("change", loadMedSyncBundles);
   document.getElementById("sync-window-slider")?.addEventListener("input", (e) => {
     const valSpan = document.getElementById("sync-window-val");
-    if (valSpan) valSpan.innerText = e.target.value;
+    if (valSpan) valSpan.innerText = e.target.value === "0" ? "0 (Same-Date Group-By)" : e.target.value;
   });
   document.getElementById("sync-window-slider")?.addEventListener("change", loadMedSyncBundles);
-  document.getElementById("medsync-search")?.addEventListener("input", loadMedSyncBundles);
 
   // Confirm Ingest
   document.getElementById("btn-confirm-ingest")?.addEventListener("click", async () => {

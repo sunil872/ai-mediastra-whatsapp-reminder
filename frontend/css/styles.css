@@ -389,6 +389,19 @@ body {
   background-color: #dc2626;
 }
 
+.btn-danger-search, #btn-search-reminders, #btn-search-medsync {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+  border: 1px solid #b91c1c !important;
+  font-weight: 600 !important;
+}
+
+.btn-danger-search:hover, #btn-search-reminders:hover, #btn-search-medsync:hover {
+  background-color: #b91c1c !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35) !important;
+}
+
 .btn-outline {
   border-color: var(--border-color);
   background-color: var(--bg-card);
