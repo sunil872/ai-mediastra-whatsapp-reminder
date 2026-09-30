@@ -3059,28 +3059,16 @@ def render_app():
 
         # Row 1: Target Controls & Filters
         st.markdown("#### 🎯 Outreach Target & Lifecycle Stage Selection")
-        wa_mode_val = st.session_state.get("wa_campaign_mode", "Individual Reminders")
-        if wa_mode_val == "Med-Sync Bundles":
-            wcol1, wcol2, wcol3, wcol4, wcol5 = st.columns([1.5, 1.4, 1.6, 1.3, 1.3])
-        else:
-            wcol1, wcol2, wcol3, wcol4 = st.columns([1.5, 1.5, 1.8, 1.2])
+        wcol1, wcol2, wcol3, wcol4 = st.columns([1.5, 1.8, 1.4, 1.3])
 
         with wcol1:
-            wa_mode = st.radio(
-                "Campaign Mode",
-                ["Individual Reminders", "Med-Sync Bundles"],
-                horizontal=True,
-                key="wa_campaign_mode",
-            )
-
-        with wcol2:
             wa_filter_mode = st.selectbox(
                 "Target Selection Mode",
                 ["Specific Date", "Complete Month"],
                 key="wa_target_filter_mode",
             )
 
-        with wcol3:
+        with wcol2:
             if wa_filter_mode == "Specific Date":
                 wa_sel_date = st.date_input(
                     "Select Target Send Date",
@@ -3099,7 +3087,7 @@ def render_app():
                 wa_sel_date = None
                 wa_target_label = wa_sel_month
 
-        with wcol4:
+        with wcol3:
             wa_tier_filter = st.selectbox(
                 "Lifecycle Tier",
                 ["ALL", "DUE (Due / Advance)", "FOLLOWUP (Follow-up)", "LAPSED (+45d Re-engagement)"],
@@ -3107,133 +3095,81 @@ def render_app():
             )
             raw_tier = wa_tier_filter.split(" ")[0]
 
-        wa_sync_win = 0
-        if wa_mode == "Med-Sync Bundles":
-            with wcol5:
-                wa_sync_win = st.slider(
-                    "Sync Window (Days)",
-                    min_value=0,
-                    max_value=14,
-                    value=0,
-                    step=1,
-                    key="wa_medsync_window_slider",
-                    help="0 = Exact Same-Date Group-By. 1-14 = Multi-Day Window Sync.",
-                )
+        with wcol4:
+            wa_sync_win = st.slider(
+                "Sync Window (Days)",
+                min_value=0,
+                max_value=14,
+                value=0,
+                step=1,
+                key="wa_medsync_window_slider",
+                help="0 = Exact Same-Date Group-By. 1-14 = Multi-Day Window Sync.",
+            )
 
-        # Load candidates from database
+        # Load candidates from database using Med-Sync Clustering
         candidate_records = []
         with SessionLocal() as db:
-            if wa_mode == "Individual Reminders":
-                q = db.query(ReminderStageModel).join(
-                    ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id
-                ).filter(
-                    ReminderCycleModel.is_active == True,
-                    ReminderStageModel.status.in_(["PENDING", "SCHEDULED", "DRY_RUN_SUCCESS", "FAILED"]),
-                )
+            from refillcare.engine.med_sync import MedSyncEngine
+            engine = MedSyncEngine(sync_window_days=wa_sync_win)
 
+            # Load candidates for bundling from persistent queue / decisions
+            if wa_filter_mode == "Specific Date" and wa_sel_date:
+                medsync_input = load_v1_reminder_queue_df(target_date=wa_sel_date)
+            elif wa_sel_month and wa_sel_month != "ALL":
+                medsync_input = load_v1_reminder_queue_df(target_month=wa_sel_month)
+            else:
+                medsync_input = pd.DataFrame()
+
+            is_from_queue = not medsync_input.empty
+            if medsync_input.empty:
+                medsync_input = load_active_refill_decisions_for_medsync(eligible_df)
+
+            all_bundles = engine.cluster_patient_decisions(medsync_input, sync_window_days=wa_sync_win)
+
+            # Filter bundles by target date / month if not already pre-filtered by queue
+            if is_from_queue:
+                filtered_b = all_bundles
+            else:
                 if wa_filter_mode == "Specific Date" and wa_sel_date:
-                    q = q.filter(ReminderStageModel.target_send_date == wa_sel_date)
+                    filtered_b = [b for b in all_bundles if b.anchor_refill_date == wa_sel_date]
                 elif wa_sel_month and wa_sel_month != "ALL":
                     try:
-                        y, m = map(int, wa_sel_month.split("-"))
-                        start_d = date(y, m, 1)
-                        end_d = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
-                        q = q.filter(ReminderStageModel.target_send_date >= start_d, ReminderStageModel.target_send_date < end_d)
+                        y_val, m_val = map(int, wa_sel_month.split("-"))
+                        filtered_b = [b for b in all_bundles if b.anchor_refill_date.year == y_val and b.anchor_refill_date.month == m_val]
                     except Exception:
-                        pass
-
-                if raw_tier == "DUE":
-                    q = q.filter(ReminderStageModel.stage_offset <= 0)
-                elif raw_tier == "FOLLOWUP":
-                    q = q.filter(ReminderStageModel.stage_offset.in_([2, 5]))
-                elif raw_tier == "LAPSED":
-                    q = q.filter(ReminderStageModel.stage_offset.in_([40, 45]))
-
-                stages_found = q.all()
-                for stg in stages_found:
-                    dec = getattr(stg.cycle, "decision", None)
-                    phone = dec.mobile_no if dec and dec.mobile_no else ""
-                    cust_name = dec.customer_name if dec and dec.customer_name else "Valued Customer"
-                    med_name = dec.item_name if dec and dec.item_name else "Prescription Medication"
-                    mob_stat = determine_mobile_status(phone)
-
-                    candidate_records.append({
-                        "reminder_id": stg.reminder_id,
-                        "customer_name": cust_name,
-                        "phone_number": phone,
-                        "mobile_display": format_display_phone_10digits(phone),
-                        "mobile_status": mob_stat,
-                        "medication": med_name,
-                        "expected_refill_date": stg.expected_refill_date,
-                        "target_send_date": stg.target_send_date,
-                        "stage_offset": stg.stage_offset,
-                        "tier": get_tier_for_stage_offset(stg.stage_offset),
-                        "status": stg.status,
-                        "stage_obj": stg,
-                    })
-            else:
-                # Med-Sync Bundles Mode
-                from refillcare.engine.med_sync import MedSyncEngine
-                engine = MedSyncEngine(sync_window_days=wa_sync_win)
-
-                # Load candidates for bundling from persistent queue / decisions
-                if wa_filter_mode == "Specific Date" and wa_sel_date:
-                    medsync_input = load_v1_reminder_queue_df(target_date=wa_sel_date)
-                elif wa_sel_month and wa_sel_month != "ALL":
-                    medsync_input = load_v1_reminder_queue_df(target_month=wa_sel_month)
-                else:
-                    medsync_input = pd.DataFrame()
-
-                is_from_queue = not medsync_input.empty
-                if medsync_input.empty:
-                    medsync_input = load_active_refill_decisions_for_medsync(eligible_df)
-
-                all_bundles = engine.cluster_patient_decisions(medsync_input, sync_window_days=wa_sync_win)
-
-                # Filter bundles by target date / month if not already pre-filtered by queue
-                if is_from_queue:
-                    filtered_b = all_bundles
-                else:
-                    if wa_filter_mode == "Specific Date" and wa_sel_date:
-                        filtered_b = [b for b in all_bundles if b.anchor_refill_date == wa_sel_date]
-                    elif wa_sel_month and wa_sel_month != "ALL":
-                        try:
-                            y_val, m_val = map(int, wa_sel_month.split("-"))
-                            filtered_b = [b for b in all_bundles if b.anchor_refill_date.year == y_val and b.anchor_refill_date.month == m_val]
-                        except Exception:
-                            filtered_b = all_bundles
-                    else:
                         filtered_b = all_bundles
+                else:
+                    filtered_b = all_bundles
 
-                # Filter by tier / refill function
-                if raw_tier == "DUE":
-                    filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "DUE" or getattr(b, "refill_function", "DUE_REFILL") == "DUE_REFILL"]
-                elif raw_tier == "FOLLOWUP":
-                    filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "FOLLOWUP" or getattr(b, "refill_function", "DUE_REFILL") == "REFILL_FOLLOW_UP"]
-                elif raw_tier == "LAPSED":
-                    filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "LAPSED" or getattr(b, "refill_function", "DUE_REFILL") == "LAPSED_REENGAGEMENT"]
+            # Filter by tier / refill function
+            if raw_tier == "DUE":
+                filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "DUE" or getattr(b, "refill_function", "DUE_REFILL") == "DUE_REFILL"]
+            elif raw_tier == "FOLLOWUP":
+                filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "FOLLOWUP" or getattr(b, "refill_function", "DUE_REFILL") == "REFILL_FOLLOW_UP"]
+            elif raw_tier == "LAPSED":
+                filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "LAPSED" or getattr(b, "refill_function", "DUE_REFILL") == "LAPSED_REENGAGEMENT"]
 
-                for b in filtered_b:
-                    meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
-                    phone_val = b.mobile_no or ""
-                    mob_stat = determine_mobile_status(phone_val)
-                    tier_val = getattr(b, "lifecycle_tier", "DUE")
+            for b in filtered_b:
+                meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
+                phone_val = b.mobile_no or ""
+                mob_stat = determine_mobile_status(phone_val)
+                tier_val = getattr(b, "lifecycle_tier", "DUE")
 
-                    candidate_records.append({
-                        "reminder_id": b.bundle_id,
-                        "customer_name": b.customer_name or "Valued Customer",
-                        "phone_number": phone_val,
-                        "mobile_display": format_display_phone_10digits(phone_val),
-                        "mobile_status": mob_stat,
-                        "medication": ", ".join(meds_list),
-                        "expected_refill_date": b.anchor_refill_date,
-                        "target_send_date": wa_sel_date if wa_sel_date else b.anchor_refill_date,
-                        "stage_offset": 0 if tier_val == "DUE" else (5 if tier_val == "FOLLOWUP" else 45),
-                        "tier": tier_val,
-                        "refill_function": getattr(b, "refill_function", "DUE_REFILL"),
-                        "status": "PENDING",
-                        "bundle_obj": b,
-                    })
+                candidate_records.append({
+                    "reminder_id": b.bundle_id,
+                    "customer_name": b.customer_name or "Valued Customer",
+                    "phone_number": phone_val,
+                    "mobile_display": format_display_phone_10digits(phone_val),
+                    "mobile_status": mob_stat,
+                    "medication": ", ".join(meds_list),
+                    "expected_refill_date": b.anchor_refill_date,
+                    "target_send_date": wa_sel_date if wa_sel_date else b.anchor_refill_date,
+                    "stage_offset": 0 if tier_val == "DUE" else (5 if tier_val == "FOLLOWUP" else 45),
+                    "tier": tier_val,
+                    "refill_function": getattr(b, "refill_function", "DUE_REFILL"),
+                    "status": "PENDING",
+                    "bundle_obj": b,
+                })
 
         valid_count = sum(1 for r in candidate_records if r["mobile_status"] == "Valid")
         missing_count = len(candidate_records) - valid_count
@@ -3398,23 +3334,13 @@ def render_app():
 
                 with SessionLocal() as db_session:
                     status_text.text(f"Starting batch dispatch of {batch_limit} records (Dry-run: {bulk_dry_run})...")
-                    if wa_mode == "Med-Sync Bundles":
-                        medsync_bundles_list = [r["bundle_obj"] for r in candidate_records if "bundle_obj" in r]
-                        batch_outcome = dispatcher.dispatch_medsync_batch(
-                            db=db_session,
-                            bundles=medsync_bundles_list,
-                            dry_run=bulk_dry_run,
-                            batch_limit=batch_limit,
-                        )
-                    else:
-                        batch_outcome = dispatcher.dispatch_batch(
-                            db=db_session,
-                            target_date=wa_sel_date,
-                            target_month=wa_sel_month,
-                            tier_filter=raw_tier,
-                            dry_run=bulk_dry_run,
-                            batch_limit=batch_limit,
-                        )
+                    medsync_bundles_list = [r["bundle_obj"] for r in candidate_records if "bundle_obj" in r]
+                    batch_outcome = dispatcher.dispatch_medsync_batch(
+                        db=db_session,
+                        bundles=medsync_bundles_list,
+                        dry_run=bulk_dry_run,
+                        batch_limit=batch_limit,
+                    )
                     progress_bar.progress(1.0)
                     status_text.text("Dispatch batch complete!")
 
