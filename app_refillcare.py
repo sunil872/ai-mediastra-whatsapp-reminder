@@ -3269,20 +3269,24 @@ def render_app():
                 default_12d_phone = digits_only if digits_only else ""
 
             # Interactive Single Test Send
-            with st.expander("📲 Send Single Test WhatsApp Message", expanded=True):
+            with st.expander("📲 Send Single Test WhatsApp Message (Live / Dry-Run)", expanded=True):
                 tc1, tc2, tc3 = st.columns([1.5, 1.0, 1.0])
                 with tc1:
                     test_phone_input = st.text_input(
-                        "Recipient Phone Number (12 Digits: 91...)",
+                        "Recipient Phone Number (10 or 12 Digits)",
                         value=default_12d_phone,
                         key=f"wa_test_phone_{selected_sample_idx}",
-                        help="Enter full 12-digit phone number with 91 country code (e.g. 919848310930).",
+                        help="Enter your mobile number (e.g. 9848310930 or 919848310930) to test live receipt.",
                     )
                 with tc2:
-                    test_is_dry_run = st.checkbox("Dry-Run Only", value=True, key="wa_single_dry_run")
+                    test_is_dry_run = st.checkbox("Dry-Run Only (Uncheck for Live)", value=True, key="wa_single_dry_run")
+                    if test_is_dry_run:
+                        st.caption("🟡 Mode: **Dry-Run Simulation**")
+                    else:
+                        st.caption("🔴 Mode: **LIVE API (Real WhatsApp)**")
                 with tc3:
                     st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                    btn_send_test = st.button("🚀 Send Test", key="btn_send_single_wa", use_container_width=True)
+                    btn_send_test = st.button("🚀 Send Test Message", key="btn_send_single_wa", use_container_width=True)
 
                 # Validation guard on test send
                 mob_check = determine_mobile_status(test_phone_input)
@@ -3293,7 +3297,8 @@ def render_app():
                     if not test_is_dry_run and mob_check != "Valid":
                         st.error("🛑 **Dispatch Blocked:** Cannot send live WhatsApp message to a missing or invalid phone number.")
                     else:
-                        with st.spinner("Dispatching single WhatsApp reminder..."):
+                        mode_label = "Dry-Run simulation" if test_is_dry_run else "LIVE WhatsApp message"
+                        with st.spinner(f"Dispatching {mode_label}..."):
                             test_res = wa_client.send_refill_reminder(
                                 phone_number=test_phone_input,
                                 customer_name=active_preview_record["customer_name"],
