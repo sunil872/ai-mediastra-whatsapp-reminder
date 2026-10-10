@@ -1817,12 +1817,12 @@ def render_app():
     # --------------------------------------------------------------------------
     with tab_upload:
         st.markdown("### 📁 Upload Latest Sales Data")
-        st.write("Upload a newly received monthly sales file (**CSV** or **XLSX/XLS**) to inspect transaction hygiene, validate records, and integrate updates into the customer refill queue.")
+        st.write("Upload newly received pharmacy sales transactions (**CSV** or **XLSX/XLS**) to inspect transaction hygiene, validate records, and dynamically update the patient refill queue.")
 
         uploaded_file = st.file_uploader(
             "Select Sales Data File (.csv, .xlsx, .xls)",
             type=["csv", "xlsx", "xls"],
-            key="monthly_sales_uploader",
+            key="sales_data_uploader",
             help="Supported file types: CSV, Excel (.xlsx, .xls). Mappings support standard pharmacy transaction headers.",
         )
 

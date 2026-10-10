@@ -1,13 +1,13 @@
-"""Dynamic Production Monthly Ingestion & RefillCare Prediction Pipeline.
+"""Dynamic Production Sales Ingestion & RefillCare Prediction Pipeline.
 
 Dynamically processes the canonical sales transaction dataset
 (data/refillcare/customer_data_fields.csv), detects the latest transaction date,
-and evaluates UnifiedRefillDecisionEngine predictions for the upcoming target month.
+and evaluates UnifiedRefillDecisionEngine predictions for the upcoming target horizon.
 
 Supports:
-1. Dynamic baseline execution: Runs directly on current master data (e.g. Sept 30, 2026 data predicting Oct 2026).
-2. Incremental monthly sales ingestion: Pass `--new-sales <path>` to validate, normalize, backup,
-   and append a new month's sales dataset before generating predictions.
+1. Dynamic baseline execution: Runs directly on current master data.
+2. Incremental sales ingestion: Pass `--new-sales <path>` to validate, normalize, backup,
+   and append any new sales dataset before generating predictions.
 """
 
 from __future__ import annotations
@@ -31,14 +31,14 @@ from database.connection import SessionLocal
 from refillcare.data.pipeline import run_refillcare_data_pipeline
 from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
 from refillcare.engine.persistence import RefillPersistenceManager
-from refillcare.data.monthly_ingestion import normalize_sales_dataframe
+from refillcare.data.sales_ingestion import normalize_sales_dataframe
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("refillcare.monthly_pipeline")
+logger = logging.getLogger("refillcare.sales_pipeline")
 
 
 def clean_code(val: any) -> str:

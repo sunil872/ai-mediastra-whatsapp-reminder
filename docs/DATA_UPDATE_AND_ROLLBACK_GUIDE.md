@@ -13,7 +13,7 @@
 ### 1. Evaluate Current Master Dataset (e.g. September Data → October 2026 Predictions)
 To run the end-to-end data processing, feature engineering, and Unified Refill Decision Engine on the current master dataset:
 ```bash
-python scripts/run_monthly_pipeline.py
+python scripts/run_sales_pipeline.py
 ```
 This automatically:
 1. Detects the maximum transaction date in `data/refillcare/customer_data_fields.csv` (`2026-09-30`).
@@ -27,7 +27,7 @@ This automatically:
 ### 2. Ingesting New Monthly Sales (e.g. October, November, etc.)
 When a new monthly sales export (CSV or Excel) arrives from the pharmacy POS:
 ```bash
-python scripts/run_monthly_pipeline.py --new-sales "path/to/new_month_sales.csv"
+python scripts/run_sales_pipeline.py --new-sales "path/to/new_month_sales.csv"
 ```
 This automatically:
 1. Validates incoming transactions and column mappings.
