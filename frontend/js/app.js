@@ -692,7 +692,7 @@ async function loadMedSyncBundles() {
     const bundles = data.bundles || [];
     const availableMonths = data.available_months || [];
     const selectedMonth = data.selected_target_month || "";
-    const lastSalesMonth = data.last_sales_month || "August 2026";
+    const lastSalesMonth = data.last_sales_month || "September 2026";
     const activeTarget = data.selected_target || (viewMode === "DATE" ? targetDate : selectedMonth);
 
     // Populate month dropdown if empty or not populated

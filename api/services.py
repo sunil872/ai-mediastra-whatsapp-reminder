@@ -882,9 +882,10 @@ class EnterpriseServices:
                 target_next_month = latest_sales_dt.month + 1
             last_sales_month_str = latest_sales_dt.strftime("%B %Y")
         else:
-            target_next_year = 2026
-            target_next_month = 9
-            last_sales_month_str = "August 2026"
+            now_dt = date.today()
+            target_next_year = now_dt.year
+            target_next_month = now_dt.month
+            last_sales_month_str = (now_dt.replace(day=1) - timedelta(days=1)).strftime("%B %Y")
 
         default_target_month_key = f"{target_next_year}-{target_next_month:02d}"
 

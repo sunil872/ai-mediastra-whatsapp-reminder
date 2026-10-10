@@ -1,43 +1,55 @@
-# RefillCare Data Pipeline: September Upload & August Rollback Guide
+# RefillCare Dynamic Monthly Ingestion & Prediction Pipeline Guide
 
-## 📌 Context & Decision Summary
-- **Current Objective**: Meet immediate deadline to showcase October 2026 refill predictions generated from September 2026 sales data.
-- **Chosen Approach**: Directly merged September 2026 sales (`14,094` transactions) into the canonical master CSV `data/refillcare/customer_data_fields.csv` (Total: `909,651` transactions from Dec 2020 to Sep 2026).
-- **Post-Deadline Roadmap**: Fix and streamline the **Tab 2: Data Update** in-app monthly CSV upload engine in the backend so future monthly files can be uploaded directly via the Streamlit UI without requiring manual file merges.
+## 📌 Architecture & Master Dataset Overview
+- **Master Dataset**: `data/refillcare/customer_data_fields.csv`
+- **Current Data Horizon**: Multi-year transactions up to **September 30, 2026** (`909,651` records).
+- **Default Prediction Target**: **October 2026** (and ongoing monthly horizons as new data is ingested).
+- **Dynamic Date Inference**: The system automatically determines the latest sales date from the database or master dataset. Separate static month-switch scripts are deprecated and replaced by a unified production pipeline.
 
 ---
 
-## ↺ How to Rollback to August 2026 Baseline (Whenever Needed)
+## 🚀 Running the Production Pipeline Dynamically
 
-To revoke all September data and restore the system back to the clean August 31, 2026 baseline:
-
-### Option 1: One-Click Script
-Run the automated restore script:
+### 1. Evaluate Current Master Dataset (e.g. September Data → October 2026 Predictions)
+To run the end-to-end data processing, feature engineering, and Unified Refill Decision Engine on the current master dataset:
 ```bash
-python scripts/switch_to_august_baseline.py
+python scripts/run_monthly_pipeline.py
 ```
 This automatically:
-1. Restores `customer_data_fields.csv` from the pre-September backup (`data/refillcare/backups/customer_data_fields_backup_pre_sep.csv`).
-2. Re-runs the baseline pipeline to restore `purchase_history.parquet` to 815k records (up to Aug 31, 2026).
-3. Restores `enterprise.db` back to the September reminder schedule baseline.
-
-### Option 2: Git Restore
-```bash
-git checkout -- data/refillcare/customer_data_fields.csv data/refillcare/processed/
-```
+1. Detects the maximum transaction date in `data/refillcare/customer_data_fields.csv` (`2026-09-30`).
+2. Calculates the dynamic prediction evaluation date (`2026-10-01`) targeting **October 2026**.
+3. Executes `run_refillcare_data_pipeline()` to generate updated Parquet artifacts.
+4. Evaluates `UnifiedRefillDecisionEngine` across all patient-medication regimens.
+5. Persists decisions and synchronizes multi-stage reminder cycles in `enterprise.db`.
 
 ---
 
-## 🔮 How to Switch Back to September Data (Predicting October 2026)
-
-To re-apply September data and generate October 2026 predictions:
+### 2. Ingesting New Monthly Sales (e.g. October, November, etc.)
+When a new monthly sales export (CSV or Excel) arrives from the pharmacy POS:
 ```bash
-python scripts/switch_to_september_data.py
+python scripts/run_monthly_pipeline.py --new-sales "path/to/new_month_sales.csv"
 ```
+This automatically:
+1. Validates incoming transactions and column mappings.
+2. Creates an automated safety backup of `data/refillcare/customer_data_fields.csv` in `data/refillcare/backups/`.
+3. Normalizes dates, item codes, and phone numbers.
+4. Appends the validated transactions to `data/refillcare/customer_data_fields.csv`.
+5. Re-runs the full pipeline and updates predictions for the next target horizon.
 
 ---
 
-## 🛠️ Next Steps / Technical Debt for Data Update Tab
-1. Normalize item code data types in `read_sales_file_low_memory` (`clean_item_identifier`) so incremental monthly uploads automatically join against multi-year item codes without float `.0` mismatches.
-2. In `process_monthly_sales_data`, optimize in-memory DataFrame merges to avoid memory errors on low-memory environments.
-3. Add a dedicated "Predict Target Month" dropdown in the UI to seamlessly toggle between reviewing September and October reminder pipelines.
+### 3. Pipeline Options & Overrides
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--master-csv` | Path to canonical transactions dataset | `data/refillcare/customer_data_fields.csv` |
+| `--new-sales` | Path to incremental monthly sales file | `None` (processes current master) |
+| `--as-of-date` | Evaluation cutoff date (`YYYY-MM-DD`) | 1st of the month following latest transaction |
+| `--target-month` | Target reminder month (`YYYY-MM`) | Derived from `as-of-date` |
+| `--dry-run` | Compute predictions without database write | `False` |
+
+---
+
+## 🛡️ Enterprise Data Security & Hygiene
+- **Local Persistence Only**: Master CSV files, backups, SQLite databases, and Parquets are tracked in `.gitignore` and strictly prevented from committing to GitHub.
+- **Deduplication**: Transactions are deduplicated chronologically per invoice and patient-medication pair.
+- **Zero Loss Guarantee**: Incoming monthly files are appended—never overwriting historical transaction logs.
