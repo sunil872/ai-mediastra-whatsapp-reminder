@@ -168,6 +168,9 @@ CHRONIC_FORM_MARKERS: List[str] = [
 ]
 
 
+import os
+import time
+
 # Compile fast regex patterns for word boundaries
 _EXCLUSION_REGEX_MAP: Dict[str, List[re.Pattern]] = {}
 for category, kw_list in EXCLUDED_CATEGORIES.items():
@@ -180,6 +183,149 @@ _CHRONIC_MARKER_REGEX: List[re.Pattern] = [
     re.compile(r"(?:\b|_)" + re.escape(m.strip().upper()) + r"(?:\b|_)", re.IGNORECASE)
     for m in CHRONIC_STRONG_MARKERS
 ]
+
+# ------------------------------------------------------------------------------
+# SUPABASE DYNAMIC CLASSIFICATION RULES PROVIDER & CACHE
+# ------------------------------------------------------------------------------
+_SUPABASE_CLIENT = None
+_CACHED_RULES_TIMESTAMP: float = 0.0
+_CACHE_TTL_SECONDS: float = 300.0  # 5 minutes in-memory TTL
+
+_DYNAMIC_EXCLUSIONS: Set[str] = set()
+_DYNAMIC_CHRONIC: Set[str] = set()
+_DYNAMIC_EXCLUSION_REGEX: List[re.Pattern] = []
+_DYNAMIC_CHRONIC_REGEX: List[re.Pattern] = []
+
+
+def get_supabase_client():
+    """Retrieve or initialize Supabase client safely."""
+    global _SUPABASE_CLIENT
+    if _SUPABASE_CLIENT is not None:
+        return _SUPABASE_CLIENT
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if supabase_url and supabase_key:
+        try:
+            from supabase import create_client
+            _SUPABASE_CLIENT = create_client(supabase_url, supabase_key)
+            return _SUPABASE_CLIENT
+        except Exception:
+            return None
+    return None
+
+
+def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
+    """Fetch active dynamic classification rules from Supabase with local fallback."""
+    global _CACHED_RULES_TIMESTAMP, _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC, _DYNAMIC_EXCLUSION_REGEX, _DYNAMIC_CHRONIC_REGEX
+    now = time.time()
+    if (now - _CACHED_RULES_TIMESTAMP) < _CACHE_TTL_SECONDS and (_DYNAMIC_EXCLUSIONS or _DYNAMIC_CHRONIC):
+        return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
+
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("medication_classification_rules").select("medication_name_or_keyword,rule_type").eq("is_active", True).execute()
+            if res.data:
+                excl_set = set()
+                chr_set = set()
+                for row in res.data:
+                    kw = str(row.get("medication_name_or_keyword", "")).strip().upper()
+                    r_type = str(row.get("rule_type", "")).strip().upper()
+                    if kw:
+                        if r_type == "EXCLUDE":
+                            excl_set.add(kw)
+                        elif r_type == "CHRONIC":
+                            chr_set.add(kw)
+
+                _DYNAMIC_EXCLUSIONS = excl_set
+                _DYNAMIC_CHRONIC = chr_set
+                _DYNAMIC_EXCLUSION_REGEX = [
+                    re.compile(r"(?:\b|_)" + re.escape(k) + r"(?:\b|_)", re.IGNORECASE)
+                    for k in excl_set
+                ]
+                _DYNAMIC_CHRONIC_REGEX = [
+                    re.compile(r"(?:\b|_)" + re.escape(k) + r"(?:\b|_)", re.IGNORECASE)
+                    for k in chr_set
+                ]
+                _CACHED_RULES_TIMESTAMP = now
+                return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
+        except Exception:
+            pass
+
+    return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
+
+
+def add_classification_rule(
+    medication_name_or_keyword: str,
+    rule_type: str,
+    notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Add or update a classification rule in Supabase."""
+    global _CACHED_RULES_TIMESTAMP
+    client = get_supabase_client()
+    if not client:
+        return {"status": "error", "message": "Supabase client not configured or unreachable."}
+
+    clean_kw = str(medication_name_or_keyword).strip().upper()
+    clean_type = str(rule_type).strip().upper()
+    if clean_type not in ("CHRONIC", "EXCLUDE"):
+        return {"status": "error", "message": "rule_type must be either 'CHRONIC' or 'EXCLUDE'."}
+    if not clean_kw:
+        return {"status": "error", "message": "Medication keyword cannot be empty."}
+
+    try:
+        data = {
+            "medication_name_or_keyword": clean_kw,
+            "rule_type": clean_type,
+            "notes": notes or "Added via UI by Pharmacist",
+            "is_active": True,
+        }
+        res = client.table("medication_classification_rules").upsert(
+            data,
+            on_conflict="medication_name_or_keyword,rule_type"
+        ).execute()
+        _CACHED_RULES_TIMESTAMP = 0.0  # Invalidate cache for immediate sync
+        get_dynamic_classification_rules()
+        return {"status": "success", "message": f"Rule for '{clean_kw}' saved as {clean_type}.", "data": res.data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def list_classification_rules(
+    search_query: str = "",
+    rule_type_filter: str = "All",
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """Retrieve classification rules from Supabase."""
+    client = get_supabase_client()
+    if not client:
+        return []
+    try:
+        q = client.table("medication_classification_rules").select("*").order("created_at", desc=True)
+        if rule_type_filter in ("CHRONIC", "EXCLUDE"):
+            q = q.eq("rule_type", rule_type_filter)
+        if search_query.strip():
+            clean_s = search_query.strip().upper()
+            q = q.ilike("medication_name_or_keyword", f"%{clean_s}%")
+        res = q.limit(limit).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+
+def delete_classification_rule(rule_id: str) -> Dict[str, Any]:
+    """Delete a classification rule from Supabase."""
+    global _CACHED_RULES_TIMESTAMP
+    client = get_supabase_client()
+    if not client:
+        return {"status": "error", "message": "Supabase client not configured."}
+    try:
+        res = client.table("medication_classification_rules").delete().eq("id", rule_id).execute()
+        _CACHED_RULES_TIMESTAMP = 0.0
+        get_dynamic_classification_rules()
+        return {"status": "success", "message": "Rule deleted successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def classify_medication(
@@ -210,8 +356,10 @@ def classify_medication(
     raw_name = str(item_name).strip().upper()
     raw_pack = str(packing or "").strip().upper()
 
-    # 1. Hard Exclusions (Pediatric/Kids formulations and Acute PRN Analgesics ALWAYS excluded)
-    # Check explicit KID regex
+    # Load dynamic rules from Supabase (cached in memory)
+    get_dynamic_classification_rules()
+
+    # 1. Hard Baseline Exclusions (Pediatric/Kids and Acute PRN Analgesics ALWAYS excluded)
     if re.search(r"(?:\b|_)(KID|KIDS|KIDZ|PED|PEDIATRIC|PAEDIATRIC)(?:\b|_)", raw_name, re.IGNORECASE):
         return {
             "is_chronic_eligible": False,
@@ -220,7 +368,6 @@ def classify_medication(
             "exclusion_reason": "Pediatric / Kid formulation (Non-chronic).",
         }
 
-    # Check explicit DOLO / PARACETAMOL / CALPOL / Acute Analgesic regex
     if re.search(r"(?:\b|_)(DOLO|DOLO\s*650|DOLO\s*650MG|DOLO\s*500|CALPOL|PARACETAMOL|MEFTAL|MEFTAL\s*SPAS|DISPRIN|SARIDON|COMBIFLAM)(?:\b|_)", raw_name, re.IGNORECASE):
         return {
             "is_chronic_eligible": False,
@@ -229,17 +376,36 @@ def classify_medication(
             "exclusion_reason": "Acute / PRN analgesic / antipyretic (Non-chronic).",
         }
 
-    # 2. Check strong positive chronic markers
-    # If item explicitly contains known chronic active molecules/brands, verify it's not topical gel/wash
+    # 2. Check Dynamic Supabase Exclusions
+    for p in _DYNAMIC_EXCLUSION_REGEX:
+        if p.search(raw_name):
+            return {
+                "is_chronic_eligible": False,
+                "category": "DYNAMIC_SUPABASE_EXCLUSION",
+                "matched_rule": f"SUPABASE_EXCLUSION:{p.pattern}",
+                "exclusion_reason": f"Non-chronic item (Excluded by pharmacist rule: '{p.pattern}').",
+            }
+
+    # 3. Check Dynamic Supabase Chronic Markers
+    for p in _DYNAMIC_CHRONIC_REGEX:
+        if p.search(raw_name):
+            # Verify it's not topical gel/cream
+            if not any(topical in raw_name for topical in ["GEL", "CREAM", "OINTMENT", "SPRAY", "WASH", "LOTION", "SOAP"]):
+                return {
+                    "is_chronic_eligible": True,
+                    "category": "CHRONIC_MEDICATION",
+                    "matched_rule": f"SUPABASE_CHRONIC:{p.pattern}",
+                    "exclusion_reason": None,
+                }
+
+    # 4. Check strong positive chronic markers (Code Baseline)
     is_strong_chronic = any(p.search(raw_name) for p in _CHRONIC_MARKER_REGEX)
 
-    # 3. Check for Non-Chronic / OTC / FMCG / Acute exclusions
+    # 5. Check for Non-Chronic / OTC / FMCG / Acute exclusions (Code Baseline)
     for category, pattern_list in _EXCLUSION_REGEX_MAP.items():
         for pattern in pattern_list:
             if pattern.search(raw_name):
-                # If it's a strong chronic molecule but has a topical form like GEL/SPRAY/CREAM, it's non-chronic
                 if is_strong_chronic and not any(topical in raw_name for topical in ["GEL", "CREAM", "OINTMENT", "SPRAY", "WASH", "LOTION", "SOAP", "INHALER"]):
-                    # Tablet/capsule of chronic drug takes precedence
                     pass
                 else:
                     clean_cat = category.replace("_", " ").title()

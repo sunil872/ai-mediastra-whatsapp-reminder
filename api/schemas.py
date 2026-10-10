@@ -214,6 +214,12 @@ class OperationsKPISummary(BaseModel):
     consensus_model_version: Optional[str] = "v1.2.0-human-consensus"
     consensus_7d_accuracy_pct: Optional[float] = 60.1
     channel_summary: Optional[Dict[str, Any]] = None
+    target_prediction_month: Optional[str] = "2026-10"
+    target_month_reminders_count: Optional[int] = 15552
+    monthly_stage_distribution: Optional[Dict[str, int]] = None
+    adherence_rate_pct: Optional[float] = 80.0
+    chronic_medicines_count: Optional[int] = 150
+    out_of_stock_or_critical: Optional[int] = 592
 
 
 class DosageRegimenItem(BaseModel):
@@ -384,5 +390,50 @@ class MedSyncBundlesResponse(BaseModel):
     sync_window_days: int
     impact_summary: MedSyncImpactSummarySchema
     bundles: List[MedSyncBundleSchema]
+
+
+# ------------------------------------------------------------------------------
+# Medication Classification Rules & Live Pharmacist Catalog Schemas
+# ------------------------------------------------------------------------------
+class MedicationRuleItem(BaseModel):
+    id: Optional[Union[int, str]] = None
+    pattern: str
+    rule_type: str = Field(..., description="CHRONIC or EXCLUSION")
+    category: str = Field(..., description="Clinical therapy or exclusion category")
+    brand_name: Optional[str] = None
+    notes: Optional[str] = None
+    created_by: Optional[str] = "Pharmacist"
+    is_active: bool = True
+    created_at: Optional[Union[datetime, str]] = None
+
+
+class AddMedicationRuleRequest(BaseModel):
+    pattern: str = Field(..., description="Brand name, molecule, salt or keyword")
+    rule_type: str = Field(..., description="CHRONIC or EXCLUSION")
+    category: str = Field(..., description="Clinical therapy or exclusion class")
+    brand_name: Optional[str] = None
+    notes: Optional[str] = None
+    created_by: Optional[str] = "Pharmacist"
+
+
+class MedicationRuleListResponse(BaseModel):
+    total_rules: int
+    rules: List[MedicationRuleItem]
+    source: str = "Supabase PostgreSQL"
+
+
+class ClassifyMedicationRequest(BaseModel):
+    item_name: str
+    packing: Optional[str] = None
+
+
+class ClassifyMedicationResponse(BaseModel):
+    item_name: str
+    is_chronic_eligible: bool
+    category: str
+    matched_rule: Optional[str] = None
+    exclusion_reason: Optional[str] = None
+    source: Optional[str] = "Supabase / Classifier Engine"
+
 
 

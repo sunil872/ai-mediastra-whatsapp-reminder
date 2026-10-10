@@ -54,6 +54,10 @@ from api.schemas import (
     CustomerRefillHistoryResponse,
     TransactionChannelSummary,
     ConsensusRegimenAnalyticsSummary,
+    MedicationRuleListResponse,
+    AddMedicationRuleRequest,
+    ClassifyMedicationRequest,
+    ClassifyMedicationResponse,
 )
 from api.services import EnterpriseServices
 from refillcare.engine.persistence import RefillPersistenceManager
@@ -117,6 +121,9 @@ def get_consensus_regimen_analytics(db: Session = Depends(get_db)):
     """Retrieve clinical dosage regimen prevalence (OD/BD/QOD/TID) and human consensus benchmarks."""
     srv = EnterpriseServices(db)
     return srv.get_consensus_regimen_analytics()
+
+
+
 
 
 # ------------------------------------------------------------------------------
@@ -478,7 +485,64 @@ def get_model_quantile_envelope(db: Session = Depends(get_db)):
 
 
 # ------------------------------------------------------------------------------
-# 9. FRONTEND STATIC ASSETS & SPA ROUTING
+# 9. PHARMACIST MEDICATION RULES & LIVE CLASSIFIER APIS (SUPABASE)
+# ------------------------------------------------------------------------------
+@app.get("/api/v1/medications/rules", response_model=MedicationRuleListResponse, tags=["Medication Classifier"])
+def list_medication_classification_rules(
+    rule_type: Optional[str] = Query(None, description="Filter by CHRONIC or EXCLUSION"),
+    search: Optional[str] = Query(None, description="Search pattern keyword, brand, or salt"),
+    db: Session = Depends(get_db),
+):
+    """Retrieve active medication classification rules from Supabase (or local cache)."""
+    srv = EnterpriseServices(db)
+    return srv.list_medication_rules(rule_type=rule_type, search=search)
+
+
+@app.post("/api/v1/medications/rules", tags=["Medication Classifier"])
+def add_medication_classification_rule(
+    req: AddMedicationRuleRequest,
+    db: Session = Depends(get_db),
+):
+    """Add or update a medication classification rule in Supabase."""
+    srv = EnterpriseServices(db)
+    res = srv.add_medication_rule(
+        pattern=req.pattern,
+        rule_type=req.rule_type,
+        category=req.category,
+        brand_name=req.brand_name,
+        notes=req.notes,
+        created_by=req.created_by or "Pharmacist",
+    )
+    if res.get("status") == "error":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=res.get("message"))
+    return res
+
+
+@app.delete("/api/v1/medications/rules/{rule_id}", tags=["Medication Classifier"])
+def delete_medication_classification_rule(
+    rule_id: str,
+    db: Session = Depends(get_db),
+):
+    """Delete a medication classification rule from Supabase by its ID."""
+    srv = EnterpriseServices(db)
+    res = srv.delete_medication_rule(rule_id=rule_id)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=res.get("message"))
+    return res
+
+
+@app.post("/api/v1/medications/classify", response_model=ClassifyMedicationResponse, tags=["Medication Classifier"])
+def test_classify_medication(
+    req: ClassifyMedicationRequest,
+    db: Session = Depends(get_db),
+):
+    """Test classify a medication item using active Supabase rules and clinical parsing."""
+    srv = EnterpriseServices(db)
+    return srv.classify_medication_item(item_name=req.item_name, packing=req.packing)
+
+
+# ------------------------------------------------------------------------------
+# 10. FRONTEND STATIC ASSETS & SPA ROUTING
 # ------------------------------------------------------------------------------
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")

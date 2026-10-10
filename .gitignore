@@ -1,34 +1,89 @@
+# ==============================================================================
+# ENTERPRISE SECURITY & SENSITIVE DATA PROTECTION (.gitignore)
+# ==============================================================================
+
 # Virtual environments
 .venv/
 venv/
 env/
+ENV/
 
-# Environment secrets (STRICTLY IGNORED — NEVER COMMIT SENSITIVE API KEYS)
+# Environment secrets & credentials (STRICTLY FORBIDDEN FROM VERSION CONTROL)
 .env
+.env.*
+*.pem
+*.key
+*.cert
+credentials.json
+supabase_secret.json
 
 # Python cache & compiled bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
 
-# Logs (transient operational output)
-logs/whatsapp_send.log
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
 
-# Temporary & Scratch Files
+# Logs & Transient Operational Output (May contain customer phone numbers & outreach)
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==============================================================================
+# HEALTHCARE DATA SECURITY & PII (PATIENT IDENTIFIABLE INFORMATION)
+# ==============================================================================
+# Database binaries (Contain full transactional patient & prescription records)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+
+# Patient Datasets & Transaction Parquets (Preserved locally, never pushed)
+data/refillcare/*.csv
+data/refillcare/*.xlsx
+data/refillcare/*.xls
+data/refillcare/raw/
+data/refillcare/backups/
+data/refillcare/processed/*.parquet
+data/refillcare/processed/*.db
+data/refillcare/processed/*.sqlite
+data/*.csv
+data/*.xlsx
+data/*.parquet
+
+# Patient Export Lists & Campaign Samples (Contain phone numbers & personal health data)
+exports/*.csv
+exports/*.xlsx
+experiments/**/*.csv
+whatsapp_campaigns/sample_data/*.csv
+
+# Temporary, Scratch & Operating System Files
 scratch/
 *.tmp
 *.temp
 *.bak
-
-# IDE & OS settings
-.vscode/
-.idea/
 .DS_Store
 Thumbs.db
+ehthumbs.db
 
-# Local Conversation & Session History (Locally preserved, ignored from git)
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Local Session History & Conversion Scratch
 conversation_history/
-
-# Local Multi-Format Document Converter (Ignored from git)
 file_to_markdown_converter/
 converted_markdown/
-

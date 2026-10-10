@@ -524,6 +524,13 @@ def evaluate_human_hybrid_prediction(
         review_required = True
         decision_reason = f"MODEL_SUPPLY_DIVERGENCE: ML={raw_ml_pred:.1f}d vs Supply={supply_days:.1f}d (delta={agreement_delta:.1f}d > 45d). Pharmacist review required."
     else:
+        # Standard recurring cadence (typical quantity):
+        # When customer has high stability or historical cadence is corroborated by supply bounds
+        # and ML prediction is within close tolerance (<=3d), historical cadence represents the exact recurring cycle.
+        if stability_tier in ("HIGH", "HIGH_STABILITY") and abs(clamped_pred - hist_med) <= 3.0:
+            clamped_pred = hist_med
+        elif lower_bound <= hist_med <= upper_bound and abs(clamped_pred - hist_med) <= 2.0:
+            clamped_pred = hist_med
         decision_reason = f"Multi-Signal Consensus ({int(round(clamped_pred))}d)"
 
     return {

@@ -1,3 +1,0 @@
-data/refillcare/processed/enterprise.db filter=lfs diff=lfs merge=lfs -text
-data/refillcare/customer_data_fields.csv filter=lfs diff=lfs merge=lfs -text
-data/refillcare/backups/*.db filter=lfs diff=lfs merge=lfs -text

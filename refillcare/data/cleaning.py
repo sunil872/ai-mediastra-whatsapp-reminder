@@ -86,6 +86,7 @@ def load_raw_transactions(file_path: Union[str, Path]) -> pd.DataFrame:
         path,
         dtype=dtype_map,
         low_memory=False,
+        on_bad_lines="skip",
     )
     df = normalize_mobile_no_column(df)
 

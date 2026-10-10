@@ -270,6 +270,54 @@ export const ApiClient = {
     if (!res.ok) throw new Error("Failed to fetch Quantile uncertainty metrics");
     return await res.json();
   },
+
+  // 8. Pharmacist Supabase Medication Rules
+
+  async getMedicationRules(ruleType = null, search = null) {
+    let url = `${API_BASE_URL}/api/v1/medications/rules?`;
+    if (ruleType && ruleType !== "All") url += `rule_type=${encodeURIComponent(ruleType)}&`;
+    if (search) url += `search=${encodeURIComponent(search)}&`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch medication classification rules");
+    return await res.json();
+  },
+
+  async addMedicationRule(ruleData) {
+    const res = await fetch(`${API_BASE_URL}/api/v1/medications/rules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ruleData),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to add medication classification rule");
+    }
+    return await res.json();
+  },
+
+  async deleteMedicationRule(ruleId) {
+    const res = await fetch(`${API_BASE_URL}/api/v1/medications/rules/${encodeURIComponent(ruleId)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to delete medication rule");
+    }
+    return await res.json();
+  },
+
+  async classifyMedication(data) {
+    const res = await fetch(`${API_BASE_URL}/api/v1/medications/classify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Classification check failed");
+    }
+    return await res.json();
+  },
 };
 
 

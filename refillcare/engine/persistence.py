@@ -93,14 +93,15 @@ class RefillPersistenceManager:
             f"DEC-{dec.customer_item_key}-{(dec.last_purchase_date.strftime('%Y%m%d') if hasattr(dec.last_purchase_date, 'strftime') else str(dec.last_purchase_date).replace('-', '')[:8])}"
             for dec in decisions
         ]
-        existing_records = (
-            db.query(RefillDecisionModel)
-            .filter(RefillDecisionModel.decision_id.in_(target_ids))
-            .all()
-        )
-        existing_map: Dict[str, RefillDecisionModel] = {
-            str(r.decision_id): r for r in existing_records
-        }
+        
+        # Batch query in chunks of 500 to avoid SQLite parameter limit
+        existing_map: Dict[str, RefillDecisionModel] = {}
+        target_ids_list = list(set(target_ids))
+        for i in range(0, len(target_ids_list), 500):
+            chunk = target_ids_list[i : i + 500]
+            for r in db.query(RefillDecisionModel).filter(RefillDecisionModel.decision_id.in_(chunk)).all():
+                existing_map[str(r.decision_id)] = r
+
         saved_count = 0
         new_records = []
 
@@ -159,6 +160,11 @@ class RefillPersistenceManager:
                 existing_map[dec_id] = new_rec
             saved_count += 1
 
+            if len(new_records) >= 1000:
+                db.add_all(new_records)
+                db.flush()
+                new_records = []
+
         if new_records:
             db.add_all(new_records)
         db.commit()
@@ -193,16 +199,18 @@ class RefillPersistenceManager:
 
         now = datetime.utcnow()
 
-        # 1. Batch load existing active cycles targeted by customer_item_key
+        # 1. Batch load existing active cycles targeted by customer_item_key in chunks
         target_keys = {dec.customer_item_key for dec in decisions if dec.customer_item_key}
         target_cycle_ids = {dec.cycle_id for dec in decisions if dec.cycle_id}
 
         active_cycles_by_key: Dict[str, List[ReminderCycleModel]] = defaultdict(list)
-        if target_keys:
+        target_keys_list = list(target_keys)
+        for i in range(0, len(target_keys_list), 500):
+            chunk = target_keys_list[i : i + 500]
             active_cycles = (
                 db.query(ReminderCycleModel)
                 .filter(
-                    ReminderCycleModel.customer_item_key.in_(target_keys),
+                    ReminderCycleModel.customer_item_key.in_(chunk),
                     ReminderCycleModel.is_active == True,
                 )
                 .all()
@@ -210,13 +218,15 @@ class RefillPersistenceManager:
             for c in active_cycles:
                 active_cycles_by_key[str(c.customer_item_key)].append(c)
 
-        # 2. Batch load target cycle_ids and existing stages
+        # 2. Batch load target cycle_ids and existing stages in chunks
         existing_cycles: Dict[str, ReminderCycleModel] = {}
         existing_stages: Set[Tuple[str, int]] = set()
-        if target_cycle_ids:
+        target_cycle_ids_list = list(target_cycle_ids)
+        for i in range(0, len(target_cycle_ids_list), 500):
+            chunk = target_cycle_ids_list[i : i + 500]
             found_cycles = (
                 db.query(ReminderCycleModel)
-                .filter(ReminderCycleModel.cycle_id.in_(target_cycle_ids))
+                .filter(ReminderCycleModel.cycle_id.in_(chunk))
                 .all()
             )
             for c in found_cycles:
@@ -224,7 +234,7 @@ class RefillPersistenceManager:
 
             found_stages = (
                 db.query(ReminderStageModel.cycle_id, ReminderStageModel.stage_offset)
-                .filter(ReminderStageModel.cycle_id.in_(target_cycle_ids))
+                .filter(ReminderStageModel.cycle_id.in_(chunk))
                 .all()
             )
             for s in found_stages:
