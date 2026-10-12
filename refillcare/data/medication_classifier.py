@@ -19,8 +19,57 @@ import pandas as pd
 # 1. NON-CHRONIC & OTC/FMCG EXCLUSION KEYWORDS & PATTERNS
 # ------------------------------------------------------------------------------
 
-# Exact and prefix/substring keyword categories for non-chronic items
 EXCLUDED_CATEGORIES: Dict[str, List[str]] = {
+    "FORMULATION_SYRUPS_AND_SUSPENSIONS": [
+        "SYP", "SYRUP", "SUSP", "SUSPENSION", "ELIXIR", "LIQ", "LIQUID", "SYP.", "SUSP.",
+    ],
+    "FORMULATION_DROPS_OPHTHALMIC_OTIC": [
+        "DROP", "DROPS", "EYE DROP", "EYE DROPS", "EAR DROP", "EAR DROPS", "NASAL DROP", "NASAL DROPS", "OPHTH", "EYE/EAR DROP",
+    ],
+    "FORMULATION_TOPICALS_DERMA": [
+        "OINT", "OINTMENT", "CREAM", "CRM", "GEL", "EMULGEL", "LOTION", "LINIMENT", "SOAP", "SHAMPOO", "WASH", "FACE WASH",
+    ],
+    "FORMULATION_SPRAYS": [
+        "SPRAY", "NASAL SPRAY",
+    ],
+    "FORMULATION_INJECTIONS": [
+        "INJ", "INJECTION", "INFUSION", "IV", "IM", "DEPOT",
+    ],
+    "FORMULATION_SACHETS_GRANULES": [
+        "SACHET", "SACHETS", "GRANULES", "1SAC",
+    ],
+    "ACUTE_ANTIBIOTICS": [
+        "AUGMENTIN", "CLAVAM", "MOXIKIND", "TAXIM", "MONOCEF", "DOXT", "BACTRIM", "AZITHRAL", "AZITHROMYCIN",
+        "CIPROFLOXACIN", "CIPLOX", "OFLOXACIN", "OFLOX", "NORFLOXACIN", "NORFLOX", "METROGYL", "METRONIDAZOLE",
+        "CEFIXIME", "MAHACEF", "ROXID", "ZADY", "AMPOXIN", "CEFPODOXIME",
+    ],
+    "ACUTE_AND_PRN_ANALGESICS": [
+        "DOLO", "DOLO 650", "DOLO 650MG", "DOLO 650MG TAB", "DOLO 500", "DOLO 500MG", "DOLO 250",
+        "DOLO COLD", "DOLO MF", "DOLO-650", "DOLO-500", "DOLOKIND", "DOLOKIND PLUS", "DOLOKIND MR",
+        "DOLOWIN", "DOLONEX", "DOLOPAR", "DOLONEURON", "CALPOL", "CALPOL 650", "CALPOL 500",
+        "CALPOL 250", "CALPOL 120", "CALPOL DROP", "CALPOL T", "PARACETAMOL", "PARACETAMOL 500",
+        "PARACETAMOL 650", "DISPRIN", "SARIDON", "COMBIFLAM", "MEFTAL", "MEFTAL SPAS", "MEFTAL-SPAS", "MEFTAL P",
+        "CHESTON COLD", "SINAREST", "SUMO", "NICE", "NIMESULIDE", "NICE TAB", "NIZEN", "NIMPEX",
+        "VOMIKIND", "ONDEM", "EMESET", "AVOMINE", "P-650", "PACIMOL", "CROCYN", "PYRICOOL",
+        "FEVASTIN", "LOZENGES", "LOZ", "COUGH LOZ", "STREPSILS", "VICKS COUGH",
+        "ENO", "ENO FRUIT", "GAS-O-FAST", "PUCIT", "DROPS", "ORAL DROPS",
+        "KETOROL", "KETOROL DT", "DART", "HEADSET", "ZERODOL SP", "ZERODOL-SP", "ZERODOL P", "ZERODOL-P",
+        "FLEXON", "FLEXON MR", "ULTRACET", "PARACIP", "BRUFEN", "IBUGESIC", "TRAMADOL", "TRAMAZAC",
+    ],
+    "ACUTE_COUGH_AND_COLD": [
+        "SOLVIN COLD", "FEBREX PLUS", "CHESTON COLD", "SINAREST", "ALERID-D", "ALERID D", "WIKORYL", "FLUDREX", "LEVOCOLD",
+    ],
+    "ACUTE_ANTACIDS_AND_DIARRHEA": [
+        "ELDOPER", "LOPERAMIDE", "LOPO", "ENO", "PUDIN HARA", "DIGENE", "GELUSIL", "GAVISCON", "SUCRAFIL", "MUCAINE", "CREMAFFIN",
+        "PAN-D", "PAN D", "PAN 40", "PANTOCID D", "PANTODAC D", "RABEKIND DSR", "RABEKIND-DSR", "RABEKIND",
+        "RABLET-D", "RABLET D", "OCID-D", "OCID D", "OMEE D", "ESOKEM-D", "DOMPAN",
+    ],
+    "LOZENGES_AND_OTC_CONFECTIONS": [
+        "COFSILS", "STREPSILS", "VICKS", "VICS", "HONITUS",
+    ],
+    "ACUTE_ANTIFUNGAL_TOPICAL": [
+        "LULIFORD", "CANESTEN", "CLOCIP", "CANDID", "ITMAC", "ITRASYS", "ZOCON",
+    ],
     "PERSONAL_CARE_AND_HYGIENE": [
         "SOAP", "SOAPS", "FACE WASH", "FACEWASH", "FACE CREAM", "SHAMPOO",
         "HAIR OIL", "HAIR SERUM", "HAIR GEL", "HAIR COLOUR", "HAIR DYE", "OIL",
@@ -38,17 +87,6 @@ EXCLUDED_CATEGORIES: Dict[str, List[str]] = {
         "BOROLINE", "BOROPLUS", "BORNOL", "FAST RELIEF", "AMRUTANJAN",
         "ZANDU BALM", "TIGER BALM", "PAIN BALM", "PAIN GEL", "PAIN RELIEF GEL",
         "PAIN SPRAY", "BALM", "SPRAY", "LINIMENT", "GEL", "OINTMENT",
-    ],
-    "ACUTE_AND_PRN_ANALGESICS": [
-        "DOLO", "DOLO 650", "DOLO 650MG", "DOLO 650MG TAB", "DOLO 500", "DOLO 500MG", "DOLO 250",
-        "DOLO COLD", "DOLO MF", "DOLO-650", "DOLO-500", "DOLOKIND", "DOLOKIND PLUS", "DOLOKIND MR",
-        "DOLOWIN", "DOLONEX", "DOLOPAR", "DOLONEURON", "CALPOL", "CALPOL 650", "CALPOL 500",
-        "CALPOL 250", "CALPOL 120", "CALPOL DROP", "CALPOL T", "PARACETAMOL", "PARACETAMOL 500",
-        "PARACETAMOL 650", "DISPRIN", "SARIDON", "COMBIFLAM", "MEFTAL", "MEFTAL SPAS", "MEFTAL P",
-        "CHESTON COLD", "SINAREST", "SUMO", "NICE", "NIMESULIDE", "NICE TAB", "NIZEN", "NIMPEX",
-        "VOMIKIND", "ONDEM", "EMESET", "AVOMINE", "P-650", "PACIMOL", "CROCYN", "PYRICOOL",
-        "FEVASTIN", "LOZENGES", "LOZ", "COUGH LOZ", "STREPSILS", "VICKS COUGH",
-        "ENO", "ENO FRUIT", "GAS-O-FAST", "PUCIT", "DROPS", "ORAL DROPS",
     ],
     "PEDIATRIC_AND_KIDS_MEDICATIONS": [
         "KID", "KIDS", "KIDZ", "PED", "PEDIATRIC", "PAEDIATRIC", "BABY", "INFANT",
@@ -125,7 +163,7 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "KETOANALOGUE", "KETOLIC", "CALCIUM ACETATE", "CALCIROL", "GEMCAL",
 
     # 8. Gastroenterology (Chronic Maintenance & Liver/IBD)
-    "PANTOPRAZOLE", "PANTOCID", "PAN-D", "PAN D", "PAN 40", "RABEPRAZOLE", "RABLET", "RABICIP",
+    "PANTOPRAZOLE", "PANTOCID", "RABEPRAZOLE", "RABLET", "RABICIP",
     "ESOMEPRAZOLE", "NEXPRO", "UDCA", "URSOCOL", "URSO", "MESALAMINE", "MESALAZINE", "MESACOL",
 
     # 9. Rheumatology, Autoimmune & Chronic Anti-Inflammatory
@@ -143,7 +181,7 @@ CHRONIC_FORM_MARKERS: List[str] = [
     " TAB", " TABLET", " TABLETS", " CAP", " CAPSULE", " CAPSULES", " PILL", " SOFTGEL", " STRIP", " BLISTER",
 
     # Modified / Sustained / Extended Release Modifiers
-    " ER", " SR", " XR", " XL", " PR", " CR", " MR", " DR", " TR", " LA", " CD", " EC", " FC", " RETARD", " CHRONO",
+    " ER", " SR", " XR", " XL", " PR", " CR", " MR", " -DR", " TR", " LA", " CD", " EC", " FC", " RETARD", " CHRONO",
 
     # Dosing Frequency & Formulation Modifiers
     " OD", " BD", " TID", " QID", " HS", " FORTE", " PLUS", " DUO", " TRIO", " MAX", " COMBO",
@@ -386,11 +424,29 @@ def classify_medication(
                 "exclusion_reason": f"Non-chronic item (Excluded by pharmacist rule: '{p.pattern}').",
             }
 
-    # 3. Check Dynamic Supabase Chronic Markers
+    is_insulin_device = any(ins in raw_name for ins in ["BASUGINE", "TRESIBA", "LANTUS", "NOVOMIX", "RYZODEG", "HUMALOG", "FIASP", "TOUJEO"]) and any(dev in raw_name for dev in ["PEN", "CATRIAGE", "CARTRIDGE", "FLEX", "SOLOSTAR"])
+    is_non_solid = bool(re.search(r"\b(?:SYP|SYRUP|SUSP|SUSPENSION|DROP|DROPS|RESP|RESPULES|OINT|CREAM|GEL|SPRAY|INJ|INJECTION|SACHET|GRANULES)\b", raw_name))
+
+    # 3. Check for Non-Chronic / OTC / FMCG / Acute exclusions (Code Baseline)
+    for category, pattern_list in _EXCLUSION_REGEX_MAP.items():
+        for pattern in pattern_list:
+            if pattern.search(raw_name):
+                # Only chronic insulin pens/cartridges are exempted from INJECTION exclusion
+                if is_insulin_device and category == "FORMULATION_INJECTIONS":
+                    continue
+                clean_cat = category.replace("_", " ").title()
+                return {
+                    "is_chronic_eligible": False,
+                    "category": category,
+                    "matched_rule": f"EXCLUDED_PATTERN:{pattern.pattern}",
+                    "exclusion_reason": f"Non-chronic item ({clean_cat}).",
+                }
+
+    # 4. Check Dynamic Supabase Chronic Markers
     for p in _DYNAMIC_CHRONIC_REGEX:
         if p.search(raw_name):
-            # Verify it's not topical gel/cream
-            if not any(topical in raw_name for topical in ["GEL", "CREAM", "OINTMENT", "SPRAY", "WASH", "LOTION", "SOAP"]):
+            # Strictly exclude non-solids (drops, syrups, topicals) unless insulin maintenance device
+            if not is_non_solid or is_insulin_device:
                 return {
                     "is_chronic_eligible": True,
                     "category": "CHRONIC_MEDICATION",
@@ -398,23 +454,8 @@ def classify_medication(
                     "exclusion_reason": None,
                 }
 
-    # 4. Check strong positive chronic markers (Code Baseline)
+    # 5. Check strong positive chronic markers (Code Baseline)
     is_strong_chronic = any(p.search(raw_name) for p in _CHRONIC_MARKER_REGEX)
-
-    # 5. Check for Non-Chronic / OTC / FMCG / Acute exclusions (Code Baseline)
-    for category, pattern_list in _EXCLUSION_REGEX_MAP.items():
-        for pattern in pattern_list:
-            if pattern.search(raw_name):
-                if is_strong_chronic and not any(topical in raw_name for topical in ["GEL", "CREAM", "OINTMENT", "SPRAY", "WASH", "LOTION", "SOAP", "INHALER"]):
-                    pass
-                else:
-                    clean_cat = category.replace("_", " ").title()
-                    return {
-                        "is_chronic_eligible": False,
-                        "category": category,
-                        "matched_rule": f"EXCLUDED_PATTERN:{pattern.pattern}",
-                        "exclusion_reason": f"Non-chronic item ({clean_cat}).",
-                    }
 
     # 3. Check packing clues (e.g. 1KG, 400GM, 1SAC, 200MDI, ML liquids without chronic markers)
     if any(p in raw_pack for p in ["1KG", "2KG", "500GM", "400GM", "200GM", "1SAC"]):
@@ -426,6 +467,16 @@ def classify_medication(
                 "exclusion_reason": "Bulk FMCG / Nutrition / Sachet pack size.",
             }
 
+    # Non-solid formulation safety guard (syrups, drops, ointments, injections, sprays)
+    is_non_solid = bool(re.search(r"\b(?:SYP|SYRUP|SUSP|SUSPENSION|DROP|DROPS|RESP|RESPULES|OINT|CREAM|GEL|SPRAY|INJ|INJECTION|SACHET|GRANULES)\b", raw_name))
+    if is_non_solid and not is_insulin_device:
+        return {
+            "is_chronic_eligible": False,
+            "category": "NON_SOLID_FORMULATION",
+            "matched_rule": "NON_SOLID_SAFETY_GUARD",
+            "exclusion_reason": "Non-solid formulation (Syrup, Drop, Ointment, Injection, or Sachet).",
+        }
+
     # 4. If strong chronic marker matched and passed exclusion checks
     if is_strong_chronic:
         return {
@@ -435,31 +486,13 @@ def classify_medication(
             "exclusion_reason": None,
         }
 
-    # 5. Check chronic formulation markers (Tablets, Capsules, ER/SR/XR/XL, strengths)
-    has_form_marker = any(marker in raw_name for marker in CHRONIC_FORM_MARKERS)
-    if has_form_marker and ("SYP" not in raw_name and "DROPS" not in raw_name and "RESP" not in raw_name):
-        return {
-            "is_chronic_eligible": True,
-            "category": "CHRONIC_MEDICATION",
-            "matched_rule": "CHRONIC_FORMULATION_RULE",
-            "exclusion_reason": None,
-        }
-
-    # 6. Default to standard medication if typical strip/tab packaging
-    if any(p in raw_pack for p in ["1X10", "1X15", "1X20", "1X30", "1X14", "1X7", "1X28"]):
-        return {
-            "is_chronic_eligible": True,
-            "category": "CHRONIC_MEDICATION",
-            "matched_rule": "STANDARD_STRIP_PACKAGING",
-            "exclusion_reason": None,
-        }
-
-    # 7. Unmatched by exclusions -> Presumed regular eligible medication
+    # 5. Fail-Safe Default: If item does not positively match any chronic therapeutic class,
+    # default to non-chronic (Apollo 24/7 / 1mg standard to prevent acute medication reminder leakage).
     return {
-        "is_chronic_eligible": True,
-        "category": "REGULAR_MEDICATION",
-        "matched_rule": "NO_EXCLUSION_MATCH",
-        "exclusion_reason": None,
+        "is_chronic_eligible": False,
+        "category": "UNCLASSIFIED_NON_CHRONIC",
+        "matched_rule": "NO_CHRONIC_THERAPY_MATCH",
+        "exclusion_reason": "Item does not belong to a recognized chronic maintenance therapeutic class (Fail-safe default).",
     }
 
 
@@ -530,9 +563,10 @@ def verify_medication_chronic_status(
     """
     rule_res = classify_medication(item_name, packing=packing)
     
-    # If explicitly excluded by rules (e.g. soap, condom, diaper, spray) -> Always False
+    # If explicitly excluded by rules (e.g. soap, condom, diaper, spray, acute antibiotic) -> Always False
     if not rule_res["is_chronic_eligible"]:
-        return rule_res
+        if rule_res.get("matched_rule") != "NO_CHRONIC_THERAPY_MATCH":
+            return rule_res
 
     # If personal history demonstrates proven longitudinal adherence
     if patient_history_count >= 3 and patient_median_interval and (15.0 <= patient_median_interval <= 65.0):

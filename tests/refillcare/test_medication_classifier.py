@@ -71,6 +71,31 @@ def test_generic_otc_fmcg_exclusions():
         assert is_chronic_medication(item, packing=pack) is False
 
 
+def test_acute_and_prn_audit_leakage_prevented():
+    """Verify that acute/antibiotic/PRN items identified in clinical audit are strictly excluded."""
+    audit_acute_items = [
+        ("SOLVIN COLD SYP", "60ML"),
+        ("GAVISCON  SYP", "150ML"),
+        ("CIPLOX EYE DROP", "10ML"),
+        ("COMBIGAN DROP", "5ML"),
+        ("KETOROL DT TAB", "1X10"),
+        ("AUGMENTIN 625MG TAB", "1X10"),
+        ("DART TAB", "1X10"),
+        ("HEADSET TAB", "1X10"),
+        ("ELDOPER CAP", "1X10"),
+        ("COFSILS GINGER LEMON", "1X10"),
+        ("OTRIVIN OXY FAST RELIEF ADULT NASAL SPRAY", "10ML"),
+        ("PAN-D CAP", "1X15"),
+        ("RABEKIND DSR CAP", "1X10"),
+        ("VOLINI SPRAY", "100GM"),
+    ]
+
+    for item, pack in audit_acute_items:
+        res = classify_medication(item, packing=pack)
+        assert not res["is_chronic_eligible"], f"Leakage detected: {item} should be excluded, got: {res}"
+        assert is_chronic_medication(item, packing=pack) is False
+
+
 def test_chronic_medication_inclusions():
     """Verify that genuine chronic maintenance therapies are correctly classified as eligible."""
     chronic_items = [

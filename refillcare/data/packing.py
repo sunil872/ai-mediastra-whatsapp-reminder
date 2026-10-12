@@ -239,3 +239,78 @@ def enrich_total_units_purchased(
 
     return out
 
+
+def get_device_clinical_capacity(item_name: Optional[str], packing: Optional[str] = None) -> Optional[float]:
+    """
+    Determine clinical standard in-use capacity / stability ceiling (in days)
+    for medical devices, insulin pens, cartridges, and inhalers.
+
+    Clinical Standards:
+    - Insulin Pens / Cartridges (Basugine, Lantus, Tresiba, Ryzodeg, Novomix, etc.):
+      Maximum in-use room-temperature stability and standard adherence window is 28-30 days per pen/cartridge.
+    - Inhalers / MDIs / DPIs (Seroflo, Budecort, Foracort, Asthalin, Aerocort):
+      Standard 1 canister/device typically represents 30 days of therapy (at 2 puffs BID).
+    - Ophthalmic drops sterility ceiling: 28-30 days after opening.
+    """
+    if not item_name:
+        return None
+
+    name_upper = str(item_name).upper()
+    pack_upper = str(packing).upper() if packing else ""
+
+    # 1. Insulin Pens, Disposable Pens, Cartridges, Penfills (100IU/ml, 3ml = 300IU)
+    is_insulin = any(ins in name_upper for ins in [
+        "BASUGINE", "LANTUS", "TRESIBA", "RYZODEG", "NOVOMIX", "HUMALOG",
+        "FIASP", "TOUJEO", "APIDRA", "INSULATARD", "MIXTARD", "INSUGEN", "DEGLUDEG"
+    ])
+    is_device = any(dev in name_upper or dev in pack_upper for dev in [
+        "PEN", "CATRIAGE", "CARTRIDGE", "PENFIL", "PENFILL", "FLEXPEN", "KWIKPEN", "SOLOSTAR", "3ML"
+    ])
+    if is_insulin and is_device:
+        return 30.0
+
+    # 2. Inhalers, MDIs, Respicaps, Rotacaps
+    is_inhaler = any(inh in name_upper for inh in [
+        "INHALER", "EVOHALER", "SYNCHROBREATHE", "TURBUHALER", "ACCUHALER", "AEROHALER"
+    ]) or "200MDI" in pack_upper or "120MD" in pack_upper
+    if is_inhaler:
+        return 30.0
+
+    # 3. Eye drops sterility / in-use ceiling
+    if "DROP" in name_upper or "DROPS" in name_upper or "OPHTH" in name_upper:
+        return 28.0
+
+    return None
+
+
+def compute_dos(
+    item_name: Optional[str],
+    packing: Optional[str] = None,
+    quantity: Optional[float] = 1.0,
+) -> float:
+    """
+    Compute clinically realistic Days of Supply (cDOS) for a single purchase.
+    
+    Incorporates:
+    - Physical pack units parsed from strip (e.g. 1X10, 1X15, 1X30).
+    - Device stability ceilings (Insulin pens = 30d per unit).
+    - Oral solid physiological standard assumption (1 tablet/day standard, capped at 1.5x units).
+    """
+    qty = float(quantity) if quantity and quantity > 0 else 1.0
+
+    # Check device clinical capacity first
+    device_cap = get_device_clinical_capacity(item_name, packing)
+    if device_cap is not None:
+        return float(device_cap * qty)
+
+    # Oral solid / parsed packaging
+    parsed = parse_pack_units(packing) or parse_pack_units(item_name)
+    if parsed and parsed > 0:
+        total_units = parsed * qty
+        # Standard maintenance dose is 1 tablet daily -> total_units days
+        return float(total_units)
+
+    # Default fallback: 30 days per purchase
+    return 30.0 * qty
+
+

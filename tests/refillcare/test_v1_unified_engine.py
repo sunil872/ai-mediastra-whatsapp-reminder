@@ -597,4 +597,37 @@ def test_multi_pack_quantity_scaling_scenario():
     assert "Multi-Pack Scaled" in dec.decision_reason
 
 
+def test_device_stability_ceiling_insulin_pen():
+    """Verify that insulin disposable pens (e.g., Basugine) enforce 30-day in-use stability ceiling."""
+    engine = UnifiedRefillDecisionEngine()
+
+    # Customer Madhusudhan Reddy: 2 purchases spaced 46 days apart
+    dates = [
+        date(2026, 7, 1),
+        date(2026, 8, 16),
+    ]
+    quantities = [1.0, 1.0]
+    packings = ["1X3ML", "1X3ML"]
+
+    dec = engine.evaluate_customer_item_trajectory(
+        customer_id="CUST_MADHUSUDHAN",
+        customer_name="MADHUSUDHAN REDDY",
+        mobile_no="919848012345",
+        item_id="ITEM_BASUGINE",
+        item_name="BASUGINE DISPOSABLE PEN 3ML",
+        dates=dates,
+        quantities=quantities,
+        packings=packings,
+        as_of_date=date(2026, 8, 16),
+    )
+
+    assert dec.is_eligible is True
+    assert dec.path == PATH_B
+    # Clinical standard room-temperature stability ceiling enforces 30 days max (not 46.8 days)
+    assert dec.predicted_interval_days == 30
+    assert dec.expected_refill_date == date(2026, 9, 15)
+    assert dec.prediction_method == "PATH_B_DOS_EDS"
+
+
+
 

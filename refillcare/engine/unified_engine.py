@@ -137,6 +137,16 @@ class UnifiedRefillDecisionEngine:
 
         latest_units = units[-1] if units else None
 
+        # 0. Check Clinical Device Capacity (Insulin Pens, Inhalers, Eye Drops)
+        from refillcare.data.packing import get_device_clinical_capacity
+        latest_pack = packings[-1] if packings and len(packings) > 0 else None
+        latest_qty = quantities[-1] if quantities and len(quantities) > 0 else 1.0
+        device_cap = get_device_clinical_capacity(item_name, latest_pack)
+        if device_cap is not None:
+            # Clinical stability ceiling is authoritative (e.g., 30.0 days per pen/canister)
+            capped_dos = device_cap * latest_qty
+            return round(float(capped_dos), 1), round(float(latest_qty), 1)
+
         # Multi-purchase consumption velocity using recent active intervals (<= 120 days)
         if len(dates) >= 2 and len(units) >= 2:
             recent_units_consumed = 0.0
@@ -157,7 +167,12 @@ class UnifiedRefillDecisionEngine:
                 daily_rate = recent_units_consumed / float(recent_elapsed_days)
                 if daily_rate > 0 and latest_units and latest_units > 0:
                     dos = latest_units / daily_rate
-                    dos_clamped = max(5.0, min(365.0, dos))
+                    # Physiological clamp for oral solids:
+                    # Patient non-adherent purchase gaps must not inflate supply estimation.
+                    # Standard oral chronic solid dosing is 1 tablet/day (QD) to 2 tablets/day (BID).
+                    min_allowed = max(5.0, 0.5 * latest_units)
+                    max_allowed = max(10.0, 1.25 * latest_units)
+                    dos_clamped = max(min_allowed, min(max_allowed, dos))
                     return round(float(dos_clamped), 1), round(float(latest_units), 1)
 
         # Single purchase or fallback to pack/purchased units
@@ -247,9 +262,15 @@ class UnifiedRefillDecisionEngine:
         dos_days, latest_units = self.compute_dos(dates, quantities, packings, item_name)
 
         # Medication therapy classification gate: Exclude generic OTC / FMCG / Acute / Personal Care items
-        from refillcare.data.medication_classifier import classify_medication
+        from refillcare.data.medication_classifier import verify_medication_chronic_status
         latest_pack = packings[-1] if packings and len(packings) > 0 else None
-        med_class = classify_medication(item_name, packing=latest_pack)
+        int_med = float(np.median(intervals)) if intervals else None
+        med_class = verify_medication_chronic_status(
+            item_name=item_name,
+            patient_history_count=purchase_count,
+            patient_median_interval=int_med,
+            packing=latest_pack,
+        )
         if not med_class["is_chronic_eligible"]:
             return RefillDecision(
                 customer_id=str(customer_id),
