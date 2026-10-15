@@ -41,7 +41,7 @@
       </a>
       <a class="nav-item" data-tab="tab-reminders">
         <span class="nav-icon">📅</span>
-        <span>Daily Reminder List</span>
+        <span>Reminder List</span>
       </a>
       <a class="nav-item" data-tab="tab-medsync">
         <span class="nav-icon">📦</span>
@@ -110,10 +110,6 @@
           <span id="theme-btn-label">Dark Mode</span>
         </button>
       </div>
-    </header>n>
-          </div>
-        </div>
-      </div>
     </header>
 
     <!-- Dynamic Tab Content Workspace -->
@@ -154,7 +150,7 @@
             </div>
             <div class="kpi-title">Scheduled Refills</div>
             <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-upcoming">15,547</div>
+              <div class="kpi-value" id="kpi-upcoming">11,212</div>
               <div class="kpi-sparkline">
                 <span class="spark-bar" style="height: 14px; background: #10b981;"></span>
                 <span class="spark-bar" style="height: 18px; background: #10b981;"></span>
@@ -174,7 +170,7 @@
             </div>
             <div class="kpi-title">Refills Due Today</div>
             <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-due-today" style="color: #d97706;">592</div>
+              <div class="kpi-value" id="kpi-due-today" style="color: #d97706;">--</div>
               <div class="kpi-sparkline">
                 <span class="spark-bar" style="height: 24px; background: #f59e0b;"></span>
                 <span class="spark-bar" style="height: 20px; background: #f59e0b;"></span>
@@ -194,7 +190,7 @@
             </div>
             <div class="kpi-title">Chronic Therapy Portfolio</div>
             <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-chronic-count">150+</div>
+              <div class="kpi-value" id="kpi-chronic-count">1,920+</div>
               <div class="kpi-sparkline">
                 <span class="spark-bar" style="height: 10px; background: #8b5cf6;"></span>
                 <span class="spark-bar" style="height: 15px; background: #8b5cf6;"></span>
@@ -513,18 +509,39 @@
       <section id="tab-reminders" class="tab-pane">
         <div class="card">
           <div class="card-header">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <h3 class="card-title">📅 Customer Reminder List</h3>
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+              <h3 class="card-title">📅 Reminder List</h3>
               <span class="badge badge-info" id="reminder-count-badge">Loading...</span>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
               <select id="reminder-view-mode" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
                 <option value="DATE" selected>Filter by Date</option>
+                <option value="ROLLING_30D">Rolling 30 Days (Active Horizon)</option>
                 <option value="MONTH">Filter by Month</option>
               </select>
-              <input type="date" id="reminder-target-date" value="2026-09-30" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+              <input type="date" id="reminder-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
               <select id="reminder-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="2026-09" selected>September 2026 (2026-09)</option>
+                <option value="2026-10" selected>October 2026 (2026-10)</option>
+              </select>
+              <select id="reminder-stage-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+                <option value="ALL" selected>All Stages</option>
+                <option value="-7 days">-7 days (Early Heads-up)</option>
+                <option value="-3 days">-3 days (Preparation)</option>
+                <option value="0 days">0 days (Due Today)</option>
+                <option value="+3 days">+3 days (Follow-up 1)</option>
+                <option value="+7 days">+7 days (Follow-up 2)</option>
+                <option value="+45 days">+45 days (Re-engagement)</option>
+              </select>
+              <select id="reminder-func-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+                <option value="ALL" selected>All Functions</option>
+                <option value="DUE_REFILL">DUE_REFILL</option>
+                <option value="REFILL_FOLLOW_UP">REFILL_FOLLOW_UP</option>
+                <option value="LAPSED_REENGAGEMENT">LAPSED_REENGAGEMENT</option>
+              </select>
+              <select id="reminder-mobile-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+                <option value="All" selected>All Mobile Numbers</option>
+                <option value="Valid">Valid Mobile Only</option>
+                <option value="Missing">Missing Mobile Only</option>
               </select>
               <select id="reminder-channel-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
                 <option value="CUSTOMER_SALE" selected>Customer Sales (Default)</option>
@@ -580,7 +597,7 @@
               </div>
               <div>
                 <label style="font-size: 0.75rem; font-weight: 600; display: block; color: var(--text-muted);">Prediction Target</label>
-                <input type="date" id="medsync-target-date" value="2026-09-30" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <input type="date" id="medsync-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
                 <select id="medsync-month-select" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
                   <option value="">Auto Next Month</option>
                 </select>
@@ -610,7 +627,7 @@
             <div class="kpi-card">
               <div class="kpi-title">Multi-Item Bundles</div>
               <div class="kpi-value" id="medsync-multi-bundles">-</div>
-              <div class="kpi-sub">≥ 2 medications synchronized</div>
+              <div class="kpi-sub" id="medsync-multi-rate">≥ 2 medications synchronized</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-title">Messages Saved</div>
@@ -632,8 +649,8 @@
                   <th>Mobile Number</th>
                   <th>Refill Function</th>
                   <th>Anchor Medication</th>
-                  <th>Synced Prescriptions</th>
-                  <th>Anchor Due Date</th>
+                  <th style="min-width: 280px; max-width: 420px;">Synced Prescriptions</th>
+                  <th style="white-space: nowrap;">Anchor Due Date</th>
                   <th>Quantile Envelope (P10 → P90)</th>
                   <th>Items</th>
                   <th>Reduction</th>
@@ -648,29 +665,129 @@
 
       <!-- TAB 7: CLINICAL REVIEW QUEUE -->
       <section id="tab-review" class="tab-pane">
+        <!-- 4 Hospital Review KPI Cards Synced with Streamlit -->
+        <div class="kpi-grid" style="margin-bottom: 1.5rem;">
+          <!-- Card 1: Total In Review Queue -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-amber">⚠️</div>
+              <span class="kpi-trend-pill trend-warning">Clinical Action</span>
+            </div>
+            <div class="kpi-title">Total In Review Queue</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="review-kpi-total" style="color: #d97706;">2,015</div>
+              <div class="kpi-sparkline">
+                <span class="spark-bar" style="height: 18px; background: #f59e0b;"></span>
+                <span class="spark-bar" style="height: 22px; background: #f59e0b;"></span>
+                <span class="spark-bar" style="height: 20px; background: #f59e0b;"></span>
+                <span class="spark-bar" style="height: 24px; background: #d97706;"></span>
+                <span class="spark-bar" style="height: 26px; background: #b45309;"></span>
+              </div>
+            </div>
+            <div class="kpi-subtext">Candidates requiring pharmacist verification</div>
+          </div>
+
+          <!-- Card 2: Missing Mobile Numbers -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-red">📱</div>
+              <span class="kpi-trend-pill trend-alert">Zero WhatsApp</span>
+            </div>
+            <div class="kpi-title">Missing Mobile Numbers</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="review-kpi-missing-mobile" style="color: #ef4444;">46</div>
+              <div class="kpi-sparkline">
+                <span class="spark-bar" style="height: 12px; background: #ef4444;"></span>
+                <span class="spark-bar" style="height: 14px; background: #ef4444;"></span>
+                <span class="spark-bar" style="height: 10px; background: #ef4444;"></span>
+                <span class="spark-bar" style="height: 16px; background: #ef4444;"></span>
+                <span class="spark-bar" style="height: 18px; background: #dc2626;"></span>
+              </div>
+            </div>
+            <div class="kpi-subtext">Blocked from WhatsApp automated dispatch</div>
+          </div>
+
+          <!-- Card 3: Stability / Variance Risk -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-blue">📊</div>
+              <span class="kpi-trend-pill trend-info">Cadence Check</span>
+            </div>
+            <div class="kpi-title">Stability / Variance Risk</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="review-kpi-stability-risk" style="color: #2563eb;">915</div>
+              <div class="kpi-sparkline">
+                <span class="spark-bar" style="height: 16px; background: #3b82f6;"></span>
+                <span class="spark-bar" style="height: 18px; background: #3b82f6;"></span>
+                <span class="spark-bar" style="height: 22px; background: #3b82f6;"></span>
+                <span class="spark-bar" style="height: 20px; background: #3b82f6;"></span>
+                <span class="spark-bar" style="height: 26px; background: #1d4ed8;"></span>
+              </div>
+            </div>
+            <div class="kpi-subtext">Unstable intervals or high variance patterns</div>
+          </div>
+
+          <!-- Card 4: Cold-Start (Single Purchase) -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-purple">❄️</div>
+              <span class="kpi-trend-pill trend-up">First-Time</span>
+            </div>
+            <div class="kpi-title">Cold-Start (Single Purchase)</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="review-kpi-cold-start" style="color: #7c3aed;">427</div>
+              <div class="kpi-sparkline">
+                <span class="spark-bar" style="height: 14px; background: #8b5cf6;"></span>
+                <span class="spark-bar" style="height: 16px; background: #8b5cf6;"></span>
+                <span class="spark-bar" style="height: 20px; background: #8b5cf6;"></span>
+                <span class="spark-bar" style="height: 22px; background: #8b5cf6;"></span>
+                <span class="spark-bar" style="height: 24px; background: #6d28d9;"></span>
+              </div>
+            </div>
+            <div class="kpi-subtext">Only 1 verified purchase on record</div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">⚠️ Today's Refill Reminder & Clinical Review Queue</h3>
+            <div>
+              <h3 class="card-title">⚠️ Pharmacist Clinical Review & Validation Queue</h3>
+              <p style="color: var(--text-secondary); margin-top: 0.25rem;">
+                Review unstable refill predictions, missing contact numbers, and cold-start single purchases before patient outreach.
+              </p>
+            </div>
             <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-              <input type="text" id="review-search-cust" placeholder="Search Customer..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-              <input type="date" id="review-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-              <button class="btn btn-outline" id="btn-refresh-review-queue">🔄 Filter Queue</button>
+              <select id="review-target-month" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <option value="2026-10" selected>October 2026 (2026-10)</option>
+                <option value="2026-09">September 2026 (2026-09)</option>
+              </select>
+              <select id="review-category-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <option value="All" selected>All Categories</option>
+                <option value="Missing Mobile">Missing Mobile (46)</option>
+                <option value="Stability Risk">Stability / Variance Risk (915)</option>
+                <option value="Cold-Start">Cold-Start (Single Purchase) (427)</option>
+              </select>
+              <select id="review-mobile-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+                <option value="All" selected>All Mobile Status</option>
+                <option value="Missing">Missing Mobile Only</option>
+                <option value="Valid">Valid Mobile Only</option>
+              </select>
+              <input type="text" id="review-search-cust" placeholder="Search Patient / Phone / Reason..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); width: 220px;">
+              <button class="btn btn-danger-search" id="btn-refresh-review-queue">🔍 Filter Queue</button>
             </div>
           </div>
           <div class="table-responsive" style="max-height: 520px;">
             <table class="data-table" id="table-review-queue">
               <thead>
                 <tr>
-                  <th>Customer</th>
-                  <th>Medicine</th>
-                  <th>Expected Refill</th>
-                  <th>Stage</th>
-                  <th>Regimen</th>
-                  <th>Archetype</th>
-                  <th>Path</th>
-                  <th>Stability</th>
-                  <th>Prediction Method</th>
-                  <th>Decision Reason</th>
+                  <th>Patient Name & ID</th>
+                  <th>Mobile Number</th>
+                  <th>Mobile Status</th>
+                  <th>Medication / Salt</th>
+                  <th>Target Month</th>
+                  <th>Review Category</th>
+                  <th>Clinical Decision Reason</th>
+                  <th>Path & Stability</th>
                   <th>Status</th>
                   <th>Action</th>
                 </tr>
@@ -709,30 +826,217 @@
 
       <!-- TAB 9: WHATSAPP GATEWAY -->
       <section id="tab-whatsapp" class="tab-pane">
-        <div class="card">
+        <!-- Gateway Header Card -->
+        <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
-            <h3 class="card-title">💬 WhatsApp & Xinno Messaging Gateway</h3>
-            <span class="badge badge-warning" id="wa-dry-run-badge">Dry-Run Simulation Active</span>
+            <div>
+              <h3 class="card-title">💬 WhatsApp & Xinno Messaging Gateway</h3>
+              <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
+                Automated WhatsApp reminders remain safely controlled with dry-run simulation mode enabled by default.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+              <span class="badge badge-warning" id="wa-dry-run-badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid #f59e0b; font-weight: 700;">DRY-RUN SIMULATION ACTIVE</span>
+              <button class="btn btn-primary" id="btn-dispatch-dryrun">⚡ Simulate Batch Send (Dry-Run)</button>
+            </div>
           </div>
-          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-            Automated WhatsApp reminders remain safely controlled with dry-run simulation mode enabled by default.
-          </p>
-          <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem;">
-            <button class="btn btn-primary" id="btn-dispatch-dryrun">🧪 Simulate Batch Send (Dry-Run)</button>
+
+          <!-- Controls Toolbar -->
+          <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; padding-top: 0.5rem; border-top: 1px solid var(--border-main);">
+            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Target Mode</label>
+              <select id="wa-target-mode" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <option value="DATE" selected>Specific Date</option>
+                <option value="MONTH">Target Month</option>
+              </select>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;" id="wa-target-label">Target Date</label>
+              <input type="date" id="wa-target-date" value="2026-10-13" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+              <select id="wa-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <option value="2026-10" selected>October 2026 (2026-10)</option>
+              </select>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Lifecycle Tier</label>
+              <select id="wa-tier-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <option value="ALL" selected>ALL (3-Tier Lifecycle)</option>
+                <option value="DUE">DUE (Due / Advance)</option>
+                <option value="FOLLOWUP">FOLLOWUP (Follow-up)</option>
+                <option value="LAPSED">LAPSED (+45d Re-engagement)</option>
+              </select>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Mobile Status</label>
+              <select id="wa-mobile-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+                <option value="All" selected>All Statuses</option>
+                <option value="Valid">Valid Phone (Ready)</option>
+                <option value="Missing">Missing / Review</option>
+              </select>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+                Sync Window: <span id="wa-sync-win-val" style="color: var(--primary);">0</span>d
+              </label>
+              <input type="range" id="wa-sync-window" min="0" max="14" value="0" step="1" style="width: 110px; cursor: pointer;">
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.25rem; flex-grow: 1; min-width: 180px;">
+              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Filter Search</label>
+              <input type="text" id="wa-search-input" placeholder="Search Customer / Phone / Med..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+            </div>
+
+            <div style="display: flex; align-items: flex-end; padding-top: 1.15rem;">
+              <button class="btn btn-outline" id="btn-refresh-wa" style="padding: 0.45rem 1rem;">🔍 Refresh Queue</button>
+            </div>
           </div>
-          <div class="table-responsive">
-            <table class="data-table" id="table-wa-logs">
-              <thead>
-                <tr>
-                  <th>Phone Number</th>
-                  <th>Customer</th>
-                  <th>Medication</th>
-                  <th>Refill Date</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+        </div>
+
+        <!-- 4 KPI Summary Cards -->
+        <div class="kpi-grid" style="margin-bottom: 1.25rem;">
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-blue">👥</div>
+              <span class="kpi-trend-pill trend-neutral">● Scheduled</span>
+            </div>
+            <div class="kpi-title">Total Scheduled</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="wa-kpi-total">--</div>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-emerald">📱</div>
+              <span class="kpi-trend-pill trend-success">▲ Ready to Send</span>
+            </div>
+            <div class="kpi-title">Delivery Ready (Valid)</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="wa-kpi-valid" style="color: #10b981;">--</div>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-amber">⚠️</div>
+              <span class="kpi-trend-pill trend-warning">● Attention Needed</span>
+            </div>
+            <div class="kpi-title">Missing Mobile</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="wa-kpi-missing" style="color: #f59e0b;">--</div>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-purple">🎯</div>
+              <span class="kpi-trend-pill trend-neutral">Horizon Target</span>
+            </div>
+            <div class="kpi-title">Active Target</div>
+            <div class="kpi-value-row">
+              <div class="kpi-value" id="wa-kpi-target-label" style="font-size: 1.2rem;">--</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Two-Column Layout: Left = Candidate Queue, Right = Live Preview & Single Send -->
+        <div style="display: grid; grid-template-columns: 1.35fr 1.65fr; gap: 1.25rem; align-items: start;">
+          <!-- Left Column: Candidate Table -->
+          <div class="card" style="padding: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
+              <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">
+                📋 Candidate Outreach Queue (<span id="wa-candidate-count">0</span> records)
+              </h4>
+              <span style="font-size: 0.75rem; color: var(--text-muted);">Click any row to preview message</span>
+            </div>
+
+            <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+              <table class="data-table" id="table-wa-candidates">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Mobile</th>
+                    <th>Status</th>
+                    <th>Medication</th>
+                    <th>Stage</th>
+                    <th>Refill Due</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-wa-candidates">
+                  <tr>
+                    <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading WhatsApp candidates...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Right Column: Live Message Preview Box & Single Send Form -->
+          <div class="card" style="padding: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
+              <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">
+                📱 Live 3-Tier Message Preview & Dynamic Variable Simulation
+              </h4>
+            </div>
+
+            <!-- Patient Selector for Preview -->
+            <div style="margin-bottom: 1rem;">
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 0.35rem;">
+                Select Patient to Preview WhatsApp Text:
+              </label>
+              <select id="wa-preview-patient-select" style="width: 100%; padding: 0.55rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                <option value="">Loading patient candidate list...</option>
+              </select>
+            </div>
+
+            <!-- High-Contrast WhatsApp Message Preview Box -->
+            <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 1.15rem;">💬</span>
+                  <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">WhatsApp Live Message Preview</span>
+                </div>
+                <span id="wa-preview-badge" style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
+                  DUE • DUE_REFILL
+                </span>
+              </div>
+              <div id="wa-preview-body" style="white-space: pre-wrap; font-size: 0.95rem; line-height: 1.6; color: #0f172a; font-weight: 500;">
+                Select a patient candidate to inspect rendered WhatsApp text.
+              </div>
+            </div>
+
+            <!-- Interactive Single Test Dispatch Card -->
+            <div style="background: var(--bg-hover); border: 1px solid var(--border-main); border-radius: 10px; padding: 1rem 1.25rem;">
+              <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 6px;">
+                <span>📲</span> Send Single Test WhatsApp Message (Live / Dry-Run)
+              </div>
+              <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0.75rem; align-items: flex-end;">
+                <div>
+                  <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">
+                    Recipient Mobile (10 or 12 Digits)
+                  </label>
+                  <input type="text" id="wa-single-test-phone" placeholder="91XXXXXXXXXX" style="width: 100%; padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+                </div>
+                <div style="padding-bottom: 0.4rem;">
+                  <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; color: var(--text-main); cursor: pointer;">
+                    <input type="checkbox" id="wa-single-dryrun-chk" checked>
+                    <span>Dry-Run Simulation</span>
+                  </label>
+                  <div id="wa-mode-caption" style="font-size: 0.7rem; color: #f59e0b; font-weight: 600; margin-top: 2px;">🟡 Mode: Dry-Run</div>
+                </div>
+                <div>
+                  <button class="btn btn-primary" id="btn-send-single-wa" style="width: 100%; padding: 0.5rem 0.75rem;">
+                    🚀 Send Test Message
+                  </button>
+                </div>
+              </div>
+              <div id="wa-single-send-feedback" style="margin-top: 0.75rem; display: none;"></div>
+            </div>
           </div>
         </div>
       </section>

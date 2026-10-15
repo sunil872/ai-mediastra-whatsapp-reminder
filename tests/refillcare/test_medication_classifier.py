@@ -9,6 +9,7 @@ from refillcare.data.medication_classifier import (
     classify_medication,
     is_chronic_medication,
     filter_chronic_transactions,
+    verify_medication_chronic_status,
 )
 from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine, STABILITY_UNSTABLE, PATH_INELIGIBLE
 
@@ -225,3 +226,117 @@ def test_behavioral_and_population_consensus():
     )
     assert ver_res["is_chronic_eligible"] == True
     assert "CHRONIC_BY_PERSONAL_RECURRENCE" in ver_res["category"]
+
+
+def test_salt_wise_medication_classification():
+    """Verify that medications with active salt composition are accurately classified."""
+    salt_chronic_cases = [
+        ("OBORAVO 25", "1X10", "EMPAGLIFLOZIN-25MG"),
+        ("GLYCOMET 500", "1X20", "METFORMIN-500MG"),
+        ("ERITEL 40", "1X15", "TELMISARTAN-40MG"),
+        ("ROSEDAY 10", "1X15", "ROSUVASTATIN-10MG"),
+        ("UDAPA 10", "1X10", "DAPAGLIFLOZIN-10MG"),
+        ("UNKNOWN BRAND SITA", "1X10", "SITAGLIPTIN 50MG+METFORMIN 500"),
+        ("UNKNOWN BRAND VILDA", "1X10", "VILDAGLIPTIN-50MG"),
+        ("UNKNOWN BRAND CARCA", "1X10", "CARVEDILOL-3.125MG"),
+        ("BASUGINE DISPOSABLE PEN 3ML", "3ML", "INSULIN GLARGINE-100IU"),
+    ]
+
+    for item, pack, salt in salt_chronic_cases:
+        res = classify_medication(item, packing=pack, salt_name=salt)
+        assert res["is_chronic_eligible"] is True, f"Expected {item} ({salt}) to be chronic eligible, got: {res}"
+        assert is_chronic_medication(item, packing=pack, salt_name=salt) is True
+
+
+def test_strict_syrup_and_drop_exclusions():
+    """Verify that syrups, drops, and eye drops are strictly excluded from refill reminder modeling."""
+    liquid_cases = [
+        ("ASTHALIN SYP", "100ML", "SALBUTAMOL-2MG/5ML"),
+        ("DERIPHYLLIN SYP", "100ML", "THEOPHYLLINE+ETOPHYLLINE"),
+        ("SOLVIN COLD SYP", "60ML", "CHLORPHENIRAMINE+PHENYLEPHRINE+PARACETAMOL"),
+        ("GAVISCON SYRUP", "150ML", "SODIUM ALGINATE+POTASSIUM BICARBONATE"),
+        ("DUPHALAC SYP", "200ML", "LACTULOSE-10GM/15ML"),
+        ("COMBIGAN DROP", "5ML", "BRIMONIDINE + TIMOLOL"),
+        ("REFRESH TEARS EYE DROPS", "10ML", "CARBOXYMETHYLCELLULOSE 0.5%"),
+        ("TIMOLOL EYE DROPS", "5ML", "TIMOLOL-0.5%"),
+        ("CIPLOX EYE DROP", "10ML", "CIPROFLOXACIN-0.3%"),
+        ("GENTICYN EYE DROP", "5ML", "GENTAMICIN-0.3%"),
+        ("SUCRAFIL SUSP", "200ML", "SUCRALFATE-1000MG"),
+        ("CREMAFFIN SYP", "200ML", "LIQUID PARAFFIN+MAGNESIUM HYDROXIDE"),
+    ]
+
+    for item, pack, salt in liquid_cases:
+        res = classify_medication(item, packing=pack, salt_name=salt)
+        assert res["is_chronic_eligible"] is False, f"Expected {item} to be excluded, but got: {res}"
+        assert is_chronic_medication(item, packing=pack, salt_name=salt) is False
+
+        # Verify multi-tiered verification cannot be overridden by repeat purchases for non-solids
+        ver = verify_medication_chronic_status(
+            item_name=item,
+            patient_history_count=5,
+            patient_median_interval=30.0,
+            population_repeat_rate=0.85,
+            packing=pack,
+            salt_name=salt,
+        )
+        assert ver["is_chronic_eligible"] is False, f"Non-solid {item} must not be promoted to chronic by history!"
+
+
+def test_catalog_automatic_salt_lookup():
+    """Verify that catalog fallback automatically resolves salt when salt_name is None."""
+    # OBORAVO 25 is in SALT WISE ITEMS.csv with salt EMPAGLIFLOZIN-25MG
+    res = classify_medication("OBORAVO 25", packing="1X10")
+    assert res["is_chronic_eligible"] is True, f"Catalog fallback failed for OBORAVO 25: {res}"
+
+
+def test_acute_salt_composition_exclusions():
+    """Verify that acute antibiotics, analgesics, and antacids are excluded based on salt composition."""
+    acute_cases = [
+        ("AUGMENTIN 625MG TAB", "1X10", "Amoxycillin (500mg) + Clavulanic Acid (125mg)"),
+        ("GENERIC AMOX", "1X10", "AMOXYCILLIN-500MG"),
+        ("GENERIC LINEZOLID", "1X10", "LINEZOLID-600MG"),
+        ("GENERIC CEFIXIME", "1X10", "CEFIXIME-200MG"),
+        ("GENERIC PARACETAMOL", "1X10", "PARACETAMOL-650MG"),
+        ("GENERIC ACECLO", "1X10", "ACECLOFENAC-100MG"),
+    ]
+
+    for item, pack, salt in acute_cases:
+        res = classify_medication(item, packing=pack, salt_name=salt)
+        assert res["is_chronic_eligible"] is False, f"Expected acute {item} ({salt}) to be excluded, got: {res}"
+
+
+def test_respules_and_nebulizer_exclusions_and_tablet_retention():
+    """Verify that all respules and nebulizer solutions are strictly excluded as non-chronic,
+    while chronic tablets with RESP/NEB brand names (e.g. Nebicard, Nebistar, Respidon) remain chronic.
+    """
+    respules_cases = [
+        ("BUDECORT 0.5 RESP", "1X5X2ML"),
+        ("DUOLIN 3 RESPULES", "1X5X2.5ML"),
+        ("FORACORT 0.5 RESPULES", "1X5X2ML"),
+        ("ASTHALIN RESP", "1X5X2ML"),
+        ("LEVOLIN 0.63MG RESPULES", "1X5X2.5ML"),
+        ("NEBZMART GFB SMARTULES", "1X5X2ML"),
+        ("TOBARESP MISTPULES", "1X5X2ML"),
+        ("SALBAIR NEB 1.5 RESP", "1X5X2ML"),
+        ("GLYCOHALE 2ML RESP", "1X5X2ML"),
+        ("COMBIMIST L RESPULES", "1X5X2.5ML"),
+        ("FORMONIDE 1 RESPULE", "1X5X2ML"),
+        ("INHALEX RESPULES", "1X5X2ML"),
+    ]
+
+    for item, pack in respules_cases:
+        res = classify_medication(item, packing=pack)
+        assert res["is_chronic_eligible"] is False, f"Expected {item} to be EXCLUDED as respule/non-chronic, got: {res}"
+        assert is_chronic_medication(item, packing=pack) is False
+
+    chronic_tablets = [
+        ("NEBICARD 5MG TAB", "1X10"),
+        ("NEBISTAR 2.5MG TAB", "1X10"),
+        ("RESPIDON 4MG TAB", "1X10"),
+    ]
+
+    for item, pack in chronic_tablets:
+        res = classify_medication(item, packing=pack)
+        assert res["is_chronic_eligible"] is True, f"Expected chronic tablet {item} to remain CHRONIC, got: {res}"
+        assert is_chronic_medication(item, packing=pack) is True
+

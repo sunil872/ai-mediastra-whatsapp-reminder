@@ -193,6 +193,7 @@ class UnifiedRefillDecisionEngine:
         packings: Optional[List[Optional[str]]] = None,
         as_of_date: Optional[date] = None,
         transaction_numbers: Optional[List[str]] = None,
+        salt_name: Optional[str] = None,
     ) -> RefillDecision:
         """Evaluate a single customer-item purchase history deterministically.
 
@@ -270,6 +271,7 @@ class UnifiedRefillDecisionEngine:
             patient_history_count=purchase_count,
             patient_median_interval=int_med,
             packing=latest_pack,
+            salt_name=salt_name,
         )
         if not med_class["is_chronic_eligible"]:
             return RefillDecision(

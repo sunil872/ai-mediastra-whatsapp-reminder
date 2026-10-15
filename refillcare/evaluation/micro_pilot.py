@@ -296,7 +296,7 @@ def prepare_micro_pilot_batch(
 
     # Filter Tier A
     if tier_col and tier_col in df.columns:
-        tier_a_mask = df[tier_col].astype(str).str.contains("Tier A", case=False, na=False)
+        tier_a_mask = df[tier_col].astype(str).str.contains("Tier A", case=False, na=False, regex=False)
         tier_a_df = df[tier_a_mask]
     else:
         # Fallback to high_history quality if tier column is absent

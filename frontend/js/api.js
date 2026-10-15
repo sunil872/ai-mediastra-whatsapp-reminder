@@ -108,13 +108,23 @@ export const ApiClient = {
   },
 
   // 4. Reminders
-  async getDailyReminders(targetDate, targetMonth = null, mobileStatus = "All") {
-    let url = `${API_BASE_URL}/api/v1/reminders/daily?mobile_status=${mobileStatus}`;
-    if (targetMonth) {
+  async getDailyReminders(targetDate, targetMonth = null, mobileStatus = "All", options = {}) {
+    let url = `${API_BASE_URL}/api/v1/reminders/daily?mobile_status=${encodeURIComponent(mobileStatus)}`;
+    if (options.startDate && options.endDate) {
+      url += `&start_date=${encodeURIComponent(options.startDate)}&end_date=${encodeURIComponent(options.endDate)}`;
+    } else if (targetMonth) {
       url += `&target_month=${encodeURIComponent(targetMonth)}`;
     } else if (targetDate) {
       url += `&target_date=${encodeURIComponent(targetDate)}`;
     }
+    if (options.stage && options.stage !== "ALL") url += `&stage=${encodeURIComponent(options.stage)}`;
+    if (options.refillFunction && options.refillFunction !== "ALL") url += `&refill_function=${encodeURIComponent(options.refillFunction)}`;
+    if (options.path) url += `&path=${encodeURIComponent(options.path)}`;
+    if (options.customerQuery) url += `&customer_query=${encodeURIComponent(options.customerQuery)}`;
+    if (options.medicationQuery) url += `&medication_query=${encodeURIComponent(options.medicationQuery)}`;
+    if (options.limit) url += `&limit=${encodeURIComponent(options.limit)}`;
+    if (options.offset) url += `&offset=${encodeURIComponent(options.offset)}`;
+
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch reminders");
     return await res.json();
@@ -142,7 +152,32 @@ export const ApiClient = {
 
   async getReminderMonths() {
     const res = await fetch(`${API_BASE_URL}/api/v1/reminders/months`);
-    if (!res.ok) return ["2026-09"];
+    if (!res.ok) return ["2026-10", "2026-09"];
+    return await res.json();
+  },
+
+  // 4.1. Clinical Review Queue (Enterprise Synchronized)
+  async getClinicalReviewSummary(targetMonth = "2026-10") {
+    let url = `${API_BASE_URL}/api/v1/review/summary`;
+    if (targetMonth) url += `?target_month=${encodeURIComponent(targetMonth)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch clinical review summary");
+    return await res.json();
+  },
+
+  async getClinicalReviewQueue(options = {}) {
+    let url = `${API_BASE_URL}/api/v1/review/queue?`;
+    const params = new URLSearchParams();
+    if (options.targetMonth) params.append("target_month", options.targetMonth);
+    if (options.category && options.category !== "All") params.append("category", options.category);
+    if (options.missingMobileOnly) params.append("missing_mobile_only", "true");
+    if (options.search) params.append("search", options.search);
+    if (options.limit) params.append("limit", options.limit || 200);
+    if (options.offset) params.append("offset", options.offset || 0);
+    url += params.toString();
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch clinical review queue");
     return await res.json();
   },
 
@@ -318,6 +353,44 @@ export const ApiClient = {
     }
     return await res.json();
   },
+
+  // 9. WhatsApp Gateway Methods
+  async getWhatsAppCandidates({ targetDate = null, targetMonth = null, tier = "ALL", syncWindow = 0, mobileStatus = "All", search = null } = {}) {
+    let url = `${API_BASE_URL}/api/v1/whatsapp/candidates?tier=${encodeURIComponent(tier)}&sync_window=${syncWindow}&mobile_status=${encodeURIComponent(mobileStatus)}`;
+    if (targetDate) url += `&target_date=${encodeURIComponent(targetDate)}`;
+    if (targetMonth) url += `&target_month=${encodeURIComponent(targetMonth)}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to load WhatsApp candidate queue");
+    return await res.json();
+  },
+
+  async previewWhatsApp(data) {
+    const res = await fetch(`${API_BASE_URL}/api/v1/whatsapp/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to generate WhatsApp preview");
+    }
+    return await res.json();
+  },
+
+  async sendSingleWhatsApp(data) {
+    const res = await fetch(`${API_BASE_URL}/api/v1/whatsapp/send-single`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to dispatch test message");
+    }
+    return await res.json();
+  },
 };
+
 
 

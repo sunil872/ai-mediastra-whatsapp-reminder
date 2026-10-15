@@ -87,3 +87,13 @@ ehthumbs.db
 conversation_history/
 file_to_markdown_converter/
 converted_markdown/
+
+# AI Agent Workspace & IDE Local Rules
+.agents/
+.user_uploaded/
+scratch*.py
+test.md
+desktop.ini
+*.swp
+*~
+

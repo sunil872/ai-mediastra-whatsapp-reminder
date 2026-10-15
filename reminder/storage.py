@@ -459,11 +459,12 @@ class RefillCareStorage:
         if status_filter and status_filter != "All":
             display_df = display_df[display_df["Status"].str.lower() == status_filter.lower()]
         if stage_filter and stage_filter != "All":
-            display_df = display_df[display_df["Reminder Stage"].astype(str).str.contains(stage_filter.replace("days", "").replace("day", "").strip())]
+            clean_stage = stage_filter.replace("days", "").replace("day", "").strip()
+            display_df = display_df[display_df["Reminder Stage"].astype(str).str.contains(clean_stage, case=False, na=False, regex=False)]
         if customer_query and customer_query.strip():
-            display_df = display_df[display_df["Customer"].str.contains(customer_query.strip(), case=False, na=False)]
+            display_df = display_df[display_df["Customer"].str.contains(customer_query.strip(), case=False, na=False, regex=False)]
         if medicine_query and medicine_query.strip():
-            display_df = display_df[display_df["Medicine"].str.contains(medicine_query.strip(), case=False, na=False)]
+            display_df = display_df[display_df["Medicine"].str.contains(medicine_query.strip(), case=False, na=False, regex=False)]
 
         return display_df
 

@@ -24,8 +24,8 @@ def generate_prediction_summary_report(
     dos_count = 0
     path_a_count = 0
     if not eligible_df.empty and "prediction_source" in eligible_df.columns:
-        dos_count = int(eligible_df["prediction_source"].str.contains("Days of Supply", na=False).sum())
-        path_a_count = int(eligible_df["prediction_source"].str.contains("Path A", na=False).sum())
+        dos_count = int(eligible_df["prediction_source"].str.contains("Days of Supply", na=False, regex=False).sum())
+        path_a_count = int(eligible_df["prediction_source"].str.contains("Path A", na=False, regex=False).sum())
 
     return {
         "customers_evaluated": total_evaluated,

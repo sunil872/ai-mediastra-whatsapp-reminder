@@ -351,106 +351,19 @@ class RefillPersistenceManager:
         db.commit()
         return metrics
 
-    def get_today_review_queue(
+    def get_date_range_review_queue(
         self,
         db: Session,
-        target_date: date,
+        start_date: date,
+        end_date: date,
         path_filter: Optional[str] = None,
         stability_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Query all reminder stages due for dispatch on target_date.
+        Query all reminder stages scheduled for dispatch between start_date and end_date (inclusive).
+        Supports dynamic rolling outreach horizons (e.g. 7-day, 14-day, 30-day).
         Joins with RefillDecisionModel to provide rich explainability.
         """
-        query = (
-            db.query(ReminderStageModel, RefillDecisionModel)
-            .join(
-                ReminderCycleModel,
-                ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id,
-            )
-            .outerjoin(
-                RefillDecisionModel,
-                ReminderCycleModel.decision_id == RefillDecisionModel.decision_id,
-            )
-            .filter(
-                ReminderStageModel.target_send_date == target_date,
-                ReminderCycleModel.is_active == True,
-                RefillDecisionModel.is_eligible == True,
-                ReminderStageModel.status.in_([STATUS_PENDING, STATUS_DUE, STATUS_APPROVED]),
-            )
-        )
-
-        if path_filter:
-            query = query.filter(RefillDecisionModel.path == path_filter)
-        if stability_filter:
-            query = query.filter(RefillDecisionModel.stability_tier == stability_filter)
-
-        results = query.all()
-        queue: List[Dict[str, Any]] = []
-
-        for stage, dec in results:
-            c_name = dec.customer_name if dec else "Valued Customer"
-            i_name = dec.item_name if dec else stage.item_id
-            phone = dec.mobile_no if dec else None
-            p_masked = mask_phone(phone) if phone else "MISSING"
-            reason = dec.decision_reason if dec else ""
-            arch, regimen = parse_decision_provenance(reason)
-
-            queue.append({
-                "reminder_id": stage.reminder_id,
-                "cycle_id": stage.cycle_id,
-                "customer_item_key": stage.customer_item_key,
-                "customer_id": stage.customer_id,
-                "customer_name": c_name,
-                "phone_number": phone,
-                "masked_phone": p_masked,
-                "item_id": stage.item_id,
-                "item_name": i_name,
-                "purchase_count": dec.purchase_count if dec else 0,
-                "last_purchase_date": dec.last_purchase_date.strftime("%Y-%m-%d") if (dec and dec.last_purchase_date) else None,
-                "stage_offset": stage.stage_offset,
-                "target_send_date": stage.target_send_date.strftime("%Y-%m-%d"),
-                "expected_refill_date": stage.expected_refill_date.strftime("%Y-%m-%d"),
-                "status": stage.status,
-                "path": dec.path if dec else "UNKNOWN",
-                "stability_tier": dec.stability_tier if dec else "UNKNOWN",
-                "refill_function": get_refill_function(stage.stage_offset),
-                "prediction_method": dec.prediction_method if dec else "NONE",
-                "historical_median_days": dec.cadence_median if dec else None,
-                "predicted_interval_days": dec.predicted_interval_days if dec else None,
-                "estimated_days_of_supply": dec.dos_days if (dec and dec.dos_days) else (dec.predicted_interval_days if dec else 30.0),
-                "decision_reason": reason,
-                "archetype": arch,
-                "dosage_regimen": regimen,
-                "message_text": stage.message_text,
-            })
-
-        return queue
-
-    def get_monthly_review_queue(
-        self,
-        db: Session,
-        target_month: str,
-        path_filter: Optional[str] = None,
-        stability_filter: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Query all reminder stages scheduled for dispatch in target_month (format: YYYY-MM).
-        Joins with RefillDecisionModel to provide rich explainability.
-        """
-        import calendar
-        try:
-            parts = str(target_month).strip().split("-")
-            year = int(parts[0])
-            month = int(parts[1])
-            start_date = date(year, month, 1)
-            _, last_day = calendar.monthrange(year, month)
-            end_date = date(year, month, last_day)
-        except Exception:
-            start_date = date.today().replace(day=1)
-            _, last_day = calendar.monthrange(start_date.year, start_date.month)
-            end_date = date(start_date.year, start_date.month, last_day)
-
         query = (
             db.query(ReminderStageModel, RefillDecisionModel)
             .join(
@@ -478,10 +391,13 @@ class RefillPersistenceManager:
 
         results = query.all()
         queue: List[Dict[str, Any]] = []
+        from refillcare.data.medication_classifier import is_chronic_medication
 
         for stage, dec in results:
             c_name = dec.customer_name if dec else "Valued Customer"
             i_name = dec.item_name if dec else stage.item_id
+            if not is_chronic_medication(str(i_name)):
+                continue
             phone = dec.mobile_no if dec else None
             p_masked = mask_phone(phone) if phone else "MISSING"
             reason = dec.decision_reason if dec else ""
@@ -517,6 +433,54 @@ class RefillPersistenceManager:
             })
 
         return queue
+
+    def get_today_review_queue(
+        self,
+        db: Session,
+        target_date: date,
+        path_filter: Optional[str] = None,
+        stability_filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Query all reminder stages due for dispatch on target_date."""
+        return self.get_date_range_review_queue(
+            db=db,
+            start_date=target_date,
+            end_date=target_date,
+            path_filter=path_filter,
+            stability_filter=stability_filter,
+        )
+
+    def get_monthly_review_queue(
+        self,
+        db: Session,
+        target_month: str,
+        path_filter: Optional[str] = None,
+        stability_filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Query all reminder stages scheduled for dispatch in target_month (format: YYYY-MM).
+        Joins with RefillDecisionModel to provide rich explainability.
+        """
+        import calendar
+        try:
+            parts = str(target_month).strip().split("-")
+            year = int(parts[0])
+            month = int(parts[1])
+            start_date = date(year, month, 1)
+            _, last_day = calendar.monthrange(year, month)
+            end_date = date(year, month, last_day)
+        except Exception:
+            start_date = date.today().replace(day=1)
+            _, last_day = calendar.monthrange(start_date.year, start_date.month)
+            end_date = date(start_date.year, start_date.month, last_day)
+
+        return self.get_date_range_review_queue(
+            db=db,
+            start_date=start_date,
+            end_date=end_date,
+            path_filter=path_filter,
+            stability_filter=stability_filter,
+        )
 
     def approve_reminder_stage(self, db: Session, reminder_id: str) -> Dict[str, Any]:
         """Mark a reminder stage as APPROVED for dispatch."""

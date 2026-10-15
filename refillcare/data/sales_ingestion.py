@@ -13,10 +13,15 @@ Executes the standardized production lifecycle when receiving a new month's sale
 
 import io
 import uuid
+import shutil
+import logging
+from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, Tuple, Optional, List, Union
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from refillcare.data.dates import parse_pharmacy_dates, format_date_dd_mm_yyyy, UI_DATE_FORMAT
 from refillcare.data.history import create_purchase_history
@@ -260,6 +265,92 @@ def format_display_phone_10digits(phone: Any) -> str:
     return s if s else "-"
 
 
+def append_sales_records_to_master_csv(
+    records_df: pd.DataFrame,
+    master_csv_path: Optional[Union[str, Path]] = None,
+    batch_id: Optional[str] = None,
+) -> int:
+    """Safely append validated, deduplicated sales records to master customer_data_fields.csv.
+
+    1. Creates a safety backup snapshot in data/refillcare/backups/
+    2. Aligns incoming columns to the canonical 23 master columns
+    3. Appends records without overwriting
+    4. Returns count of appended records
+    """
+    if records_df is None or records_df.empty:
+        return 0
+
+    if master_csv_path is None:
+        try:
+            from config import PROJECT_ROOT
+            master_csv_path = PROJECT_ROOT / "data" / "refillcare" / "customer_data_fields.csv"
+        except Exception:
+            master_csv_path = Path("data/refillcare/customer_data_fields.csv")
+    else:
+        master_csv_path = Path(master_csv_path)
+
+    if not master_csv_path.exists():
+        logger.warning(f"Master CSV does not exist at {master_csv_path}, skipping append.")
+        return 0
+
+    # 1. Create pre-image safety backup
+    try:
+        backup_dir = master_csv_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = f"_{batch_id}" if batch_id else ""
+        backup_path = backup_dir / f"customer_data_fields_pre_{ts}{suffix}.csv"
+        shutil.copy(master_csv_path, backup_path)
+        logger.info(f"Safety pre-image backup created at: {backup_path}")
+    except Exception as e:
+        logger.warning(f"Could not create safety backup before master append: {e}")
+
+    # 2. Align columns to match master CSV header
+    try:
+        df_head = pd.read_csv(master_csv_path, nrows=1)
+        target_cols = list(df_head.columns)
+    except Exception:
+        target_cols = [
+            "invoice_date", "invoice_number", "customerName", "itemCode", "itemName",
+            "packing", "batchNo", "mfgDate", "expiryDate", "quantity", "freeQuantity",
+            "rate", "saleRate", "mrp", "invoice_total", "discountPercent", "item_discount",
+            "gstAmount", "netAmount", "costPrice", "MOBILE_NO", "customerId", "itemId"
+        ]
+
+    to_write = records_df.copy()
+
+    # Format dates to DD-MM-YYYY standard for pharmacy CSV
+    if "invoice_date" in to_write.columns:
+        def _fmt_dt(v):
+            if pd.isna(v) or v is None:
+                return ""
+            if isinstance(v, (datetime, date, pd.Timestamp)):
+                return v.strftime("%d-%m-%Y")
+            try:
+                d = pd.to_datetime(v, dayfirst=True, errors="coerce")
+                return d.strftime("%d-%m-%Y") if not pd.isna(d) else str(v)
+            except Exception:
+                return str(v)
+        to_write["invoice_date"] = to_write["invoice_date"].apply(_fmt_dt)
+
+    # Fill default values for master columns
+    if "itemCode" not in to_write.columns and "itemId" in to_write.columns:
+        to_write["itemCode"] = to_write["itemId"]
+    if "itemId" not in to_write.columns and "itemCode" in to_write.columns:
+        to_write["itemId"] = to_write["itemCode"]
+
+    for c in target_cols:
+        if c not in to_write.columns:
+            to_write[c] = ""
+
+    to_write = to_write[target_cols]
+
+    # 3. Append to master CSV
+    to_write.to_csv(master_csv_path, mode="a", header=False, index=False)
+    logger.info(f"Successfully appended {len(to_write):,} validated rows to {master_csv_path}")
+    return len(to_write)
+
+
 def process_monthly_sales_data(
     sales_input: Union[pd.DataFrame, Any],
     existing_history_df: Optional[pd.DataFrame] = None,
@@ -411,6 +502,37 @@ def process_monthly_sales_data(
         updated_history_df = enrich_total_units_purchased(updated_history_df)
     gc.collect()
 
+    # Append valid new records to master customer_data_fields.csv and update processed artifacts
+    if new_records_added > 0:
+        try:
+            append_sales_records_to_master_csv(
+                records_df=records_to_append,
+                batch_id=import_batch_id,
+            )
+        except Exception as e:
+            logger.warning(f"Error appending records to master CSV: {e}")
+
+    try:
+        from config import PROJECT_ROOT
+        proc_dir = PROJECT_ROOT / "data" / "refillcare" / "processed"
+        proc_dir.mkdir(parents=True, exist_ok=True)
+        updated_history_df.to_parquet(proc_dir / "purchase_history.parquet", index=False)
+
+        clean_tx_path = proc_dir / "clean_transactions.parquet"
+        if clean_tx_path.exists() and new_records_added > 0:
+            from refillcare.data.transaction_classifier import classify_transactions_df
+            from refillcare.data.cleaning import clean_transactions
+            new_clean = clean_transactions(records_to_append)
+            new_clean = classify_transactions_df(new_clean, invoice_col="invoice_number")
+            existing_clean = pd.read_parquet(clean_tx_path)
+            combined_clean = pd.concat([existing_clean, new_clean], ignore_index=True)
+            subset_cols = [c for c in ["customerId", "itemId", "invoice_date", "invoice_number"] if c in combined_clean.columns]
+            if subset_cols:
+                combined_clean = combined_clean.drop_duplicates(subset=subset_cols, keep="first")
+            combined_clean.to_parquet(clean_tx_path, index=False)
+    except Exception as e:
+        logger.warning(f"Error updating processed parquets: {e}")
+
     # Determine latest available sales date in DD-MM-YYYY format
     if not updated_history_df.empty and "invoice_date" in updated_history_df.columns:
         parsed_dates = pd.to_datetime(updated_history_df["invoice_date"], errors="coerce").dropna()
@@ -470,6 +592,7 @@ def rollback_monthly_sales_import(
     3. Reconstruct canonical chronological purchase intervals from the remaining records.
     4. Invalidate / remove prediction snapshots linked to this import batch.
     5. Recalculate restored latest sales date in DD-MM-YYYY format.
+    6. Restore master customer_data_fields.csv from pre-image backup if available.
 
     Args:
         current_history_df: Current working purchase history DataFrame.
@@ -518,6 +641,24 @@ def rollback_monthly_sales_import(
     if "packing" in restored_history_df.columns:
         restored_history_df = enrich_total_units_purchased(restored_history_df)
 
+    # Save restored purchase history to disk
+    try:
+        from config import PROJECT_ROOT
+        proc_dir = PROJECT_ROOT / "data" / "refillcare" / "processed"
+        proc_dir.mkdir(parents=True, exist_ok=True)
+        restored_history_df.to_parquet(proc_dir / "purchase_history.parquet", index=False)
+
+        # Restore master customer_data_fields.csv from backup if available
+        backup_dir = PROJECT_ROOT / "data" / "refillcare" / "backups"
+        matches = list(backup_dir.glob(f"customer_data_fields_pre_*_{import_batch_id}.csv"))
+        if matches:
+            latest_bak = sorted(matches)[-1]
+            master_csv = PROJECT_ROOT / "data" / "refillcare" / "customer_data_fields.csv"
+            shutil.copy(latest_bak, master_csv)
+            logger.info(f"Restored master CSV from pre-image backup: {latest_bak}")
+    except Exception as e:
+        logger.warning(f"Error restoring artifacts during rollback: {e}")
+
     # Determine restored latest sales date
     if not restored_history_df.empty and "invoice_date" in restored_history_df.columns:
         parsed_dates = pd.to_datetime(restored_history_df["invoice_date"], errors="coerce").dropna()
@@ -538,23 +679,6 @@ def rollback_monthly_sales_import(
         "restored_latest_sales_date": restored_latest_date_str,
         "restored_history_df": restored_history_df,
         "storage_rollback": storage_res,
-    }
-
-    return {
-        "status": "success",
-        "message": "Sales Data Updated Successfully",
-        "updated_history_df": updated_history_df,
-        "metrics": {
-            "new_records_added": new_records_added,
-            "existing_duplicates_skipped": existing_duplicates_skipped,
-            "customers_updated": customers_updated,
-            "new_customers": new_customers,
-            "new_medicines": new_medicines,
-            "latest_sales_date": latest_sales_date_str,
-            "records_requiring_review": records_requiring_review,
-        },
-        "valid_records_df": valid_new_df,
-        "review_records_df": review_df,
     }
 
 

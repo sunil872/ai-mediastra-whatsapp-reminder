@@ -58,6 +58,14 @@ from api.schemas import (
     AddMedicationRuleRequest,
     ClassifyMedicationRequest,
     ClassifyMedicationResponse,
+    ClinicalReviewItem,
+    ClinicalReviewSummaryResponse,
+    WhatsAppCandidateItem,
+    WhatsAppCandidatesResponse,
+    WhatsAppPreviewRequest,
+    WhatsAppPreviewResponse,
+    WhatsAppSingleSendRequest,
+    WhatsAppSingleSendResponse,
 )
 from api.services import EnterpriseServices
 from refillcare.engine.persistence import RefillPersistenceManager
@@ -221,16 +229,72 @@ def evaluate_outcomes(db: Session = Depends(get_db)):
 # ------------------------------------------------------------------------------
 # 4. REMINDER DELIVERY & EXPORT APIS
 # ------------------------------------------------------------------------------
-@app.get("/api/v1/reminders/daily", response_model=List[ReminderItem], tags=["Reminders"])
+@app.get("/api/v1/reminders/daily", tags=["Reminders"])
 def get_daily_reminders(
     target_date: Optional[date] = Query(None, description="Target reminder date (defaults to today if month not set)"),
     target_month: Optional[str] = Query(None, description="Target reminder month in YYYY-MM format (e.g. 2026-09)"),
+    start_date: Optional[date] = Query(None, description="Start date for custom date range or rolling horizon"),
+    end_date: Optional[date] = Query(None, description="End date for custom date range or rolling horizon"),
     mobile_status: str = Query("All", description="All, Valid, Missing"),
+    stage: Optional[str] = Query(None, description="Filter by reminder stage"),
+    refill_function: Optional[str] = Query(None, description="Filter by refill function / pathway"),
+    path: Optional[str] = Query(None, description="Filter by decision path"),
+    customer_query: Optional[str] = Query(None, description="Search by customer name or phone"),
+    medication_query: Optional[str] = Query(None, description="Search by medication name"),
+    limit: Optional[int] = Query(None, ge=1, le=5000, description="Max records to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: Session = Depends(get_db),
 ):
-    """Get scheduled reminders for a specific date or full target month."""
+    """Get scheduled reminders for a specific date, full target month, or rolling date range with clinical filtering."""
+    import json
     srv = EnterpriseServices(db)
-    return srv.get_daily_reminders(target_date=target_date, target_month=target_month, mobile_filter=mobile_status)
+    items = srv.get_daily_reminders(
+        target_date=target_date,
+        target_month=target_month,
+        start_date=start_date,
+        end_date=end_date,
+        mobile_filter=mobile_status,
+        stage=stage,
+        refill_function=refill_function,
+        path=path,
+        customer_query=customer_query,
+        medication_query=medication_query,
+        limit=limit,
+        offset=offset,
+    )
+    return Response(content=json.dumps(items), media_type="application/json")
+
+
+@app.get("/api/v1/review/summary", response_model=ClinicalReviewSummaryResponse, tags=["Clinical Review Queue"])
+def get_clinical_review_summary(
+    target_month: Optional[str] = Query("2026-10", description="Target forecast month in YYYY-MM format"),
+    db: Session = Depends(get_db),
+):
+    """Retrieve aggregate summary counts for the Clinical Review Queue (synced with Streamlit)."""
+    srv = EnterpriseServices(db)
+    return srv.get_clinical_review_summary(target_month=target_month)
+
+
+@app.get("/api/v1/review/queue", response_model=List[ClinicalReviewItem], tags=["Clinical Review Queue"])
+def get_clinical_review_queue(
+    target_month: Optional[str] = Query("2026-10", description="Target forecast month in YYYY-MM format"),
+    category: Optional[str] = Query(None, description="All, Missing Mobile, Stability Risk, Cold-Start"),
+    missing_mobile_only: bool = Query(False, description="Filter for missing mobile numbers only"),
+    search: Optional[str] = Query(None, description="Search by customer name, phone, or reason keyword"),
+    limit: int = Query(200, ge=1, le=5000, description="Max candidate items to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    db: Session = Depends(get_db),
+):
+    """Retrieve detailed clinical review queue records with reason classification and patient context."""
+    srv = EnterpriseServices(db)
+    return srv.get_clinical_review_queue(
+        target_month=target_month,
+        category=category,
+        missing_mobile_only=missing_mobile_only,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.get("/api/v1/reminders/export-csv", tags=["Reminders"])
@@ -302,6 +366,62 @@ def activate_model(version_id: str, db: Session = Depends(get_db)):
 # ------------------------------------------------------------------------------
 # 6. WHATSAPP GATEWAY DISPATCH
 # ------------------------------------------------------------------------------
+@app.get("/api/v1/whatsapp/candidates", response_model=WhatsAppCandidatesResponse, tags=["WhatsApp Gateway"])
+def get_whatsapp_candidates(
+    target_date: Optional[date] = Query(None, description="Target outreach date (e.g. 2026-10-13)"),
+    target_month: Optional[str] = Query(None, description="Target outreach month (e.g. 2026-10)"),
+    tier: str = Query("ALL", description="ALL, DUE, FOLLOWUP, LAPSED"),
+    sync_window: int = Query(0, ge=0, le=14, description="Sync window in days"),
+    mobile_status: str = Query("All", description="All, Valid, Missing"),
+    search: Optional[str] = Query(None, description="Search customer name, phone, or medication"),
+    db: Session = Depends(get_db),
+):
+    """Retrieve bundled patient candidate records for WhatsApp outreach matching Streamlit gateway."""
+    srv = EnterpriseServices(db)
+    return srv.get_whatsapp_outreach_candidates(
+        target_date=target_date,
+        target_month=target_month,
+        tier=tier,
+        sync_window=sync_window,
+        mobile_status=mobile_status,
+        search=search,
+    )
+
+
+@app.post("/api/v1/whatsapp/preview", response_model=WhatsAppPreviewResponse, tags=["WhatsApp Gateway"])
+def preview_whatsapp_message(
+    req: WhatsAppPreviewRequest,
+    db: Session = Depends(get_db),
+):
+    """Generate high-contrast visual WhatsApp template preview and parameters."""
+    srv = EnterpriseServices(db)
+    return srv.preview_whatsapp_message(
+        customer_name=req.customer_name,
+        medications=req.medications,
+        expected_refill_date=req.expected_refill_date,
+        tier=req.tier,
+        stage_offset=req.stage_offset,
+    )
+
+
+@app.post("/api/v1/whatsapp/send-single", response_model=WhatsAppSingleSendResponse, tags=["WhatsApp Gateway"])
+def send_single_whatsapp(
+    req: WhatsAppSingleSendRequest,
+    db: Session = Depends(get_db),
+):
+    """Send or simulate single patient WhatsApp reminder."""
+    srv = EnterpriseServices(db)
+    return srv.send_single_whatsapp_reminder(
+        phone_number=req.phone_number,
+        customer_name=req.customer_name,
+        medications=req.medications,
+        expected_refill_date=req.expected_refill_date,
+        tier=req.tier,
+        stage_offset=req.stage_offset,
+        dry_run=req.dry_run,
+    )
+
+
 @app.post("/api/v1/whatsapp/dispatch", response_model=WhatsAppDispatchResponse, tags=["WhatsApp Gateway"])
 def dispatch_whatsapp(
     req: WhatsAppBatchDispatchRequest,

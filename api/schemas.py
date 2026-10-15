@@ -332,6 +332,9 @@ class TransactionChannelSummary(BaseModel):
     unknown: int
     excluded_from_refillcare: int
     refillcare_eligible: int
+    raw_total_transactions: Optional[int] = None
+    cleaned_transactions: Optional[int] = None
+    purged_duplicates: Optional[int] = None
 
 
 # ------------------------------------------------------------------------------
@@ -436,4 +439,88 @@ class ClassifyMedicationResponse(BaseModel):
     source: Optional[str] = "Supabase / Classifier Engine"
 
 
+# ------------------------------------------------------------------------------
+# Clinical Review Queue Schemas
+# ------------------------------------------------------------------------------
+class ClinicalReviewItem(BaseModel):
+    customer_id: str
+    customer_name: str
+    mobile_number: str
+    mobile_status: str
+    medication: str
+    last_purchase_date: str
+    expected_refill_date: str
+    review_category: str
+    review_reason: str
 
+
+class ClinicalReviewSummaryResponse(BaseModel):
+    target_month: str
+    total_in_review_queue: int
+    missing_mobile_numbers: int
+    stability_variance_risk: int
+    cold_start_single_purchase: int
+    available_months: List[str]
+
+
+# ------------------------------------------------------------------------------
+# WhatsApp Gateway Schemas
+# ------------------------------------------------------------------------------
+class WhatsAppCandidateItem(BaseModel):
+    reminder_id: str
+    customer_name: str
+    phone_number: str
+    mobile_display: str
+    mobile_status: str
+    medication: str
+    expected_refill_date: str
+    target_send_date: str
+    stage_offset: int
+    tier: str
+    refill_function: str
+    status: str
+    items_count: int = 1
+
+
+class WhatsAppCandidatesResponse(BaseModel):
+    target_date: Optional[str] = None
+    target_month: Optional[str] = None
+    target_label: str
+    total_scheduled: int
+    delivery_ready: int
+    missing_mobile: int
+    candidates: List[WhatsAppCandidateItem]
+
+
+class WhatsAppPreviewRequest(BaseModel):
+    customer_name: str
+    medications: Union[str, List[str]]
+    expected_refill_date: str
+    tier: Optional[str] = "DUE"
+    stage_offset: Optional[int] = 0
+
+
+class WhatsAppPreviewResponse(BaseModel):
+    tier: str
+    template_name: str
+    customer_name: str
+    dynamic_body_text: str
+    parameters: List[Any]
+    visual_preview: str
+
+
+class WhatsAppSingleSendRequest(BaseModel):
+    phone_number: str
+    customer_name: str
+    medications: Union[str, List[str]]
+    expected_refill_date: str
+    tier: Optional[str] = "DUE"
+    stage_offset: Optional[int] = 0
+    dry_run: bool = True
+
+
+class WhatsAppSingleSendResponse(BaseModel):
+    success: bool
+    message: str
+    status_code: int
+    response_payload: Optional[Dict[str, Any]] = None

@@ -31,7 +31,10 @@ from database.connection import SessionLocal
 from refillcare.data.pipeline import run_refillcare_data_pipeline
 from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
 from refillcare.engine.persistence import RefillPersistenceManager
-from refillcare.data.sales_ingestion import normalize_sales_dataframe
+from refillcare.data.sales_ingestion import (
+    normalize_sales_dataframe,
+    append_sales_records_to_master_csv,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,11 +63,11 @@ def format_incoming_date(d_str: any) -> str:
 
 
 def append_new_sales_data(new_sales_path: Path, master_csv_path: Path) -> int:
-    """Validate, normalize, and append new monthly sales transactions to master CSV."""
+    """Validate, normalize, backup pre-image, and append new sales transactions to master CSV."""
     if not new_sales_path.exists():
         raise FileNotFoundError(f"Incoming sales file not found: {new_sales_path}")
 
-    logger.info(f"Reading incoming monthly sales from {new_sales_path}...")
+    logger.info(f"Reading incoming sales from {new_sales_path}...")
     if str(new_sales_path).lower().endswith((".xlsx", ".xls")):
         df_raw = pd.read_excel(new_sales_path)
     else:
@@ -73,7 +76,7 @@ def append_new_sales_data(new_sales_path: Path, master_csv_path: Path) -> int:
     # Filter out empty rows or total lines
     date_col = next((c for c in df_raw.columns if "date" in str(c).lower()), None)
     if date_col:
-        df_raw = df_raw[df_raw[date_col].notna() & ~df_raw[date_col].astype(str).str.contains("Total", case=False, na=False)].copy()
+        df_raw = df_raw[df_raw[date_col].notna() & ~df_raw[date_col].astype(str).str.contains("Total", case=False, na=False, regex=False)].copy()
 
     party_col = next((c for c in df_raw.columns if any(k in str(c).lower() for k in ("party", "patient", "customer"))), None)
     if party_col:
@@ -81,73 +84,45 @@ def append_new_sales_data(new_sales_path: Path, master_csv_path: Path) -> int:
 
     logger.info(f"Extracted {len(df_raw):,} raw sales records.")
 
-    # Create safety backup of master CSV
-    backup_dir = master_csv_path.parent / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_dir / f"customer_data_fields_pre_{ts}.csv"
-    if master_csv_path.exists():
-        shutil.copy(master_csv_path, backup_path)
-        logger.info(f"Safety backup created at {backup_path}")
-
     # Standardize columns
     df_norm = normalize_sales_dataframe(df_raw)
 
-    # Ensure required canonical fields exist
-    field_mappings = {
-        "invoice_date": lambda df: df["invoice_date"].apply(format_incoming_date) if "invoice_date" in df.columns else "",
-        "invoice_number": lambda df: df["invoice_number"].fillna("").astype(str).str.strip() if "invoice_number" in df.columns else "",
-        "customerName": lambda df: df["customerName"].fillna("").astype(str).str.strip() if "customerName" in df.columns else "",
-        "customerId": lambda df: df.get("customerId", df.get("customerName", "")).fillna("").astype(str).str.strip(),
-        "itemCode": lambda df: df.get("itemCode", df.get("itemId", "")).apply(clean_code),
-        "itemId": lambda df: df.get("itemId", df.get("itemCode", "")).apply(clean_code),
-        "itemName": lambda df: df["itemName"].fillna("").astype(str).str.strip() if "itemName" in df.columns else "",
-        "packing": lambda df: df["packing"].fillna("").astype(str).str.strip() if "packing" in df.columns else "",
-        "quantity": lambda df: pd.to_numeric(df["quantity"], errors="coerce").fillna(0) if "quantity" in df.columns else 0,
-        "MOBILE_NO": lambda df: df["MOBILE_NO"].apply(clean_code) if "MOBILE_NO" in df.columns else "",
-    }
-
-    mapped_df = pd.DataFrame()
-    for col, fn in field_mappings.items():
-        try:
-            mapped_df[col] = fn(df_norm)
-        except Exception as e:
-            logger.warning(f"Error mapping column {col}: {e}")
-
-    # Align with master CSV header
-    df_existing_head = pd.read_csv(master_csv_path, nrows=1)
-    target_cols = list(df_existing_head.columns)
-
-    for c in target_cols:
-        if c not in mapped_df.columns:
-            mapped_df[c] = ""
-
-    mapped_df = mapped_df[target_cols]
-
-    # Append to master CSV
-    mapped_df.to_csv(master_csv_path, mode="a", header=False, index=False)
-    logger.info(f"Successfully appended {len(mapped_df):,} validated transactions to {master_csv_path}.")
-    return len(mapped_df)
+    # Safely append to master CSV with timestamped pre-image safety backup
+    appended = append_sales_records_to_master_csv(
+        records_df=df_norm,
+        master_csv_path=master_csv_path,
+    )
+    logger.info(f"Successfully processed and appended {appended:,} transactions to master CSV.")
+    return appended
 
 
-def determine_dynamic_as_of_date(purchase_history_df: pd.DataFrame) -> Tuple[date, str]:
-    """Calculate the prediction evaluation date and target month from latest sales data."""
+def determine_dynamic_as_of_date(
+    purchase_history_df: pd.DataFrame,
+    horizon_days: int = 30,
+) -> Tuple[date, str, Tuple[date, date]]:
+    """
+    Calculate evaluation date, target month partition, and rolling outreach horizon.
+    
+    Continuous-Observation Logic:
+    - T_max is the latest valid transaction date in purchase history.
+    - Evaluation date (as_of) is T_max + 1 day (e.g. if sales run through 13-Oct-2026, as_of = 14-Oct-2026).
+    - Rolling outreach horizon covers [as_of, as_of + horizon_days - 1] (e.g. 14-Oct-2026 to 12-Nov-2026).
+    - Target month partition remains as_of.strftime("%Y-%m") for month-level reporting.
+    """
     if "invoice_date" in purchase_history_df.columns:
         valid_dates = pd.to_datetime(purchase_history_df["invoice_date"], errors="coerce").dropna()
         if not valid_dates.empty:
             max_dt = valid_dates.max().date()
-            # As-of date is the 1st of the next month
-            if max_dt.month == 12:
-                as_of = date(max_dt.year + 1, 1, 1)
-            else:
-                as_of = date(max_dt.year, max_dt.month + 1, 1)
+            as_of = max_dt + timedelta(days=1)
             target_month = as_of.strftime("%Y-%m")
-            return as_of, target_month
+            horizon_end = as_of + timedelta(days=horizon_days - 1)
+            return as_of, target_month, (as_of, horizon_end)
 
-    # Fallback to current month
+    # Fallback to current month/day
     today = date.today()
-    as_of = today.replace(day=1)
-    return as_of, as_of.strftime("%Y-%m")
+    target_month = today.strftime("%Y-%m")
+    horizon_end = today + timedelta(days=horizon_days - 1)
+    return today, target_month, (today, horizon_end)
 
 
 def run_pipeline(
@@ -203,8 +178,9 @@ def run_pipeline(
     if as_of_date_override:
         as_of_date = as_of_date_override
         target_month = target_month_override or as_of_date.strftime("%Y-%m")
+        rolling_horizon = (as_of_date, as_of_date + timedelta(days=29))
     else:
-        as_of_date, target_month = determine_dynamic_as_of_date(purchase_history_df)
+        as_of_date, target_month, rolling_horizon = determine_dynamic_as_of_date(purchase_history_df)
         if target_month_override:
             target_month = target_month_override
 
@@ -212,6 +188,7 @@ def run_pipeline(
     print(f"\n[3/4] Evaluating Unified Refill Decisions...")
     print(f"      As-Of Evaluation Date: {as_of_date.isoformat()}")
     print(f"      Target Prediction Month: {target_month_label} ({target_month})")
+    print(f"      Rolling 30-Day Outreach Horizon: {rolling_horizon[0].isoformat()} to {rolling_horizon[1].isoformat()}")
 
     engine = UnifiedRefillDecisionEngine()
     decisions_df, decisions_list = engine.evaluate_all_customer_items(purchase_history_df, as_of_date=as_of_date)
@@ -232,9 +209,13 @@ def run_pipeline(
             pm.sync_reminder_cycles(db, decisions_list)
 
             target_queue = pm.get_monthly_review_queue(db, target_month=target_month)
+            horizon_queue = pm.get_date_range_review_queue(
+                db, start_date=rolling_horizon[0], end_date=rolling_horizon[1]
+            )
             print(f"      Saved {len(decisions_list):,} decisions to database.")
             print(f"      Synced reminder cycles.")
             print(f"      Target Month ({target_month_label}) Scheduled Reminders: {len(target_queue):,}")
+            print(f"      Rolling 30-Day Active Reminders ({rolling_horizon[0]} to {rolling_horizon[1]}): {len(horizon_queue):,}")
         finally:
             db.close()
 

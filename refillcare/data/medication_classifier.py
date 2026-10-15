@@ -11,6 +11,7 @@ the database for analytics and audit reporting.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Dict, Any, Optional, Set, List, Tuple
 import pandas as pd
 
@@ -22,15 +23,28 @@ import pandas as pd
 EXCLUDED_CATEGORIES: Dict[str, List[str]] = {
     "FORMULATION_SYRUPS_AND_SUSPENSIONS": [
         "SYP", "SYRUP", "SUSP", "SUSPENSION", "ELIXIR", "LIQ", "LIQUID", "SYP.", "SUSP.",
+        "DRY SYRUP", "ORAL SUSPENSION", "ORAL SOLUTION", "EXPECTORANT", "LINCTUS", "TONIC", "APPETITE TONIC",
     ],
     "FORMULATION_DROPS_OPHTHALMIC_OTIC": [
-        "DROP", "DROPS", "EYE DROP", "EYE DROPS", "EAR DROP", "EAR DROPS", "NASAL DROP", "NASAL DROPS", "OPHTH", "EYE/EAR DROP",
+        "DROP", "DROPS", "EYE DROP", "EYE DROPS", "EAR DROP", "EAR DROPS", "NASAL DROP", "NASAL DROPS",
+        "ORAL DROP", "ORAL DROPS", "PEDIATRIC DROPS", "PAEDIATRIC DROPS", "OPHTH", "OPHTHALMIC", "OTIC",
+        "DRPOS", "DPR", "DRP", "EYE/EAR DROP", "EYE/EAR DRPOS",
+        "SODIUM HYALURONATE", "HYPROMELLOSE", "NEPAFENAC", "CARBOXYMETHYLCELLULOSE",
+        "TIMOLOL", "BRIMONIDINE", "DORZOLAMIDE", "LATANOPROST", "BIMATOPROST", "TRAVAPROST",
+        "TRAVOPROST", "OLOPATADINE", "REFRESH TEARS", "SYSTANE", "LUBREX", "ALPHAGAN", "DORZOX",
+    ],
+    "FORMULATION_RESPULES_AND_NEBULIZERS": [
+        "RESPULE", "RESPULES", "RESP", "RESP.", "NEBU", "NEBULIZER", "NEBULISER",
+        "NEB", "NEB.", "NEBULES", "MISTPULES", "SMARTULES", "INHALATION SOLUTION",
+        "BUDECORT RESPULES", "DUOLIN RESPULES", "FORACORT RESPULES", "LEVOLIN RESPULES",
+        "ASTHALIN RESPULES", "IPRATROPIUM RESPULES", "BUDESONIDE RESPULES", "SALBAIR RESP",
+        "COMBIMIST RESPULES", "FORMONIDE RESPULES", "NEBZMART RESPULES",
     ],
     "FORMULATION_TOPICALS_DERMA": [
-        "OINT", "OINTMENT", "CREAM", "CRM", "GEL", "EMULGEL", "LOTION", "LINIMENT", "SOAP", "SHAMPOO", "WASH", "FACE WASH",
+        "OINT", "OINTMENT", "CREAM", "CRM", "GEL", "EMULGEL", "LOTION", "LINIMENT", "SOAP", "SHAMPOO", "WASH", "FACE WASH", "PASTE",
     ],
     "FORMULATION_SPRAYS": [
-        "SPRAY", "NASAL SPRAY",
+        "SPRAY", "NASAL SPRAY", "PAIN SPRAY",
     ],
     "FORMULATION_INJECTIONS": [
         "INJ", "INJECTION", "INFUSION", "IV", "IM", "DEPOT",
@@ -41,7 +55,9 @@ EXCLUDED_CATEGORIES: Dict[str, List[str]] = {
     "ACUTE_ANTIBIOTICS": [
         "AUGMENTIN", "CLAVAM", "MOXIKIND", "TAXIM", "MONOCEF", "DOXT", "BACTRIM", "AZITHRAL", "AZITHROMYCIN",
         "CIPROFLOXACIN", "CIPLOX", "OFLOXACIN", "OFLOX", "NORFLOXACIN", "NORFLOX", "METROGYL", "METRONIDAZOLE",
-        "CEFIXIME", "MAHACEF", "ROXID", "ZADY", "AMPOXIN", "CEFPODOXIME",
+        "CEFIXIME", "MAHACEF", "ROXID", "ZADY", "AMPOXIN", "CEFPODOXIME", "CEFUROXIME", "CEFTUM", "FAROPENEM",
+        "FAROBACT", "FARONEM", "MEROPENEM", "LINEZOLID", "LIZOMAC", "DOXYCYCLINE", "NITROFURANTOIN", "NIFTRAN",
+        "CO-TRIMOXAZOLE", "SEPTRA", "AMOXICILLIN", "AMOXYCILLIN", "AMOXICLAV", "CLAVULANATE", "CLAVULANIC ACID",
     ],
     "ACUTE_AND_PRN_ANALGESICS": [
         "DOLO", "DOLO 650", "DOLO 650MG", "DOLO 650MG TAB", "DOLO 500", "DOLO 500MG", "DOLO 250",
@@ -62,7 +78,7 @@ EXCLUDED_CATEGORIES: Dict[str, List[str]] = {
     "ACUTE_ANTACIDS_AND_DIARRHEA": [
         "ELDOPER", "LOPERAMIDE", "LOPO", "ENO", "PUDIN HARA", "DIGENE", "GELUSIL", "GAVISCON", "SUCRAFIL", "MUCAINE", "CREMAFFIN",
         "PAN-D", "PAN D", "PAN 40", "PANTOCID D", "PANTODAC D", "RABEKIND DSR", "RABEKIND-DSR", "RABEKIND",
-        "RABLET-D", "RABLET D", "OCID-D", "OCID D", "OMEE D", "ESOKEM-D", "DOMPAN",
+        "RABLET-D", "RABLET D", "OCID-D", "OCID D", "OMEE D", "ESOKEM-D", "DOMPAN", "DULCOFLEX", "BISACODYL",
     ],
     "LOZENGES_AND_OTC_CONFECTIONS": [
         "COFSILS", "STREPSILS", "VICKS", "VICS", "HONITUS",
@@ -122,6 +138,7 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "GLUCORYL", "GLIMISAVE", "GLIMY", "AMARYL", "INTAGLIP", "VOGLOW", "VOLIBO", "PIOZ",
     "GALVUS", "JANUVIA", "TRAJENTA", "JARDIANCE", "FORXIGA", "GLUCONORM", "DIAPRIDE",
     "ZITA", "GLYCIPHAGE", "OBIMET", "GEMER", "ZORYL", "TENALIS", "TENEPURE", "DAPAVEL", "OXRA",
+    "GLYCOMET", "GLIMESTAR", "GLIMIPRIME", "CYBLEX", "UDAPA", "GLUCRETA", "OBORAVO", "ZOMELIS", "GLUCOBAY", "SITAXA", "PRACTOMET",
 
     # 2. Anti-Hypertensive / Cardiovascular / Heart Failure
     "TELMISARTAN", "AMLODIPINE", "LOSARTAN", "CANDESARTAN", "VALSARTAN", "OLMESARTAN", "IRBESARTAN",
@@ -130,15 +147,17 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "CILNIDIPINE", "BENIDIPINE", "NIFEDIPINE", "FELODIPINE", "DILTIAZEM", "VERAPAMIL",
     "CHLORTHALIDONE", "HYDROCHLOROTHIAZIDE", "SPIRONOLACTONE", "EPLERENONE", "TORSEMIDE", "FUROSEMIDE",
     "SACUBITRIL", "CIDMUS", "AZMARDA", "VECARD", "TORLAC", "ALDACTONE", "DYTOR",
-    "ARKAMIN", "CLONIDINE", "MINIPRESS", "PRAZOSIN", "IVABRADINE", "IVABRAD",
-    "NITROGLYCERIN", "ISOSORBIDE", "SORBITRATE", "MONOTRATE", "RANOLAZINE", "RANX", "NICOSTAR", "NICORANDIL",
+    "ARKAMIN", "CLONIDINE", "MINIPRESS", "PRAZOSIN", "IVABRADINE", "IVABRAD", "VERICIGUAT",
+    "NITROGLYCERIN", "GLYCERYL TRINITRATE", "ISOSORBIDE", "SORBITRATE", "MONOTRATE", "RANOLAZINE", "RANX", "NICOSTAR", "NICORANDIL",
     "TELMA", "CONCOR", "BETALOC", "STARPRESS", "MET-XL", "METPURE", "CILACAR", "CARDACE",
     "LOSAR", "AMLONG", "AMLOKIND", "STAMLO", "BENITEC", "NEBICARD", "CARVIL", "INDERAL", "NICARDIA",
+    "ERITEL", "TELMIKIND", "TELSAR", "TELISTA", "CORTEL", "TELLZY", "CARDIVAS", "CTD",
 
     # 3. Dyslipidemia / Cholesterol / Statin
     "ATORVASTATIN", "ROSUVASTATIN", "PITAVASTATIN", "SIMVASTATIN", "PRAVASTATIN",
     "ATORVA", "ROZAT", "ROSUVAS", "ROZAVEL", "CRESTOR", "ATORLIP", "LIPICARD",
     "LIPAGLYN", "SAROGLITAZAR", "FENOFIBRATE", "EZETIMIBE", "BEMPEDOIC ACID", "BEMPID",
+    "ROSEDAY", "RAZEL", "ROZUCOR", "TONACT", "ROSYCAP",
 
     # 4. Thyroid, Hormone & Endocrine
     "LEVOTHYROXINE", "THYRONORM", "ELTROXIN", "THYROX", "THYROKAB",
@@ -150,12 +169,12 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "MONTELUKAST", "MONTEMAC", "MONTAIR", "DOXOFYLLINE", "DOXOLIN", "ACEBROPHYLLINE", "THEOPHYLLINE", "DERIPHYLLIN",
 
     # 6. Neurology, Psychiatry & Chronic Pain Management
-    "LEVETIRACETAM", "DIVALPROEX", "VALPROATE", "OXETOL", "OXCARBAZEPINE", "CARBAMAZEPINE", "TEGRETOL",
+    "LEVETIRACETAM", "DIVALPROEX", "VALPROATE", "VALPROIC ACID", "OXETOL", "OXCARBAZEPINE", "CARBAMAZEPINE", "TEGRETOL",
     "LAMOTRIGINE", "PHENYTOIN", "EPTOIN", "CLONAZEPAM", "CLONAFIT", "CLOBAZAM", "FRISIUM",
     "ESCITALOPRAM", "NEXITO", "CILENTRA", "SEROQUEL", "QUETIAPINE", "OLANZAPINE", "RISPERIDONE",
     "AMITRIPTYLINE", "PROTHIADEN", "DULOXETINE", "DUZELA",
     "PREGABALIN", "PREGABA", "PREGABID", "GABAPENTIN", "GABAPIN", "BACLOFEN",
-    "DONEPEZIL", "MEMANTINE", "SYNDOPA", "LEVODOPA", "PRAMIPEXOLE",
+    "DONEPEZIL", "MEMANTINE", "SYNDOPA", "LEVODOPA", "PRAMIPEXOLE", "FLUNARIZINE",
 
     # 7. Nephrology, Urology & Organ Support
     "TAMSULOSIN", "URIMAX", "FINASTERIDE", "DUTASTERIDE", "SILODOSIN", "SILODAL", "ALFUZOSIN",
@@ -208,6 +227,7 @@ CHRONIC_FORM_MARKERS: List[str] = [
 
 import os
 import time
+from pathlib import Path
 
 # Compile fast regex patterns for word boundaries
 _EXCLUSION_REGEX_MAP: Dict[str, List[re.Pattern]] = {}
@@ -221,6 +241,170 @@ _CHRONIC_MARKER_REGEX: List[re.Pattern] = [
     re.compile(r"(?:\b|_)" + re.escape(m.strip().upper()) + r"(?:\b|_)", re.IGNORECASE)
     for m in CHRONIC_STRONG_MARKERS
 ]
+
+# ------------------------------------------------------------------------------
+# CHEMICAL ACTIVE INGREDIENT / SALT MOLECULE DEFINITIONS
+# ------------------------------------------------------------------------------
+
+CHRONIC_SALT_MOLECULES: Set[str] = {
+    # Anti-Diabetic (Oral & Insulin)
+    "METFORMIN", "GLIMEPIRIDE", "GLICLAZIDE", "GLIPIZIDE", "GLIBENCLAMIDE", "GLIBOMID",
+    "TENELIGLIPTIN", "SITAGLIPTIN", "VILDAGLIPTIN", "LINAGLIPTIN", "SAXAGLIPTIN", "ALOGLIPTIN",
+    "DAPAGLIFLOZIN", "EMPAGLIFLOZIN", "CANAGLIFLOZIN", "REMOGLIFLOZIN",
+    "VOGLIBOSE", "ACARBOSE", "PIOGLITAZONE",
+    "SEMAGLUTIDE", "TIRZEPATIDE", "LIRAGLUTIDE",
+    "INSULIN", "INSULIN GLARGINE", "INSULIN DEGLUDEC", "INSULIN ASPART", "INSULIN LISPRO", "BIPHASIC ISOPHANE INSULIN",
+
+    # Cardiovascular & Anti-Hypertensive
+    "TELMISARTAN", "AMLODIPINE", "LOSARTAN", "CANDESARTAN", "VALSARTAN", "OLMESARTAN", "IRBESARTAN",
+    "BISOPROLOL", "METOPROLOL", "ATENOLOL", "NEBIVOLOL", "CARVEDILOL", "PROPRANOLOL", "LABETALOL",
+    "RAMIPRIL", "ENALAPRIL", "LISINOPRIL", "PERINDOPRIL",
+    "CILNIDIPINE", "BENIDIPINE", "NIFEDIPINE", "FELODIPINE", "DILTIAZEM", "VERAPAMIL",
+    "CHLORTHALIDONE", "HYDROCHLOROTHIAZIDE", "SPIRONOLACTONE", "EPLERENONE", "TORSEMIDE", "FUROSEMIDE",
+    "SACUBITRIL", "IVABRADINE", "NICORANDIL", "NITROGLYCERIN", "GLYCERYL TRINITRATE", "ISOSORBIDE",
+    "RANOLAZINE", "CLONIDINE", "PRAZOSIN", "VERICIGUAT",
+
+    # Lipid & Cholesterol
+    "ATORVASTATIN", "ROSUVASTATIN", "PITAVASTATIN", "SIMVASTATIN", "PRAVASTATIN",
+    "FENOFIBRATE", "EZETIMIBE", "BEMPEDOIC ACID", "SAROGLITAZAR",
+
+    # Thyroid & Endocrine
+    "LEVOTHYROXINE", "LEVOTHYROXINE SODIUM", "THYROXINE", "CARBIMAZOLE", "METHIMAZOLE", "CABERGOLINE",
+
+    # Respiratory Maintenance Controllers
+    "BUDESONIDE", "FLUTICASONE", "TIOTROPIUM", "GLYCOPYRRONIUM", "FORMOTEROL", "SALMETEROL",
+    "MONTELUKAST", "DOXOFYLLINE", "THEOPHYLLINE", "ACEBROPHYLLINE",
+
+    # Neurology, Psychiatry & Neuropathic Pain
+    "LEVETIRACETAM", "DIVALPROEX", "VALPROATE", "VALPROIC ACID", "SODIUM VALPROATE", "OXCARBAZEPINE", "CARBAMAZEPINE",
+    "LAMOTRIGINE", "PHENYTOIN", "CLONAZEPAM", "CLOBAZAM",
+    "ESCITALOPRAM", "SERTRALINE", "PAROXETINE", "FLUVOXAMINE", "FLUOXETINE", "DULOXETINE", "AMITRIPTYLINE",
+    "QUETIAPINE", "OLANZAPINE", "RISPERIDONE",
+    "PREGABALIN", "GABAPENTIN", "BACLOFEN", "DONEPEZIL", "MEMANTINE", "LEVODOPA", "CARBIDOPA", "PRAMIPEXOLE", "FLUNARIZINE",
+
+    # Urology, Nephrology & Organ Support
+    "TAMSULOSIN", "SILODOSIN", "ALFUZOSIN", "FINASTERIDE", "DUTASTERIDE",
+    "FEBUXOSTAT", "ALLOPURINOL", "SEVELAMER", "CALCIUM ACETATE", "KETOANALOGUE",
+
+    # Chronic GI Maintenance
+    "URSODEOXYCHOLIC ACID", "UDCA", "MESALAMINE", "MESALAZINE", "SULFASALAZINE",
+
+    # Rheumatology & Autoimmune
+    "METHOTREXATE", "HYDROXYCHLOROQUINE", "LEFLUNOMIDE", "TOFACITINIB",
+
+    # Anti-platelet & Anticoagulant
+    "ASPIRIN", "CLOPIDOGREL", "TICAGRELOR", "PRASUGREL", "APIXABAN", "RIVAROXABAN", "DABIGATRAN", "WARFARIN",
+}
+
+ACUTE_EXCLUDED_SALT_MOLECULES: Set[str] = {
+    # Acute Antibiotics & Antimicrobials
+    "AMOXICILLIN", "AMOXYCILLIN", "CLAVULANIC ACID", "AZITHROMYCIN", "CIPROFLOXACIN", "OFLOXACIN",
+    "NORFLOXACIN", "LEVOFLOXACIN", "CEFIXIME", "CEFPODOXIME", "CEFUROXIME", "LINEZOLID", "FAROPENEM",
+    "MEROPENEM", "METRONIDAZOLE", "ROXITHROMYCIN", "DOXYCYCLINE", "NITROFURANTOIN", "CO-TRIMOXAZOLE", "BACTRIM",
+
+    # Acute Analgesics & Antipyretics
+    "PARACETAMOL", "ACECLOFENAC", "DICLOFENAC", "IBUPROFEN", "NIMESULIDE", "TRAMADOL", "KETOROLAC",
+    "PIROXICAM", "NAPROXEN", "MEFENAMIC ACID",
+
+    # Acute GI & Antacids (and PPI combinations with prokinetics)
+    "DOMPERIDONE", "ONDANSETRON", "LOPERAMIDE", "RACECADOTRIL", "SUCRALFATE", "ALUMINIUM HYDROXIDE",
+    "MAGNESIUM HYDROXIDE", "SIMETHICONE", "LACTULOSE", "BISACODYL", "SENNA", "PICOSULFATE", "DOCUSATE",
+
+    # Acute Cough, Cold & Allergies
+    "DEXTROMETHORPHAN", "CHLORPHENIRAMINE", "PHENYLEPHRINE", "AMBROXOL", "BROMHEXINE", "GUAIFENESIN",
+    "TERBUTALINE", "LEVOCETIRIZINE", "CETIRIZINE", "FEXOFENADINE", "BILASTINE", "CYPROHEPTADINE",
+
+    # Anti-parasitic & Anthelmintic
+    "ALBENDAZOLE", "IVERMECTIN", "MEBENDAZOLE", "DIETHYLCARBAMAZINE",
+
+    # Acute & Topical Antifungals
+    "FLUCONAZOLE", "ITRACONAZOLE", "LULICONAZOLE", "CLOBETASOL", "KETOCONAZOLE", "AMOROLFINE", "TERBINAFINE",
+
+    # Ophthalmic & Otic (Drops)
+    "SODIUM HYALURONATE", "HYPROMELLOSE", "NEPAFENAC", "MOXIFLOXACIN", "TOBRAMYCIN", "GENTAMICIN",
+    "CARBOXYMETHYLCELLULOSE", "TIMOLOL", "BRIMONIDINE", "DORZOLAMIDE", "LATANOPROST", "BIMATOPROST", "TRAVAPROST",
+}
+
+# Master SALT Catalog In-Memory Cache (Item Name -> Salt, Category, Pack)
+_SALT_CATALOG: Dict[str, Dict[str, str]] = {}
+_SALT_CATALOG_LOADED: bool = False
+
+
+def extract_salt_molecules(salt_str: Optional[str]) -> List[str]:
+    """Extract individual active molecule names from a chemical composition string."""
+    if not salt_str or not str(salt_str).strip() or str(salt_str).strip() in ("[00]", "NONE", "NAN"):
+        return []
+    raw = str(salt_str).strip().upper()
+    raw = re.sub(r"\[\s*\d+\s*\]", " ", raw)
+    parts = re.split(r"[+&/,]", raw)
+    molecules: List[str] = []
+    for p in parts:
+        cleaned = re.sub(r"\b\d+(?:\.\d+)?\s*(?:MG|MCG|GM|G|IU|%|W/V|W/W|ML|UNITS|UNIT)\b", " ", p, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\([^)]*\)", " ", cleaned)
+        cleaned = re.sub(r"[-_](?:PR|SR|ER|CR|XL|MR|DT|IR)\b", " ", cleaned)
+        cleaned = re.sub(r"[^A-Z\s]", " ", cleaned)
+        words = [w.strip() for w in cleaned.split() if len(w.strip()) >= 3 and w.strip() not in ("TAB", "CAP", "INJ", "SYP", "SUSP", "FOR", "AND", "WITH", "THE")]
+        if words:
+            full_mol = " ".join(words)
+            molecules.append(full_mol)
+            for w in words:
+                if len(w) >= 4 and w != full_mol:
+                    molecules.append(w)
+    return list(dict.fromkeys(molecules))
+
+
+def load_salt_catalog() -> Dict[str, Dict[str, str]]:
+    """Load item-to-salt catalog from SALT WISE ITEMS.csv (or .xlsx) with in-memory caching."""
+    global _SALT_CATALOG, _SALT_CATALOG_LOADED
+    if _SALT_CATALOG_LOADED:
+        return _SALT_CATALOG
+
+    import csv
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    csv_candidates = [
+        base_dir / "data" / "refillcare" / "SALT WISE ITEMS.csv",
+        Path("data/refillcare/SALT WISE ITEMS.csv"),
+    ]
+
+    for cpath in csv_candidates:
+        if cpath.exists():
+            try:
+                with open(cpath, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if line.startswith("S.No,"):
+                            header = [c.strip() for c in line.split(",")]
+                            break
+                    reader = csv.DictReader(f, fieldnames=header)
+                    for row in reader:
+                        name = row.get("Item Name", "").strip().upper()
+                        salt = row.get("SALT", "").strip().upper()
+                        cat = row.get("CATEGORY", "").strip().upper()
+                        pack = row.get("PACK", "").strip().upper()
+                        icat = row.get("ITEMCAT", "").strip().upper()
+                        if name:
+                            _SALT_CATALOG[name] = {
+                                "salt": salt if salt and salt != "[00]" else "",
+                                "category": cat,
+                                "pack": pack,
+                                "itemcat": icat,
+                            }
+                _SALT_CATALOG_LOADED = True
+                return _SALT_CATALOG
+            except Exception:
+                pass
+
+    _SALT_CATALOG_LOADED = True
+    return _SALT_CATALOG
+
+
+def get_catalog_item_salt(item_name: str) -> Optional[Dict[str, str]]:
+    """Look up item salt and category composition from master catalog."""
+    if not item_name:
+        return None
+    catalog = load_salt_catalog()
+    clean_name = str(item_name).strip().upper()
+    return catalog.get(clean_name)
+
 
 # ------------------------------------------------------------------------------
 # SUPABASE DYNAMIC CLASSIFICATION RULES PROVIDER & CACHE
@@ -253,7 +437,7 @@ def get_supabase_client():
 
 
 def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
-    """Fetch active dynamic classification rules from Supabase with local fallback."""
+    """Fetch active dynamic classification rules from Supabase with full pagination and local fallback."""
     global _CACHED_RULES_TIMESTAMP, _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC, _DYNAMIC_EXCLUSION_REGEX, _DYNAMIC_CHRONIC_REGEX
     now = time.time()
     if (now - _CACHED_RULES_TIMESTAMP) < _CACHE_TTL_SECONDS and (_DYNAMIC_EXCLUSIONS or _DYNAMIC_CHRONIC):
@@ -262,11 +446,29 @@ def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
     client = get_supabase_client()
     if client:
         try:
-            res = client.table("medication_classification_rules").select("medication_name_or_keyword,rule_type").eq("is_active", True).execute()
-            if res.data:
+            all_rows: List[Dict[str, Any]] = []
+            page_size = 1000
+            offset = 0
+            while True:
+                res = (
+                    client.table("medication_classification_rules")
+                    .select("medication_name_or_keyword,rule_type")
+                    .eq("is_active", True)
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+                data = res.data or []
+                if not data:
+                    break
+                all_rows.extend(data)
+                if len(data) < page_size:
+                    break
+                offset += len(data)
+
+            if all_rows:
                 excl_set = set()
                 chr_set = set()
-                for row in res.data:
+                for row in all_rows:
                     kw = str(row.get("medication_name_or_keyword", "")).strip().upper()
                     r_type = str(row.get("rule_type", "")).strip().upper()
                     if kw:
@@ -275,16 +477,16 @@ def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
                         elif r_type == "CHRONIC":
                             chr_set.add(kw)
 
+                def _compile_rule_regex(k: str) -> re.Pattern:
+                    esc = re.escape(k)
+                    if re.search(r"\d+$", k):
+                        return re.compile(r"(?:\b|_)" + esc + r"(?:MG|ML|MCG|GM|G|IU)?(?:\b|_)", re.IGNORECASE)
+                    return re.compile(r"(?:\b|_)" + esc + r"(?:\b|_)", re.IGNORECASE)
+
                 _DYNAMIC_EXCLUSIONS = excl_set
                 _DYNAMIC_CHRONIC = chr_set
-                _DYNAMIC_EXCLUSION_REGEX = [
-                    re.compile(r"(?:\b|_)" + re.escape(k) + r"(?:\b|_)", re.IGNORECASE)
-                    for k in excl_set
-                ]
-                _DYNAMIC_CHRONIC_REGEX = [
-                    re.compile(r"(?:\b|_)" + re.escape(k) + r"(?:\b|_)", re.IGNORECASE)
-                    for k in chr_set
-                ]
+                _DYNAMIC_EXCLUSION_REGEX = [_compile_rule_regex(k) for k in excl_set]
+                _DYNAMIC_CHRONIC_REGEX = [_compile_rule_regex(k) for k in chr_set]
                 _CACHED_RULES_TIMESTAMP = now
                 return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
         except Exception:
@@ -323,6 +525,7 @@ def add_classification_rule(
             on_conflict="medication_name_or_keyword,rule_type"
         ).execute()
         _CACHED_RULES_TIMESTAMP = 0.0  # Invalidate cache for immediate sync
+        is_chronic_medication.cache_clear()
         get_dynamic_classification_rules()
         return {"status": "success", "message": f"Rule for '{clean_kw}' saved as {clean_type}.", "data": res.data}
     except Exception as e:
@@ -332,9 +535,9 @@ def add_classification_rule(
 def list_classification_rules(
     search_query: str = "",
     rule_type_filter: str = "All",
-    limit: int = 200,
+    limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Retrieve classification rules from Supabase."""
+    """Retrieve classification rules from Supabase (paginated when limit is None to return all records)."""
     client = get_supabase_client()
     if not client:
         return []
@@ -345,8 +548,25 @@ def list_classification_rules(
         if search_query.strip():
             clean_s = search_query.strip().upper()
             q = q.ilike("medication_name_or_keyword", f"%{clean_s}%")
-        res = q.limit(limit).execute()
-        return res.data or []
+        
+        if limit is not None and limit > 0:
+            res = q.limit(limit).execute()
+            return res.data or []
+        
+        # Paginated retrieval to ensure complete list is returned
+        all_rules: List[Dict[str, Any]] = []
+        page_size = 1000
+        offset = 0
+        while True:
+            res = q.range(offset, offset + page_size - 1).execute()
+            data = res.data or []
+            if not data:
+                break
+            all_rules.extend(data)
+            if len(data) < page_size:
+                break
+            offset += len(data)
+        return all_rules
     except Exception:
         return []
 
@@ -369,12 +589,18 @@ def delete_classification_rule(rule_id: str) -> Dict[str, Any]:
 def classify_medication(
     item_name: str,
     packing: Optional[str] = None,
+    salt_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Classify a pharmacy item as Chronic Medication vs Non-Chronic/OTC/FMCG/Acute/Surgical.
+
+    Dual-Key Clinical Architecture:
+    Evaluates both Item/Brand Name and Active Salt/Chemical Composition.
+    If salt_name is not provided, automatically resolves it from the SALT WISE catalog.
 
     Args:
         item_name: Full medication / item name string from ERP/POS.
         packing: Optional pack size / packaging string (e.g. '1X10', '1KG', '100ML').
+        salt_name: Optional chemical composition / active salt string (e.g. 'EMPAGLIFLOZIN-25MG').
 
     Returns:
         Dict with keys:
@@ -393,11 +619,79 @@ def classify_medication(
 
     raw_name = str(item_name).strip().upper()
     raw_pack = str(packing or "").strip().upper()
+    raw_salt = str(salt_name or "").strip().upper()
+
+    # Automatic catalog fallback if salt_name was not explicitly supplied
+    catalog_cat = ""
+    if not raw_salt or raw_salt in ("[00]", "NONE", "NAN"):
+        cat_info = get_catalog_item_salt(raw_name)
+        if cat_info:
+            raw_salt = cat_info.get("salt", "")
+            catalog_cat = cat_info.get("category", "")
+            if not raw_pack:
+                raw_pack = cat_info.get("pack", "")
+
+    molecules = extract_salt_molecules(raw_salt)
+    eval_composite = f"{raw_name} {raw_pack} {raw_salt} {catalog_cat}"
 
     # Load dynamic rules from Supabase (cached in memory)
     get_dynamic_classification_rules()
 
-    # 1. Hard Baseline Exclusions (Pediatric/Kids and Acute PRN Analgesics ALWAYS excluded)
+    # 1. Device Clinical Exemptions (Insulin Pens & Respiratory Inhalers)
+    is_insulin_device = any(ins in eval_composite for ins in [
+        "BASUGINE", "TRESIBA", "LANTUS", "NOVOMIX", "RYZODEG", "HUMALOG", "FIASP", "TOUJEO",
+        "APIDRA", "INSULATARD", "MIXTARD", "INSULIN GLARGINE", "INSULIN DEGLUDEC", "INSULIN ASPART", "INSULIN LISPRO", "INSULIN"
+    ]) and any(dev in raw_name or dev in raw_pack for dev in [
+        "PEN", "CATRIAGE", "CARTRIDGE", "FLEX", "SOLOSTAR", "KWIKPEN", "PENFILL", "3ML", "1PC", "1PEN"
+    ])
+
+    is_inhaler_device = any(inh in raw_name or inh in raw_pack for inh in [
+        "INHALER", "EVOHALER", "SYNCHROBREATHE", "TURBUHALER", "ACCUHALER", "AEROHALER", "ROTACAP", "RESPICAP", "200MDI", "120MD"
+    ]) and not any(ex_inh in raw_name for ex_inh in [
+        "NASAL SPRAY", "NASAL", "RESP", "RESPULES", "RESPULE", "RESPULS", "RESPUELS", "NEB", "NEBU", "MISTPULES", "SMARTULES", "NEBULES"
+    ])
+
+    # 2. Strict Formulation & Route Safety Gate (Syrups, Suspensions, Drops, Eye Drops, Respules, Topicals, Sprays, Sachets)
+    # Mandate: All liquid/drop/syrup/respule/topical formulations are strictly suppressed from automated refill reminders
+    is_non_solid = bool(re.search(
+        r"(?:\b|_)(?:SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|LIQ|LIQUID|DRY\s*SYRUP|ORAL\s*SUSPENSION|ORAL\s*SOLUTION|EXPECTORANT|LINCTUS|"
+        r"DROP|DROPS|DRPOS|DPR|DRP|EYE\s*DROP|EYE\s*DROPS|EAR\s*DROP|EAR\s*DROPS|NASAL\s*DROP|NASAL\s*DROPS|ORAL\s*DROP|ORAL\s*DROPS|OPHTH|OPHTHALMIC|OTIC|"
+        r"OINT|OINTMENT|CREAM|CRM|GEL|EMULGEL|LOTION|LINIMENT|SOAP|SHAMPOO|WASH|FACE\s*WASH|PASTE|"
+        r"RESPULE|RESPULES|RESPULS|RESPUELS|RESP|NEB|NEBU|NEBULES|NEBULIZER|NEBULISER|MISTPULES|SMARTULES|INHALATION\s*SOLUTION|"
+        r"SPRAY|NASAL\s*SPRAY|PAIN\s*SPRAY|INJ|INJECTION|INFUSION|IV|IM|DEPOT|SACHET|SACHETS|GRANULES|1SAC)(?:\b|_)",
+        eval_composite,
+        re.IGNORECASE
+    )) or (catalog_cat in {
+        "SYRUPS", "EYE/EAR DRPOS", "ORAL DROPS", "OINTMENTS/CREAMS/GEL/PASTE", "LOTIONS/SHAMPOOS",
+        "SOAPS", "GEL", "SURGICAL", "CONTAINERS", "NASAL SPRAY", "SACHETS", "POWDERS", "GENERAL",
+        "RESPULES", "RESPULES/INHALATIONS", "INHALATIONS"
+    })
+
+    if is_non_solid and not (is_insulin_device or is_inhaler_device):
+        matched_form = "NON_SOLID_FORMULATION"
+        if re.search(r"\b(?:SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|LIQ|LIQUID|LINCTUS|EXPECTORANT)\b", eval_composite, re.IGNORECASE) or catalog_cat == "SYRUPS":
+            matched_form = "FORMULATION_SYRUPS_AND_SUSPENSIONS"
+        elif re.search(r"\b(?:DROP|DROPS|DRPOS|OPHTH|OTIC|EYE\s*DROP|EAR\s*DROP|NASAL\s*DROP)\b", eval_composite, re.IGNORECASE) or catalog_cat in ("EYE/EAR DRPOS", "ORAL DROPS"):
+            matched_form = "FORMULATION_DROPS_OPHTHALMIC_OTIC"
+        elif re.search(r"\b(?:RESPULE|RESPULES|RESPULS|RESPUELS|RESP|NEB|NEBU|NEBULES|NEBULIZER|NEBULISER|MISTPULES|SMARTULES)\b", eval_composite, re.IGNORECASE) or catalog_cat in ("RESPULES", "RESPULES/INHALATIONS", "INHALATIONS"):
+            matched_form = "FORMULATION_RESPULES_AND_NEBULIZERS"
+        elif re.search(r"\b(?:OINT|CREAM|CRM|GEL|LOTION|SOAP|SHAMPOO|WASH|PASTE)\b", eval_composite, re.IGNORECASE) or catalog_cat in ("OINTMENTS/CREAMS/GEL/PASTE", "LOTIONS/SHAMPOOS", "SOAPS", "GEL"):
+            matched_form = "FORMULATION_TOPICALS_DERMA"
+        elif re.search(r"\b(?:SPRAY|NASAL\s*SPRAY)\b", eval_composite, re.IGNORECASE) or catalog_cat == "NASAL SPRAY":
+            matched_form = "FORMULATION_SPRAYS"
+        elif re.search(r"\b(?:INJ|INJECTION|INFUSION|IV|IM)\b", eval_composite, re.IGNORECASE) or catalog_cat == "INJECTIONS":
+            matched_form = "FORMULATION_INJECTIONS"
+        elif re.search(r"\b(?:SACHET|SACHETS|GRANULES|1SAC)\b", eval_composite, re.IGNORECASE) or catalog_cat == "SACHETS":
+            matched_form = "FORMULATION_SACHETS_GRANULES"
+
+        return {
+            "is_chronic_eligible": False,
+            "category": matched_form,
+            "matched_rule": f"FORMULATION_GATE:{matched_form}",
+            "exclusion_reason": f"Non-solid/Acute formulation excluded ({matched_form.replace('_', ' ').title()}).",
+        }
+
+    # 3. Hard Baseline Exclusions (Pediatric/Kids & Acute PRN Analgesics)
     if re.search(r"(?:\b|_)(KID|KIDS|KIDZ|PED|PEDIATRIC|PAEDIATRIC)(?:\b|_)", raw_name, re.IGNORECASE):
         return {
             "is_chronic_eligible": False,
@@ -414,9 +708,21 @@ def classify_medication(
             "exclusion_reason": "Acute / PRN analgesic / antipyretic (Non-chronic).",
         }
 
-    # 2. Check Dynamic Supabase Exclusions
+    # 4. Acute / PRN Molecules & Salts Gate (Antibiotics, Analgesics, Antacids, Allergies)
+    has_acute_mol = any(m in ACUTE_EXCLUDED_SALT_MOLECULES for m in molecules) or any(m in ACUTE_EXCLUDED_SALT_MOLECULES for m in raw_salt.split())
+    if has_acute_mol:
+        return {
+            "is_chronic_eligible": False,
+            "category": "ACUTE_SALT_EXCLUSION",
+            "matched_rule": "ACUTE_MOLECULE_MATCH",
+            "exclusion_reason": "Contains acute/PRN active molecule or antibiotic/antacid salt.",
+        }
+
+    # 5. Check Dynamic Supabase Exclusions
     for p in _DYNAMIC_EXCLUSION_REGEX:
-        if p.search(raw_name):
+        if is_insulin_device and "INJ" in p.pattern:
+            continue
+        if p.search(raw_name) or (raw_salt and p.search(raw_salt)):
             return {
                 "is_chronic_eligible": False,
                 "category": "DYNAMIC_SUPABASE_EXCLUSION",
@@ -424,14 +730,10 @@ def classify_medication(
                 "exclusion_reason": f"Non-chronic item (Excluded by pharmacist rule: '{p.pattern}').",
             }
 
-    is_insulin_device = any(ins in raw_name for ins in ["BASUGINE", "TRESIBA", "LANTUS", "NOVOMIX", "RYZODEG", "HUMALOG", "FIASP", "TOUJEO"]) and any(dev in raw_name for dev in ["PEN", "CATRIAGE", "CARTRIDGE", "FLEX", "SOLOSTAR"])
-    is_non_solid = bool(re.search(r"\b(?:SYP|SYRUP|SUSP|SUSPENSION|DROP|DROPS|RESP|RESPULES|OINT|CREAM|GEL|SPRAY|INJ|INJECTION|SACHET|GRANULES)\b", raw_name))
-
-    # 3. Check for Non-Chronic / OTC / FMCG / Acute exclusions (Code Baseline)
+    # 6. Check for Non-Chronic / OTC / FMCG / Acute exclusions (Code Baseline)
     for category, pattern_list in _EXCLUSION_REGEX_MAP.items():
         for pattern in pattern_list:
-            if pattern.search(raw_name):
-                # Only chronic insulin pens/cartridges are exempted from INJECTION exclusion
+            if pattern.search(raw_name) or (raw_salt and pattern.search(raw_salt)):
                 if is_insulin_device and category == "FORMULATION_INJECTIONS":
                     continue
                 clean_cat = category.replace("_", " ").title()
@@ -442,24 +744,23 @@ def classify_medication(
                     "exclusion_reason": f"Non-chronic item ({clean_cat}).",
                 }
 
-    # 4. Check Dynamic Supabase Chronic Markers
+    # 7. Check Dynamic Supabase Chronic Markers
     for p in _DYNAMIC_CHRONIC_REGEX:
-        if p.search(raw_name):
-            # Strictly exclude non-solids (drops, syrups, topicals) unless insulin maintenance device
-            if not is_non_solid or is_insulin_device:
-                return {
-                    "is_chronic_eligible": True,
-                    "category": "CHRONIC_MEDICATION",
-                    "matched_rule": f"SUPABASE_CHRONIC:{p.pattern}",
-                    "exclusion_reason": None,
-                }
+        if p.search(raw_name) or (raw_salt and p.search(raw_salt)):
+            return {
+                "is_chronic_eligible": True,
+                "category": "CHRONIC_MEDICATION",
+                "matched_rule": f"SUPABASE_CHRONIC:{p.pattern}",
+                "exclusion_reason": None,
+            }
 
-    # 5. Check strong positive chronic markers (Code Baseline)
-    is_strong_chronic = any(p.search(raw_name) for p in _CHRONIC_MARKER_REGEX)
+    # 8. Check Chronic Chemical Salt Molecules & Brand Markers (Code Baseline)
+    has_chronic_mol = any(m in CHRONIC_SALT_MOLECULES for m in molecules)
+    is_strong_chronic = any(p.search(raw_name) for p in _CHRONIC_MARKER_REGEX) or (raw_salt and any(p.search(raw_salt) for p in _CHRONIC_MARKER_REGEX))
 
-    # 3. Check packing clues (e.g. 1KG, 400GM, 1SAC, 200MDI, ML liquids without chronic markers)
-    if any(p in raw_pack for p in ["1KG", "2KG", "500GM", "400GM", "200GM", "1SAC"]):
-        if not is_strong_chronic:
+    # Check packing clues (bulk FMCG sizes)
+    if any(p in raw_pack for p in ["1KG", "2KG", "500GM", "400GM", "200GM"]):
+        if not (has_chronic_mol or is_strong_chronic):
             return {
                 "is_chronic_eligible": False,
                 "category": "NUTRITION_FMCG_AND_SACHETS",
@@ -467,17 +768,14 @@ def classify_medication(
                 "exclusion_reason": "Bulk FMCG / Nutrition / Sachet pack size.",
             }
 
-    # Non-solid formulation safety guard (syrups, drops, ointments, injections, sprays)
-    is_non_solid = bool(re.search(r"\b(?:SYP|SYRUP|SUSP|SUSPENSION|DROP|DROPS|RESP|RESPULES|OINT|CREAM|GEL|SPRAY|INJ|INJECTION|SACHET|GRANULES)\b", raw_name))
-    if is_non_solid and not is_insulin_device:
+    if has_chronic_mol:
         return {
-            "is_chronic_eligible": False,
-            "category": "NON_SOLID_FORMULATION",
-            "matched_rule": "NON_SOLID_SAFETY_GUARD",
-            "exclusion_reason": "Non-solid formulation (Syrup, Drop, Ointment, Injection, or Sachet).",
+            "is_chronic_eligible": True,
+            "category": "CHRONIC_MEDICATION",
+            "matched_rule": f"CHRONIC_SALT_MOLECULE_MATCH:{raw_salt}",
+            "exclusion_reason": None,
         }
 
-    # 4. If strong chronic marker matched and passed exclusion checks
     if is_strong_chronic:
         return {
             "is_chronic_eligible": True,
@@ -486,7 +784,7 @@ def classify_medication(
             "exclusion_reason": None,
         }
 
-    # 5. Fail-Safe Default: If item does not positively match any chronic therapeutic class,
+    # 9. Fail-Safe Default: If item does not positively match any chronic therapeutic class,
     # default to non-chronic (Apollo 24/7 / 1mg standard to prevent acute medication reminder leakage).
     return {
         "is_chronic_eligible": False,
@@ -554,6 +852,7 @@ def verify_medication_chronic_status(
     patient_median_interval: Optional[float] = None,
     population_repeat_rate: Optional[float] = None,
     packing: Optional[str] = None,
+    salt_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Multi-tiered verification combining Rule-Based Clinical Parsing + Behavioral Consensus.
 
@@ -561,14 +860,14 @@ def verify_medication_chronic_status(
     Tier 2: Personal Patient Repurchase Cadence (>= 3 recurring purchases)
     Tier 3: Cross-Customer Population Consensus (Repeat purchase rate >= 35%)
     """
-    rule_res = classify_medication(item_name, packing=packing)
+    rule_res = classify_medication(item_name, packing=packing, salt_name=salt_name)
     
-    # If explicitly excluded by rules (e.g. soap, condom, diaper, spray, acute antibiotic) -> Always False
+    # Strict Clinical Gate: If explicitly excluded by rules (formulation gate, acute molecules, Supabase exclusion) -> Always False
     if not rule_res["is_chronic_eligible"]:
         if rule_res.get("matched_rule") != "NO_CHRONIC_THERAPY_MATCH":
             return rule_res
 
-    # If personal history demonstrates proven longitudinal adherence
+    # If personal history demonstrates proven longitudinal adherence for unclassified solid items
     if patient_history_count >= 3 and patient_median_interval and (15.0 <= patient_median_interval <= 65.0):
         return {
             "is_chronic_eligible": True,
@@ -589,12 +888,14 @@ def verify_medication_chronic_status(
     return rule_res
 
 
+@lru_cache(maxsize=32768)
 def is_chronic_medication(
     item_name: str,
     packing: Optional[str] = None,
+    salt_name: Optional[str] = None,
 ) -> bool:
     """Convenience boolean helper to check if an item is eligible chronic medication."""
-    res = classify_medication(item_name, packing=packing)
+    res = classify_medication(item_name, packing=packing, salt_name=salt_name)
     return bool(res["is_chronic_eligible"])
 
 
@@ -602,6 +903,7 @@ def filter_chronic_transactions(
     df: pd.DataFrame,
     item_col: str = "itemName",
     packing_col: str = "packing",
+    salt_col: Optional[str] = "SALT",
 ) -> pd.DataFrame:
     """Filter a DataFrame of transactions to keep only eligible chronic medication records.
 
@@ -609,6 +911,7 @@ def filter_chronic_transactions(
         df: Input transactions DataFrame.
         item_col: Name of the item name column.
         packing_col: Name of the packing column if available.
+        salt_col: Name of the salt composition column if available.
 
     Returns:
         Filtered DataFrame containing only chronic medication purchases.
@@ -621,11 +924,13 @@ def filter_chronic_transactions(
 
     items = df[item_col].fillna("").astype(str).tolist()
     packings = df[packing_col].fillna("").astype(str).tolist() if packing_col in df.columns else [None] * len(df)
+    salts = df[salt_col].fillna("").astype(str).tolist() if (salt_col and salt_col in df.columns) else [None] * len(df)
 
     eligible_mask = [
-        is_chronic_medication(item, pack)
-        for item, pack in zip(items, packings)
+        is_chronic_medication(item, pack, salt)
+        for item, pack, salt in zip(items, packings, salts)
     ]
 
     return pd.DataFrame(df[pd.Series(eligible_mask, index=df.index)].copy())
+
 

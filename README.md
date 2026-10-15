@@ -1,278 +1,139 @@
-# RefillCare Enterprise — Clinical AI Refill Prediction & Med-Sync Platform
+# RefillCare Enterprise — AI Refill Prediction & Med-Sync Platform
 
-> **Architecture Tier:** Enterprise Production Architecture  
-> **System Status:** Production-Ready Unified Platform  
-> **Automated Test Suite:** 100% Passing (Comprehensive Regression & Unit Test Coverage)  
-
-RefillCare Enterprise is an end-to-end clinical intelligence, predictive refill scheduling, and multi-prescription synchronization platform engineered specifically for retail pharmacy chains and omnichannel healthcare networks.
+RefillCare Enterprise is an end-to-end clinical AI and patient engagement system built for retail pharmacy chains. It forecasts chronic medication refill dates, bundles multiple prescriptions into synchronized monthly appointments, and delivers personalized WhatsApp refill reminders.
 
 ---
 
-## 1. Executive Summary & Business Value
+## 1. What RefillCare Solves
 
-### The Retail Pharmacy Challenge
-Patients managing chronic conditions (Hypertension, Type-2 Diabetes, Cardiovascular Disease, Thyroid Disorders, and Respiratory Illnesses) frequently experience therapy gaps due to unintentional refill delays, leading to medication non-adherence, adverse health outcomes, and significant pharmacy revenue leakage:
-- **Flawed Fixed 30-Day Refill Cadences:** Patients consume varying daily dosages (OD, BD, TID, QOD), purchase varying pack sizes (10-tablet trial strips vs 30/60/90-tablet boxes), and purchase before their current supply runs out (accumulating home inventory).
-- **Noisy POS/ERP Transaction Data:** Sales streams frequently contain wholesale/inter-store transfers, acute/PRN purchases (analgesics, antibiotics, cold preparations), missing phone numbers, and ambiguous date formats.
-- **Patient Notification Fatigue:** Sending uncoordinated individual WhatsApp reminders for 3 different medications across different days creates communication friction, leading to patient dissatisfaction and high message opt-out rates.
-
-### The RefillCare Solution
-RefillCare automates the complete operational lifecycle from raw ERP sales ingestion to unified, synchronized patient outreach:
-- **Zero-Contamination Wholesale Isolation:** Automatically separates B2B inter-store transfers (`SB/...`) from retail customer sales (`S0/...`) upstream before modeling.
-- **Behavioral & Clinical Chronic Classifier:** Filters acute PRN purchases using longitudinal purchase frequency and consensus clinical classification.
-- **Dual-Path Clinical Decision Routing:**
-  - **Path A (Chronic Adherence, $\ge 6$ Purchases):** Evaluated with Median Absolute Deviation (MAD) stability filtering and 3-Head Quantile XGBoost Regression ($P_{10}, P_{50}, P_{90}$).
-  - **Path B (Developing Adherence, $< 6$ Purchases):** Governed by Days-of-Supply (DOS) calculated from verified quantity sold and daily consumption rates with physical safety bounds.
-- **5 Clinical Behavioral Archetypes:** Models multi-pack scaling, early top-up carryover ($R_{inv}$), partial 10-strip clamping, post-lapse reset, and consensus physical bounding ($[0.65, 1.50] \times D_{supply}$).
-- **Med-Sync (Multi-Prescription Synchronization Engine):** Clusters multiple active chronic prescriptions due on the same date (or within configurable sync window: 0 to 14 days) into a single unified appointment reminder, with 3-tier isolation (Due/Advance, Follow-up, +45d Re-engagement), reducing messaging noise by 50%+.
-- **Multi-Stage Lifecycle Management:** Schedules proactive outreach (`-7d`, `-3d`, `-1d`, `0d`, `+2d`, `+5d`, `+45d`) with automatic lifecycle invalidation (`SUPERSEDED_BY_PURCHASE`) upon repurchase.
-- **WhatsApp 3-Tier Dynamic Gateway (`refillcare_medicine_reminder`):** Unified 6-variable dynamic template engine supporting custom store profile, 12-digit (`91XXXXXXXXXX`) phone sanitization, high-contrast message preview, single test dispatch, and batch outreach with missing-mobile safety guards.
-- **Pharmacist Review Queue & Technical Diagnostics Toggle:** Routes ambiguous or missing-phone records to a clinical review queue, provides 1-click Technical Diagnostics toggles to hide/show complex quantiles ($P_{10}, P_{90}$), and generates delivery-ready 10-column CSVs and structured JSON payloads on demand.
+- **No More Fixed 30-Day Guesses:** Patients take medicines at different daily frequencies (OD, BD, TID) and buy different pack sizes (10s, 30s, 60s). RefillCare computes personalized consumption intervals and Days-of-Supply (DOS).
+- **No More Message Spam:** Instead of sending 3 separate WhatsApp messages on 3 different days for 3 medicines, Med-Sync groups them into **one unified appointment reminder**.
+- **No More Obsolete Reminders:** If a patient buys their medicine early or on their due date, previous reminders are instantly marked `STATUS_SUPERSEDED`.
+- **Clean Clinical Isolation:** Wholesale/inter-store transfers (`SB/...`) and acute products (syrups, drops, painkillers) are filtered out upstream so only valid chronic patients receive refill outreach.
 
 ---
 
-## 2. End-to-End System Architecture
+## 2. Core Features
 
-```text
-  [ Raw POS / ERP Sales Stream (CSV / Excel) ]
-                       │
-                       ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 1. INGESTION, CLEANSING & B2B ISOLATION GATE                │
-  │    (refillcare/data/monthly_ingestion.py & dates.py)        │
-  │    • Strict Date Normalization & Multi-Format Detection     │
-  │    • Wholesale / Inter-Store (SB/...) Upstream Isolation    │
-  │    • 10-Digit Mobile Display & E.164 Delivery Sanitization  │
-  │    • Traceable Import Batches with 1-Click Rollback         │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 2. CLINICAL CHRONIC CLASSIFIER & DUAL-PATH ENGINE           │
-  │    (refillcare/engine/unified_engine.py & models/)          │
-  │    • PRN / Analgesic Purging (Dolo, Paracetamol, etc.)      │
-  │    • Path A (>= 6 buys): 3-Head Quantile Regressors         │
-  │      (P10 Early Warning, P50 Median, P90 Lapsed Bound)      │
-  │    • Path B (< 6 buys): Days-of-Supply Physical Model       │
-  │    • 5 Behavioral Archetypes & Partial Strip Clamping       │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 3. MED-SYNC APPOINTMENT SYNCHRONIZATION & 3-TIER ISOLATION  │
-  │    (refillcare/engine/med_sync.py)                          │
-  │    • Groups same-day chronic meds per patient (Name + Phone)│
-  │    • Dynamic 0-14d Sync Window (Exact Same-Day default 0d)  │
-  │    • Tier 1: Due / Advance (Stages -7d, -3d, -1d, 0d)       │
-  │    • Tier 2: Follow-up (Stages +2d, +5d)                    │
-  │    • Tier 3: Lapsed Re-engagement (Stage +45d)              │
-  │    • Proactive 30-day box upsell recommendations            │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 4. ENTERPRISE PERSISTENCE & LIFECYCLE CONTROLLER            │
-  │    (refillcare/engine/persistence.py & database/)           │
-  │    • Persistent SQLite Database (enterprise.db)             │
-  │    • RefillDecisionModel (Audited Rationale & Bounds)       │
-  │    • ReminderCycleModel & 7-Stage Lifecycle Tracking        │
-  │    • Repurchase Auto-Reset (SUPERSEDED_BY_PURCHASE)         │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 5. MULTI-CHANNEL DELIVERY & PHARMACIST INTERFACES           │
-  │    • Streamlit Dashboard (app_refillcare.py): Operations,   │
-  │      Review Queue, Date/Month Filters, Dual-Format Exports  │
-  │    • WhatsApp Gateway (refillcare/whatsapp/): 6-Variable    │
-  │      Dynamic Template Simulator, Test & Batch Dispatches    │
-  │    • FastAPI Application (api/main.py): REST Endpoints      │
-  │    • Vanilla HTML/JS Frontend: Real-Time SPA Interface      │
-  │    • Technical Diagnostics Toggles (Clean View for Staff)   │
-  └─────────────────────────────────────────────────────────────┘
-```
+### 🔄 Dynamic Continuous-Observation Pipeline
+- **Arbitrary Sales Uploads:** Ingest 1-day, 7-day, 13-day, or monthly POS sales files.
+- **Dynamic As-Of Date ($T_{\text{eval}} = T_{\max} + 1\text{d}$):** Forecasting automatically begins the day after the latest transaction date.
+- **Rolling 30-Day Outreach Horizon:** View all upcoming reminders for the active 30-day window ($T_{\text{eval}} \to T_{\text{eval}} + 29\text{d}$) or select a complete calendar month.
+- **Safety Pre-Image Backups:** Automatically creates a backup snapshot before appending new records to `data/refillcare/customer_data_fields.csv`, with 1-click rollback support.
+
+### 🧠 Dual-Path AI Engine & 5 Behavioral Archetypes
+- **Path A ($\ge 6$ buys):** Evaluates longitudinal cadence using Median Absolute Deviation (MAD) stability filtering and 3-Head Quantile XGBoost Regressors ($P_{10}, P_{50}, P_{90}$).
+- **Path B ($< 6$ buys):** Governed by verified Days-of-Supply (DOS) with daily consumption bounds.
+- **5 Archetypes:** Multi-pack scaling (60/90 units), early carryover ($R_{inv}$), partial 10-strip clamping, post-lapse reset, and physical consensus bounding ($[0.65, 1.50] \times \text{DOS}$).
+
+### 📦 Med-Sync: Multi-Prescription Synchronization
+- Groups active chronic medications for each patient (matched by Name + Mobile) into a single delivery or pickup appointment.
+- Configurable sync window (0–14 days, default 0d exact date or 8d range).
+- 3-tier lifecycle isolation: **Due/Advance** (-7d to 0d), **Follow-up** (+2d, +5d), and **Lapsed Re-engagement** (+45d).
+
+### 💬 WhatsApp & Xinno Messaging Gateway
+- 6-variable dynamic template (`refillcare_medicine_reminder`) with custom pharmacy store name, contact number, and medicine list.
+- Live high-contrast preview card, single test dispatches, and batch outreach with missing-mobile safety guards.
 
 ---
 
-## 3. Core Business Logic & Algorithmic Foundations
-
-### A. Dual-Path Clinical Decision Routing
-1. **Path A (Established Chronic Cadence, $\ge 6$ Purchases):**
-   - Analyzes personal purchase intervals using Median Absolute Deviation (MAD) stability filtering.
-   - For high-stability cohorts, predictions leverage personal cadence coupled with 3-Head Quantile XGBoost Regressors.
-   - Quantile predictions yield an uncertainty envelope:
-     $$P_{10} \le P_{50} \le P_{90}$$
-     where $P_{10}$ flags early refill risk, $P_{50}$ represents the expected refill date, and $P_{90}$ sets the lapsed adherence threshold.
-2. **Path B (Developing Adherence / New Chronic Patients, $< 6$ Purchases):**
-   - Calculates baseline supply duration from Days-of-Supply (DOS):
-     $$D_{supply} = \frac{\text{Verified Units Purchased}}{\text{Consensus Daily Consumption Rate}}$$
-   - Applies recurrence validation across multi-month observation windows.
-
-### B. 5 Clinical Behavioral Archetypes
-- **Multi-Pack Scaled:** Automatically scales supply days when patients purchase multi-packs (e.g. 60 or 90 units instead of standard 30 units).
-- **Early Top-Up Carryover ($R_{inv}$):** When a patient refills prior to running out, remaining pill inventory is credited forward as carryover supply.
-- **Partial Purchase Scaled (10-Strip Clamping):** Prevents premature or delayed notifications when patients buy short 10-capsule strips, clamping supply to 10–15 days per pack.
-- **Post-Lapse Reset:** Resets baseline cadence strictly based on newly purchased quantity following prolonged treatment gaps ($>75$ days).
-- **Consensus Physical Bounding:** Enforces physical boundaries $[0.65, 1.50] \times D_{supply}$ to prevent statistical model divergence on noisy transaction sequences.
-
-### C. Med-Sync Appointment Bundling Algorithm
-- Iterates over active patient prescriptions and performs grouping using a composite patient key (`Customer Name` + `Mobile Number`).
-- Enforces strict **3-Tier Lifecycle Isolation**:
-  - **Tier 1 (Due / Advance):** Normal scheduled refills (Stages -7d, -3d, -1d, 0d).
-  - **Tier 2 (Follow-up):** Immediate post-due reminders (Stages +2d, +5d).
-  - **Tier 3 (Lapsed Re-engagement):** Long-tail patient winback reminders (Stage +45d).
-- Designates an anchor prescription based on clinical stability tier and earliest refill date.
-- Compiles a consolidated multi-item WhatsApp notification with interactive response options (`1` to Confirm All, `2` to Customize).
-- Operates in dual target modes:
-  - **Filter by Month:** Displays all consolidated bundles across an entire target prediction month.
-  - **Filter by Date:** Pinpoints patient bundles whose primary anchor appointment falls on a specific date.
-
-### D. Multi-Stage Lifecycle & Repurchase Supersession
-- Schedules patient engagement across 7 strategic lifecycle touchpoints:
-  - **Day -7:** Advance refill planning notification.
-  - **Day -3:** Refill preparation reminder.
-  - **Day -1:** Refill due tomorrow reminder.
-  - **Day 0 (Due):** Refill due today alert.
-  - **Day +2:** First adherence follow-up.
-  - **Day +5:** Urgency follow-up.
-  - **Day +45:** Lapsed patient re-engagement.
-- **Repurchase Auto-Reset:** When a patient purchases their medication on or before a scheduled reminder date, all remaining pending stages for that prescription cycle are automatically transitioned to `SUPERSEDED_BY_PURCHASE` with full audit provenance.
-
----
-
-## 4. Repository Structure
+## 3. Project Structure
 
 ```text
 ai-mediastra-whatsapp-reminder/
-├── refillcare/             # Core Clinical Decision Engine & Domain Logic
+├── refillcare/             # Core Clinical AI Engine & Domain Logic
 │   ├── engine/             # Decision routing, Med-Sync bundler, persistence manager
-│   │   ├── decision_types.py   # RefillDecision dataclass, constants, stages
-│   │   ├── med_sync.py         # Multi-prescription bundling & sync engine (default 8d)
-│   │   ├── persistence.py      # SQLAlchemy persistence & lifecycle manager
-│   │   ├── reminder_lifecycle.py # WhatsApp clinical template copies
-│   │   └── unified_engine.py   # Unified decision engine & stability routing
-│   ├── models/             # Stability classifier, 3-head quantile ML models
-│   ├── features/           # Consumption velocity, Days-of-Supply (DOS)
+│   │   ├── persistence.py      # Database cycle sync & date-range review queues
+│   │   ├── unified_engine.py   # Stability evaluation & dual-path decision engine
+│   │   ├── med_sync.py         # Multi-prescription patient bundling
+│   │   └── decision_types.py   # Data structures & lifecycle constants
 │   ├── data/               # Ingestion, date parsing, chronic classifier
-│   │   ├── medication_classifier.py # Behavioral chronic & PRN exclusion classifier
-│   │   ├── monthly_ingestion.py     # Batch ingestion, rollback, 10-digit phone formatter
-│   │   └── dates.py                 # Multi-format date normalization
-│   ├── evaluation/         # Holdout validation, backtesting, benchmark suites
-│   └── config/             # Path thresholds, stability limits, system constants
+│   │   ├── sales_ingestion.py  # Master append with backup, deduplication, rollback
+│   │   ├── medication_classifier.py # Supabase rules & chronic safety gate
+│   │   └── dates.py            # Pharmacy date normalizer
+│   └── models/             # 3-Head Quantile Regressors & feature extractors
 │
-├── database/               # Database & Persistence Layer
-│   ├── connection.py       # SQLAlchemy engine & SessionLocal (enterprise.db)
-│   ├── models.py           # ORM schemas: RefillDecisionModel, ReminderCycleModel, ReminderStageModel
-│   └── fetch_sales.py      # Historical transaction access queries
+├── database/               # SQLite Persistence (enterprise.db)
+│   ├── models.py           # RefillDecisionModel, ReminderCycleModel, ReminderStageModel
+│   └── connection.py       # SQLAlchemy SessionLocal
 │
-├── reminder/               # Reminder Delivery & Scheduling Utilities
-│   ├── reminder_engine.py  # 10-column delivery CSV generation with phone sanitization
-│   ├── send_message.py     # Single/batch WhatsApp dispatch with safety dry-run guard
-│   ├── storage.py          # SQLite snapshot store for review queues
-│   ├── scheduler.py        # Multi-stage schedule utilities (-7d to +45d)
-│   └── message_logs.py     # Audit logging of sent and simulated messages
-│
-├── services/               # External Communication Integrations
-│   ├── xinno_whatsapp.py   # Xinno CPaaS WhatsApp Business API client
-│   ├── xinno_image_template.py # WhatsApp image template API client
-│   └── cloudinary_image.py # Cloudinary image hosting for media campaigns
-│
-├── utils/                  # Cross-Cutting Engineering Utilities
-│   ├── validators.py       # Canonical phone normalization (10-digit display & E.164 delivery)
-│   ├── column_aliases.py   # Header mapping for 15+ pharmacy ERP formats
-│   ├── bulk_send.py        # Throttled batch dispatch with rate limiting
-│   └── audit.py            # Phone masking & compliance audit logging
-│
-├── api/                    # Enterprise FastAPI Application
-│   ├── main.py             # REST API entry point, CORS, OpenAPI docs, static routes
-│   ├── schemas.py          # Pydantic request and response schemas
-│   └── services.py         # Business service layer (Med-Sync, Quantiles, KPIs, Queues)
+├── api/                    # FastAPI Enterprise Backend
+│   ├── main.py             # REST API routes (/api/v1/reminders/daily, etc.)
+│   ├── services.py         # Business logic layer with online inference sync
+│   └── schemas.py          # Pydantic request/response schemas
 │
 ├── frontend/               # Web Application Interface
-│   ├── index.html          # Dashboard interface with Date/Month toggles & search
-│   ├── style.css           # Design system tokens and styles
-│   ├── js/app.js           # Client application logic and event handlers
-│   └── js/api.js           # REST API client
+│   ├── index.html          # Web SPA with Date, Rolling 30d, and Month views
+│   └── js/app.js           # Frontend logic & API client
 │
-├── data/                   # Data Directory
-│   └── refillcare/processed/
-│       ├── enterprise.db   # Production SQLite database
-│       ├── clean_transactions.parquet # Cleaned, B2B-purged transaction records
-│       ├── purchase_history.parquet   # Canonical longitudinal purchase dataset
-│       └── models/         # Trained serialized machine learning models
-│
-├── scripts/                # Production Engineering & Diagnostic Scripts
-│   ├── train_chronic_specialized_model.py # 3-Head Quantile XGBoost training
-│   ├── run_offline_validation.py         # Holdout evaluation & metrics
-│   ├── verify_system_health.py           # End-to-end system health check
-│   └── build_refillcare_notebooks.py     # Reproducible walkthrough notebooks
-│
-├── tests/                  # Comprehensive Automated Test Suite
-│   ├── api/                # FastAPI endpoint integration tests
-│   └── refillcare/         # Engine, Med-Sync, Classifier, Lifecycle tests
+├── data/refillcare/        # Master Data & Storage
+│   ├── customer_data_fields.csv   # Master POS transaction dataset (909k+ rows)
+│   ├── backups/                   # Timestamped pre-image safety backups
+│   └── processed/                 # Parquet tables & enterprise.db
 │
 ├── app_refillcare.py       # Main Operations Dashboard (Streamlit)
-├── requirements.txt        # Python package dependencies
-├── pytest.ini              # Pytest configuration
-└── README.md               # Master System Documentation
+├── scripts/                # Execution & Validation Scripts
+│   └── run_sales_pipeline.py # End-to-end sales ingestion & decision pipeline
+└── tests/                  # Automated Test Suite (pytest)
 ```
 
 ---
 
-## 5. Operations & Execution Guide
+## 4. Quickstart: How to Run
 
-### A. CLI Commands
-
+### Step 1: Install Dependencies
 ```bash
-# 1. Run Full Batch Prediction & Persistence Pipeline
-python run_prediction.py
-
-# 2. Query and Export Due Refill Reminders
-python run_reminder.py
-
-# 3. Simulate or Dispatch WhatsApp Messages (Safety Dry-Run Enabled by Default)
-python run_message.py
-
-# 4. Retrain Specialized 3-Head Quantile Regressors
-python scripts/train_chronic_specialized_model.py
-
-# 5. Run System Health Diagnostic Suite
-python scripts/verify_system_health.py
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-### B. Starting User Interfaces & REST API
-
+### Step 2: Launch Streamlit Dashboard
 ```bash
-# 1. Start Streamlit Clinical Operations Dashboard
 streamlit run app_refillcare.py
+```
+Open [http://localhost:8501](http://localhost:8501) in your browser.
+- **Tab 1: Dashboard Overview** — View live KPIs, retail vs B2B transaction breakdowns, and channel audit metrics.
+- **Tab 2: Data Update** — Upload new weekly or monthly sales files; automatically appends to master CSV with backup and syncs decision cycles.
+- **Tab 4: Reminder List** — Filter reminders by **Specific Date**, **Rolling 30 Days (Active Horizon)**, or **Complete Month**.
+- **Tab 5: Med-Sync Bundles** — Inspect consolidated patient appointments and messages saved.
+- **Tab 6: WhatsApp Gateway** — Preview templates and test or batch-dispatch messages.
 
-# 2. Start Enterprise FastAPI Backend Server (Interactive Docs: http://127.0.0.1:8000/docs)
+### Step 3: Launch FastAPI Backend & Web UI
+```bash
 uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
+- Web Application: [http://127.0.0.1:8000](http://127.0.0.1:8000)
+- Interactive API Documentation (Swagger): [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-### C. REST API Endpoints Reference
-
-| Endpoint | Method | Description |
-| :--- | :---: | :--- |
-| `/api/v2/med-sync/bundles` | `GET` | Retrieve synchronized patient bundles (supports `sync_window_days`, `target_date`, and `target_month`). |
-| `/api/v2/models/quantiles` | `GET` | Retrieve 3-Head Quantile uncertainty envelope metrics ($P_{10}, P_{50}, P_{90}$). |
-| `/api/reminders/daily` | `GET` | Fetch scheduled reminder queue for a target date or full target month. |
-| `/api/reminders/monthly` | `GET` | Fetch monthly aggregated reminder delivery queue. |
-| `/api/reminders/{id}/approve` | `POST` | Pharmacist manual approval of a pending reminder stage. |
-| `/api/reminders/{id}/reject` | `POST` | Pharmacist rejection of a pending reminder stage with reason code. |
-| `/api/sales/monthly-upload` | `POST` | Ingest and validate new monthly sales file with batch traceability. |
-| `/api/sales/rollback` | `POST` | 1-Click rollback of an ingested sales batch. |
+### Step 4: Run CLI Ingestion Pipeline
+To ingest new sales from the command line and update decisions:
+```bash
+python scripts/run_sales_pipeline.py --new-sales path/to/sales.xlsx
+```
 
 ---
 
-## 6. Testing & Quality Assurance
+## 5. Key REST API Endpoints
 
-The test suite validates data ingestion, wholesale isolation, clinical classification, 3-head quantile prediction, Med-Sync clustering, persistence lifecycle auto-reset, and REST endpoints.
+| Endpoint | Method | Purpose |
+| :--- | :---: | :--- |
+| `/api/v1/reminders/daily` | `GET` | Retrieve reminders by `target_date`, `target_month`, or `start_date` + `end_date` (rolling horizon). |
+| `/api/v1/medsync/bundles` | `GET` | Get patient-grouped Med-Sync bundles and messages-saved statistics. |
+| `/api/v1/dashboard/kpis` | `GET` | Live operations KPIs and monthly forecast distribution. |
+| `/api/v1/whatsapp/candidates` | `GET` | Clustered WhatsApp outreach candidates ready for dispatch. |
+| `/api/v1/sales/upload` | `POST` | Ingest new sales records with batch ID and online decision sync. |
+| `/api/v1/sales/rollback/{batch_id}` | `POST` | Safely roll back an uploaded batch and restore master CSV. |
+
+---
+
+## 6. Running Tests
 
 ```bash
-# Execute entire automated test suite
-pytest tests/ -q
+# Run unit tests for chronic medication classifier
+pytest tests/refillcare/test_medication_classifier.py -v
 
-# Execute Med-Sync and API integration tests specifically
-pytest tests/refillcare/test_med_sync.py tests/api/test_enterprise_api.py -v
+# Run the dynamic continuous-observation integration test
+python scratch/test_rolling_pipeline.py
 ```
+*Current test suite status: 100% passing.*
