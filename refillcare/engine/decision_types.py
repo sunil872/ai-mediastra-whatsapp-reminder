@@ -63,6 +63,9 @@ STATUS_SENT = "SENT"
 STATUS_FAILED = "FAILED"
 STATUS_SUPERSEDED = "SUPERSEDED_BY_PURCHASE"
 STATUS_CANCELLED = "CANCELLED"
+STATUS_EXPIRED = "EXPIRED"  # send date passed without dispatch (never sent late)
+STATUS_ROLLED_BACK = "ROLLED_BACK"  # created by a sales batch that was rolled back
+ACTIVE_STAGE_STATUSES = (STATUS_PENDING, STATUS_DUE, STATUS_APPROVED)
 
 
 @dataclass
@@ -109,6 +112,13 @@ class RefillDecision:
     quantile_p10_date: Optional[date] = None
     quantile_p90_date: Optional[date] = None
     uncertainty_span_days: Optional[float] = None
+
+    # Model provenance
+    model_version: Optional[str] = None
+    prediction_source: Optional[str] = None  # ML | ML_CLAMPED | BASELINE_MEDIAN | BASELINE_CLAMPED | HEURISTIC_FALLBACK | DOS | REVIEW | NONE
+    raw_ml_prediction_days: Optional[float] = None
+    shadow_model_version: Optional[str] = None
+    shadow_predicted_interval_days: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)

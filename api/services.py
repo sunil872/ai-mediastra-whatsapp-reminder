@@ -63,20 +63,68 @@ from reminder.scheduler import (
     RefillReminderScheduler,
     evaluate_refill_eligibility,
 )
-from reminder.storage import RefillCareStorage, DEFAULT_DB_PATH
-from services.xinno_whatsapp import send_template_message
+from reminder.storage import RefillCareStorage
+from refillcare.store import StoreConfig
 
-HISTORY_PARQUET_PATH = PROJECT_ROOT / "data" / "refillcare" / "processed" / "purchase_history.parquet"
-DEFAULT_MODEL_PATH = PROJECT_ROOT / "data" / "refillcare" / "processed" / "models" / "refill_model.joblib"
-HUMAN_MODEL_PATH = PROJECT_ROOT / "data" / "refillcare" / "processed" / "models" / "human_ml_refill_model.joblib"
+
+
+_MONTH_RE = __import__("re").compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def validate_month_key(target_month: Optional[str], allow_all: bool = False) -> Optional[str]:
+    """Validate a YYYY-MM month key (raises ValueError -> HTTP 400)."""
+    if target_month is None:
+        return None
+    tm = str(target_month).strip()
+    if allow_all and tm.upper() == "ALL":
+        return "ALL"
+    if not _MONTH_RE.match(tm[:7]) or len(tm) not in (7, 10):
+        raise ValueError(f"Invalid month '{target_month}': expected YYYY-MM.")
+    return tm[:7]
 
 
 class EnterpriseServices:
-    """Centralized enterprise service orchestrator."""
+    """Centralized enterprise service orchestrator (v1: single store)."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, store: Optional[StoreConfig] = None):
         self.db = db
-        self.storage = RefillCareStorage(db_path=DEFAULT_DB_PATH)
+        self.store = (store or StoreConfig.from_env()).ensure()
+        self.paths = self.store
+        self.storage = RefillCareStorage(db_path=str(self.paths.legacy_sqlite))
+
+    # ------------------------------------------------------------------
+    # Store helpers
+    # ------------------------------------------------------------------
+    def _pm(self):
+        from refillcare.engine.persistence import RefillPersistenceManager
+
+        return RefillPersistenceManager(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
+
+    def latest_sales_date(self) -> Optional[date]:
+        """Latest purchase date known to the decision store (cheap; no parquet read)."""
+        row = self.db.query(func.max(RefillDecisionModel.last_purchase_date)).scalar()
+        if row:
+            return row
+        hist = self.get_active_purchase_history()
+        if not hist.empty and "invoice_date" in hist.columns:
+            dts = pd.to_datetime(hist["invoice_date"], errors="coerce").dropna()
+            if not dts.empty:
+                return dts.max().date()
+        return None
+
+    def forecast_as_of(self) -> date:
+        """T_eval = latest sales date + 1 day (falls back to today when no data)."""
+        latest = self.latest_sales_date()
+        return (latest + timedelta(days=1)) if latest else date.today()
+
+    def current_forecast_month(self) -> str:
+        return self.forecast_as_of().strftime("%Y-%m")
+
+    def _decision_is_chronic(self, item_name: Optional[str], purchase_count: Optional[int], cadence_median: Optional[float]) -> bool:
+        """Same chronic gate as the reminder queue / decision engine (rules + personal recurrence)."""
+        from refillcare.engine.persistence import decision_is_chronic
+
+        return decision_is_chronic(str(item_name or ""), purchase_count, cadence_median)
 
     # --------------------------------------------------------------------------
     # 1. SALES INGESTION & BATCH SERVICES
@@ -157,78 +205,25 @@ class EnterpriseServices:
             existing_history_df=history_df,
             storage=self.storage,
             source_filename=filename,
+            data_dir=self.paths.data_dir,
         )
 
         if res["status"] != "success":
             raise ValueError(res.get("message", "Processing failed"))
 
-        # Save updated purchase history to disk
+        # process_monthly_sales_data persisted the purchase history parquet
         updated_df = res.get("updated_history_df")
-        if updated_df is not None and not updated_df.empty:
-            updated_df.to_parquet(HISTORY_PARQUET_PATH, index=False)
 
-        # Also mirror batch to SQLAlchemy DB
+        from refillcare.engine.post_ingest import mirror_import_batch, sync_after_ingest
+
         batch_id = res["import_batch_id"]
         m = res["metrics"]
-        checksum = hashlib.sha256(file_bytes).hexdigest()
+        mirror_import_batch(self.db, res, filename, checksum=hashlib.sha256(file_bytes).hexdigest())
 
-        batch_model = self.db.query(ImportBatchModel).filter_by(import_batch_id=batch_id).first()
-        if not batch_model:
-            batch_model = ImportBatchModel(
-                import_batch_id=batch_id,
-                source_filename=filename,
-                detected_date_range=m.get("file_date_range", ""),
-                source_format=m.get("source_format", "Auto"),
-                record_count=m.get("records_received", 0),
-                records_inserted=m.get("new_records_added", 0),
-                records_skipped=m.get("existing_duplicates_skipped", 0),
-                records_requiring_review=m.get("records_requiring_review", 0),
-                processing_status="ACTIVE",
-                checksum_sha256=checksum,
-                is_active=True,
-            )
-            self.db.add(batch_model)
-            self.db.commit()
-
-        # Continuous-Observation Online Inference & Cycle Sync
+        # Continuous-observation online inference & cycle sync (same code path as Streamlit)
         online_metrics: Dict[str, Any] = {}
         try:
-            from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
-            from refillcare.engine.persistence import RefillPersistenceManager
-
-            # Dynamic as-of date (T_max + 1 day)
-            latest_dt = m.get("latest_sales_date")
-            if isinstance(latest_dt, str):
-                try:
-                    latest_sales_d = datetime.strptime(latest_dt, "%d-%m-%Y").date()
-                except Exception:
-                    latest_sales_d = date.today()
-            elif isinstance(latest_dt, (date, datetime)):
-                latest_sales_d = latest_dt if isinstance(latest_dt, date) else latest_dt.date()
-            else:
-                latest_sales_d = date.today()
-
-            eval_as_of = latest_sales_d + timedelta(days=1)
-            target_month = eval_as_of.strftime("%Y-%m")
-
-            if updated_df is not None and not updated_df.empty:
-                engine = UnifiedRefillDecisionEngine()
-                _, decisions_list = engine.evaluate_all_customer_items(updated_df, as_of_date=eval_as_of)
-
-                pm = RefillPersistenceManager()
-                pm.save_refill_decisions(self.db, decisions_list)
-                sync_res = pm.sync_reminder_cycles(self.db, decisions_list)
-
-                online_metrics = {
-                    "evaluation_as_of_date": str(eval_as_of),
-                    "target_prediction_month": target_month,
-                    "decisions_evaluated": len(decisions_list),
-                    "cycles_created": sync_res.get("cycles_created", 0),
-                    "cycles_superseded": sync_res.get("cycles_superseded", 0),
-                    "stages_created": sync_res.get("stages_created", 0),
-                    "stages_superseded": sync_res.get("stages_superseded", 0),
-                }
-                logger.info(f"Ingestion batch {batch_id}: synced {len(decisions_list)} decisions, {sync_res.get('cycles_created', 0)} cycles created, {sync_res.get('cycles_superseded', 0)} superseded.")
+            online_metrics = sync_after_ingest(self.db, res)
         except Exception as e:
             logger.warning(f"Continuous inference sync after file ingestion warning: {e}")
 
@@ -245,8 +240,14 @@ class EnterpriseServices:
             "date_range": m.get("file_date_range", ""),
             "records_requiring_review": m["records_requiring_review"],
             "online_sync": online_metrics,
+            "ml_data_freshness": self._ml_freshness(updated_df),
             "message": "Sales data successfully ingested and reminder decisions synchronized.",
         }
+
+    def _ml_freshness(self, history_df: Optional[pd.DataFrame]) -> Optional[Dict[str, Any]]:
+        from refillcare.engine.post_ingest import ml_freshness_after_ingest
+
+        return ml_freshness_after_ingest(self.db, history_df)
 
     def list_import_batches(self) -> List[Dict[str, Any]]:
         """Retrieve all historical import batches."""
@@ -260,22 +261,16 @@ class EnterpriseServices:
             current_history_df=history_df,
             import_batch_id=batch_id,
             storage=self.storage,
+            data_dir=self.paths.data_dir,
         )
 
         if res["status"] != "success":
             raise ValueError(res.get("message", "Rollback failed"))
 
-        # Save restored purchase history to disk
-        restored_df = res.get("restored_history_df")
-        if restored_df is not None and not restored_df.empty:
-            restored_df.to_parquet(HISTORY_PARQUET_PATH, index=False)
+        # Revert the decision / cycle / stage effects of the removed purchases (same path as Streamlit)
+        from refillcare.engine.post_ingest import revert_after_rollback
 
-        # Update SQL batch status
-        batch_model = self.db.query(ImportBatchModel).filter_by(import_batch_id=batch_id).first()
-        if batch_model:
-            batch_model.processing_status = "ROLLED_BACK"  # type: ignore[assignment]
-            batch_model.is_active = False  # type: ignore[assignment]
-            self.db.commit()
+        db_revert = revert_after_rollback(self.db, res, batch_id)
 
         return {
             "status": "success",
@@ -283,6 +278,8 @@ class EnterpriseServices:
             "records_removed": res["records_removed"],
             "restored_latest_sales_date": str(res["restored_latest_sales_date"]),
             "invalidated_snapshots": res.get("invalidated_prediction_snapshots", 0),
+            "master_csv_rows_removed": res.get("master_csv_rows_removed", 0),
+            "reminder_state_reverted": db_revert,
             "message": res["message"],
         }
 
@@ -395,25 +392,27 @@ class EnterpriseServices:
     ) -> List[Dict[str, Any]]:
         """Get reminder queue scheduled for a target date, full target month (YYYY-MM), or rolling date range with comprehensive clinical filters."""
         import re
-        from refillcare.engine.persistence import RefillPersistenceManager
         from refillcare.whatsapp.template_formatter import get_refill_function
 
-        # 1. Primary: Query persistent review queue from enterprise.db
-        try:
-            pm = RefillPersistenceManager()
-            if start_date and end_date:
-                queue = pm.get_date_range_review_queue(self.db, start_date=start_date, end_date=end_date)
-            elif target_month:
-                queue = pm.get_monthly_review_queue(self.db, target_month=target_month)
-            elif target_date:
-                queue = pm.get_today_review_queue(self.db, target_date=target_date)
-            else:
-                # Default to active forecast month (e.g. 2026-10)
-                months = self.list_available_reminder_months()
-                def_month = "2026-10" if "2026-10" in months else (months[-1] if months else "2026-10")
-                queue = pm.get_monthly_review_queue(self.db, target_month=def_month)
-        except Exception:
-            queue = []
+        target_month = validate_month_key(target_month)
+        if (start_date is None) != (end_date is None):
+            raise ValueError("start_date and end_date must be provided together.")
+        if start_date and end_date and start_date > end_date:
+            raise ValueError("start_date must be on or before end_date.")
+        if start_date and end_date and (end_date - start_date).days > 366:
+            raise ValueError("Date range may not exceed 366 days.")
+
+        # Query the persistent review queue
+        pm = self._pm()
+        if start_date and end_date:
+            queue = pm.get_date_range_review_queue(self.db, start_date=start_date, end_date=end_date)
+        elif target_month:
+            queue = pm.get_monthly_review_queue(self.db, target_month=target_month)
+        elif target_date:
+            queue = pm.get_today_review_queue(self.db, target_date=target_date)
+        else:
+            # Default: the active forecast month derived from the latest sales date (T_max + 1)
+            queue = pm.get_monthly_review_queue(self.db, target_month=self.current_forecast_month())
 
         if queue:
             from refillcare.data.medication_classifier import is_chronic_medication
@@ -518,53 +517,7 @@ class EnterpriseServices:
                 return items[offset:]
             return items
 
-        # Fallback to prediction snapshots
-        snapshots_list = self.storage.get_prediction_snapshots()
-        if not snapshots_list:
-            return []
-
-        df = pd.DataFrame(snapshots_list)
-        if "reminder_date" not in df.columns:
-            return []
-
-        if target_month:
-            df = pd.DataFrame(df[df["reminder_date"].astype(str).str.startswith(str(target_month).strip())])
-        else:
-            dt = target_date or date.today()
-            target_str = dt.strftime("%Y-%m-%d")
-            df = pd.DataFrame(df[df["reminder_date"].astype(str) == target_str])
-
-        if mobile_filter == "Valid" and "mobile_status" in df.columns:
-            df = pd.DataFrame(df[df["mobile_status"] == "Valid"])
-        elif mobile_filter == "Missing" and "mobile_status" in df.columns:
-            df = pd.DataFrame(df[df["mobile_status"] != "Valid"])
-
-        from refillcare.data.medication_classifier import is_chronic_medication
-        items = []
-        for _, r in df.iterrows():
-            i_name = str(r.get("item_name") or "")
-            if not is_chronic_medication(i_name):
-                continue
-            items.append({
-                "reminder_id": f"REM_{r['snapshot_id']}",
-                "customer_id": str(r.get("customer_id", "")),
-                "customer_name": str(r.get("customer_name", "Unknown")),
-                "phone_number": str(r.get("phone_number", "")),
-                "mobile_status": str(r.get("mobile_status", "Missing")),
-                "item_id": str(r.get("item_id", "")),
-                "item_name": str(r.get("item_name", "Unknown Medication")),
-                "last_purchase_date": str(r.get("last_purchase_date", "-")),
-                "estimated_days_of_supply": float(r.get("estimated_days_of_supply") or 30.0),
-                "expected_refill_date": str(r.get("expected_refill_date", "-")),
-                "reminder_date": str(r.get("reminder_date", "-")),
-                "reminder_stage": "3_days_before",
-                "delivery_status": "SCHEDULED",
-            })
-        if limit is not None:
-            return items[offset : offset + limit]
-        elif offset > 0:
-            return items[offset:]
-        return items
+        return []
 
     def export_reminder_csv(
         self,
@@ -589,7 +542,7 @@ class EnterpriseServices:
     ) -> Dict[str, Any]:
         """Export reminder records as full structured JSON format for date or month."""
         reminders = self.get_daily_reminders(target_date=target_date, target_month=target_month, mobile_filter=mobile_filter)
-        filter_label = f"Month: {target_month}" if target_month else f"Date: {(target_date or date.today()).strftime('%Y-%m-%d')}"
+        filter_label = f"Month: {target_month}" if target_month else (f"Date: {target_date.strftime('%Y-%m-%d')}" if target_date else f"Month: {self.current_forecast_month()}")
         return {
             "query_filter": filter_label,
             "target_date": target_date.strftime("%Y-%m-%d") if target_date else None,
@@ -605,6 +558,7 @@ class EnterpriseServices:
             from database.models import ReminderStageModel
             results = (
                 self.db.query(ReminderStageModel.target_send_date)
+                .filter(ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED", "SENT"]))
                 .distinct()
                 .order_by(ReminderStageModel.target_send_date.asc())
                 .all()
@@ -615,49 +569,53 @@ class EnterpriseServices:
                     months.add(row[0].strftime("%Y-%m"))
             return sorted(list(months))
         except Exception:
-            return ["2026-09"]
+            logger.exception("Failed to list reminder months")
+            return []
 
     # --------------------------------------------------------------------------
     # 4. MODEL REGISTRY SERVICES
     # --------------------------------------------------------------------------
     def list_models(self) -> List[Dict[str, Any]]:
-        """List registered model versions and performance benchmarks."""
-        models = self.db.query(ModelRegistryModel).order_by(desc(ModelRegistryModel.created_at)).all()
-        has_v100 = any(m.version_id == "v1.0.0" for m in models)
-        has_v120 = any(m.version_id == "v1.2.0-human-consensus" for m in models)
-        if not has_v100 or not has_v120:
-            self._register_default_model()
-            models = self.db.query(ModelRegistryModel).order_by(desc(ModelRegistryModel.created_at)).all()
+        """Registered model versions with measured evaluation evidence."""
+        from refillcare.ml import registry as reg
 
+        reg.ensure_bootstrap_versions(self.db)
         out = []
-        for m in models:
+        for v in reg.list_versions(self.db):
+            d = reg.to_dict(v, self.db)
             out.append({
-                "version_id": m.version_id,
-                "model_name": m.model_name,
-                "model_type": m.model_type,
-                "artifact_path": m.artifact_path,
-                "dataset_cutoff_date": m.dataset_cutoff_date,
-                "training_sample_count": m.training_sample_count,
-                "hyperparameters": m.hyperparameters or {},
-                "metrics_train": m.metrics_train or {},
-                "metrics_val": m.metrics_val or {},
-                "is_active_production": m.is_active_production,
-                "created_at": m.created_at,
-                "notes": m.notes or "",
+                "version_id": v.version_id,
+                "model_name": v.model_family,
+                "model_type": v.model_type,
+                "artifact_path": v.artifact_uri or "",
+                "dataset_cutoff_date": v.train_window_end,
+                "training_sample_count": v.training_sample_count or 0,
+                "hyperparameters": v.hyperparameters or {},
+                "metrics_train": v.train_metrics or {},
+                "metrics_val": d.get("evaluation_summary") or {},
+                "is_active_production": v.status == reg.STATUS_PRODUCTION,
+                "created_at": v.created_at,
+                "notes": v.notes or "",
+                "status": v.status,
+                "is_validated": bool(v.is_validated),
+                "latest_evaluation_run_id": v.latest_evaluation_run_id,
             })
         return out
 
-    def activate_model(self, version_id: str) -> Dict[str, Any]:
-        """Set a specific model version as active production model."""
-        target = self.db.query(ModelRegistryModel).filter_by(version_id=version_id).first()
-        if not target:
-            raise ValueError(f"Model version '{version_id}' not found.")
+    def activate_model(self, version_id: str, promoted_by: str = "api", force: bool = False, force_reason: Optional[str] = None) -> Dict[str, Any]:
+        """Promote a version to production - only through the evidence gate."""
+        from refillcare.ml.service import promote
 
-        self.db.query(ModelRegistryModel).update({ModelRegistryModel.is_active_production: False})
-        target.is_active_production = True  # type: ignore[assignment]
-        self.db.commit()
-
-        return {"status": "success", "active_version": version_id, "message": f"Model '{version_id}' is now active."}
+        res = promote(self.db, version_id, promoted_by=promoted_by, force=force, force_reason=force_reason)
+        if not res.get("promoted"):
+            failed = ", ".join(res["decision"].get("failed_checks", []))
+            raise ValueError(f"Promotion gate rejected '{version_id}': {failed}")
+        return {
+            "status": "success",
+            "active_version": res["version"]["version_id"],
+            "message": f"Model '{res['version']['version_id']}' is now the production model.",
+            "decision": res["decision"],
+        }
 
     # --------------------------------------------------------------------------
     # 5. WHATSAPP GATEWAY DISPATCH
@@ -672,7 +630,12 @@ class EnterpriseServices:
     ) -> Dict[str, Any]:
         """Dispatch templated WhatsApp messages for scheduled reminders using 3-tier engine."""
         from refillcare.whatsapp import RefillWhatsAppDispatcher
-        dispatcher = RefillWhatsAppDispatcher()
+        from refillcare.whatsapp.client import RefillWhatsAppClient
+
+        target_month = validate_month_key(target_month, allow_all=True)
+        dispatcher = RefillWhatsAppDispatcher(
+            client=RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
+        )
         return dispatcher.dispatch_batch(
             db=self.db,
             target_date=reminder_date,
@@ -685,8 +648,67 @@ class EnterpriseServices:
     # --------------------------------------------------------------------------
     # 6. OPERATIONS KPI ANALYTICS
     # --------------------------------------------------------------------------
+    def _chronic_filtered_stage_distribution(self) -> Dict[str, int]:
+        """Active eligible stages per month, filtered by the SAME chronic gate as the reminder lists."""
+        from database.models import ReminderCycleModel, ReminderStageModel, RefillDecisionModel
+
+        rows = (
+            self.db.query(
+                func.substr(ReminderStageModel.target_send_date, 1, 7).label("m"),
+                RefillDecisionModel.item_name,
+                RefillDecisionModel.purchase_count,
+                RefillDecisionModel.cadence_median,
+                func.count().label("cnt"),
+            )
+            .join(ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id)
+            .join(RefillDecisionModel, ReminderCycleModel.decision_id == RefillDecisionModel.decision_id)
+            .filter(
+                ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED"]),
+                ReminderCycleModel.is_active == True,
+                RefillDecisionModel.is_eligible == True,
+            )
+            .group_by("m", RefillDecisionModel.item_name, RefillDecisionModel.purchase_count, RefillDecisionModel.cadence_median)
+            .all()
+        )
+        dist: Dict[str, int] = {}
+        for m_key, item, pc, cad, cnt in rows:
+            if m_key and self._decision_is_chronic(item, pc, cad):
+                dist[m_key] = dist.get(m_key, 0) + int(cnt)
+        return dict(sorted(dist.items()))
+
+    def get_ml_evidence(self) -> Dict[str, Any]:
+        """Production model + its latest measured evaluation (never typed-in numbers)."""
+        from refillcare.ml import registry as reg
+
+        reg.ensure_bootstrap_versions(self.db)
+        prod = reg.get_by_status(self.db, reg.FAMILY_PATH_A_INTERVAL, reg.STATUS_PRODUCTION)
+        if prod is None:
+            return {"production_model_version": None, "is_validated": False, "evaluation": None}
+        d = reg.to_dict(prod, self.db)
+        ev = d.get("evaluation_summary")
+        measured = None
+        if ev:
+            methods = ev.get("methods") or {}
+            mine = methods.get(f"engine[{prod.version_id}]") or methods.get(f"engine[{prod.version_id.split(':', 1)[-1]}]")
+            measured = {
+                "run_id": ev.get("run_id"),
+                "window": ev.get("evaluated_window"),
+                "n_paired_events": ev.get("n_paired_events"),
+                "production": mine,
+                "baseline_historical_median": methods.get("historical_median"),
+            }
+        return {
+            "production_model_version": prod.version_id,
+            "model_type": prod.model_type,
+            "is_validated": bool(prod.is_validated),
+            "evaluation": measured,
+        }
+
     def get_operations_kpi(self) -> Dict[str, Any]:
-        """Aggregate executive operations KPIs."""
+        """Aggregate executive operations KPIs (all values measured from store data)."""
+        from database.models import ReminderCycleModel, ReminderStageModel, RefillDecisionModel
+        from refillcare.ml.outcomes import outcome_summary
+
         history_df = self.get_active_purchase_history()
         total_tx = len(history_df) if history_df is not None else 0
 
@@ -697,101 +719,53 @@ class EnterpriseServices:
             if not dts.empty:
                 latest_date_str = dts.max().strftime(UI_DATE_FORMAT)
                 date_range_str = f"{dts.min().strftime('%b %Y')} – {dts.max().strftime('%b %Y')}"
-        upcoming_count = 0
-        today_str = date.today().strftime("%Y-%m-%d")
-        due_today = 0
 
-        # Check live persistent database cycles & stages
-        target_prediction_month = "2026-10"
-        target_month_reminders_count = 0
-        monthly_stage_dist: Dict[str, int] = {}
-        review_count = 0
-        try:
-            from database.models import ReminderCycleModel, ReminderStageModel, RefillDecisionModel
-            from sqlalchemy import func
+        as_of = self.forecast_as_of()
+        target_prediction_month = as_of.strftime("%Y-%m")
+        monthly_stage_dist = self._chronic_filtered_stage_distribution()
+        target_month_reminders_count = monthly_stage_dist.get(target_prediction_month, 0)
 
-            # 1. Monthly stage breakdown - strictly active, eligible, chronic stages
-            stage_rows = (
-                self.db.query(
-                    func.substr(ReminderStageModel.target_send_date, 1, 7).label("m"),
-                    func.count().label("cnt")
-                )
-                .join(ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id)
-                .join(RefillDecisionModel, ReminderCycleModel.decision_id == RefillDecisionModel.decision_id)
-                .filter(
-                    ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED"]),
-                    ReminderCycleModel.is_active == True,
-                    RefillDecisionModel.is_eligible == True,
-                )
-                .group_by(func.substr(ReminderStageModel.target_send_date, 1, 7))
-                .order_by(func.substr(ReminderStageModel.target_send_date, 1, 7).asc())
-                .all()
-            )
-            monthly_stage_dist = {r[0]: int(r[1]) for r in stage_rows if r[0]}
-
-            if "2026-10" in monthly_stage_dist:
-                target_prediction_month = "2026-10"
-            elif monthly_stage_dist:
-                target_prediction_month = list(monthly_stage_dist.keys())[-1]
-
-            target_month_reminders_count = monthly_stage_dist.get(target_prediction_month, 0)
-            upcoming_count = target_month_reminders_count
-
-            today_stages = (
-                self.db.query(ReminderStageModel)
-                .join(ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id)
-                .join(RefillDecisionModel, ReminderCycleModel.decision_id == RefillDecisionModel.decision_id)
-                .filter(
-                    ReminderStageModel.target_send_date == date.today(),
-                    ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED"]),
-                    ReminderCycleModel.is_active == True,
-                    RefillDecisionModel.is_eligible == True,
-                )
-                .count()
-            )
-            due_today = today_stages
-
-            # Dynamic Clinical Review Queue Total (matches Streamlit 2,015 for active 2026-10)
-            rev_summary = self.get_clinical_review_summary(target_prediction_month)
-            review_count = rev_summary.get("total_in_review_queue", 2015)
-        except Exception:
-            review_count = 2015
+        due_today = len(self._pm().get_today_review_queue(self.db, target_date=as_of))
+        rev_summary = self.get_clinical_review_summary(target_prediction_month)
+        review_count = rev_summary.get("total_in_review_queue", 0)
 
         active_batch = self.storage.get_latest_active_import_batch()
+        evidence = self.get_ml_evidence()
+        prod_eval = ((evidence.get("evaluation") or {}).get("production") or {})
+        live = outcome_summary(self.db, window_days=90)
+        overall = live.get("overall") or {}
 
-        active_model = self.db.query(ModelRegistryModel).filter_by(is_active_production=True).first()
-        active_model_v = active_model.version_id if active_model else "v1.0.0"
-
-        channel_kpis = self.get_transaction_channel_kpis()
-
-        # Dynamic chronic portfolio count: check Supabase rules count or chronic molecules
-        chr_count = 1920
+        chr_count = None
         try:
-            from refillcare.data.medication_classifier import list_classification_rules, CHRONIC_SALT_MOLECULES
-            all_rules = list_classification_rules()
-            chr_rules_cnt = len([r for r in all_rules if r.get("rule_type") == "CHRONIC"])
-            chr_count = chr_rules_cnt if chr_rules_cnt > 0 else (len(all_rules) if all_rules else len(CHRONIC_SALT_MOLECULES))
-        except Exception:
-            chr_count = 1920
+            from refillcare.data.medication_classifier import list_classification_rules
 
+            all_rules = list_classification_rules()
+            chr_count = len([r for r in all_rules if r.get("rule_type") == "CHRONIC"]) or None
+        except Exception:
+            chr_count = None
+
+        customers = len(set(history_df["customerId"].dropna().tolist())) if (history_df is not None and "customerId" in history_df.columns) else 0
         return {
-            "total_customers_monitored": len(set(history_df["customerId"].dropna().tolist())) if (history_df is not None and "customerId" in history_df.columns) else 14071,
+            "total_customers_monitored": customers,
             "total_sales_transactions": total_tx,
             "latest_sales_date": latest_date_str,
             "sales_coverage_date_range": date_range_str,
-            "upcoming_reminders_count": target_month_reminders_count if target_month_reminders_count > 0 else upcoming_count,
+            "upcoming_reminders_count": target_month_reminders_count,
             "reminders_due_today": due_today,
             "customers_requiring_review": review_count,
-            "active_model_version": active_model_v,
+            "active_model_version": evidence.get("production_model_version") or "none",
             "active_batch_id": active_batch.get("import_batch_id") if active_batch else None,
-            "human_consensus_active": True,
-            "consensus_model_version": "v1.2.0-human-consensus",
-            "consensus_7d_accuracy_pct": 60.1,
-            "channel_summary": channel_kpis,
+            "model_is_validated": evidence.get("is_validated", False),
+            "measured_backtest_within_7_days_pct": prod_eval.get("within_7_days_pct"),
+            "measured_backtest_mae_days": prod_eval.get("mae_days"),
+            "measured_backtest_run_id": (evidence.get("evaluation") or {}).get("run_id"),
+            "live_within_7_days_pct": overall.get("within_7_days_pct"),
+            "live_resolved_predictions": overall.get("resolved"),
+            "channel_summary": self.get_transaction_channel_kpis(),
             "target_prediction_month": target_prediction_month,
             "target_month_reminders_count": target_month_reminders_count,
             "monthly_stage_distribution": monthly_stage_dist,
-            "adherence_rate_pct": 80.0,
+            "adherence_rate_pct": overall.get("refill_rate_pct"),
             "chronic_medicines_count": chr_count,
             "out_of_stock_or_critical": due_today,
         }
@@ -804,7 +778,9 @@ class EnterpriseServices:
         from database.models import RefillDecisionModel
         from refillcare.data.monthly_ingestion import determine_mobile_status
 
-        m_key = target_month[:7] if (target_month and target_month != "ALL") else "2026-10"
+        m_key = validate_month_key(target_month, allow_all=True) if target_month else None
+        if not m_key or m_key == "ALL":
+            m_key = self.current_forecast_month()
 
         # 1. Missing mobile on eligible refills
         q_missing = self.db.query(RefillDecisionModel).filter(
@@ -821,7 +797,7 @@ class EnterpriseServices:
             prev_y, prev_m = (y - 1, 12) if m == 1 else (y, m - 1)
             prev_str = f"{prev_y:04d}-{prev_m:02d}"
         except Exception:
-            prev_str = "2026-09"
+            prev_str = (self.forecast_as_of().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
 
         q_cold = self.db.query(RefillDecisionModel).filter(
             RefillDecisionModel.is_eligible == False,
@@ -860,10 +836,8 @@ class EnterpriseServices:
                 stab_risk_cnt += 1
 
         avail_months = self.list_available_reminder_months()
-        if "2026-10" not in avail_months:
-            avail_months.append("2026-10")
-        if "2026-09" not in avail_months:
-            avail_months.append("2026-09")
+        if m_key not in avail_months:
+            avail_months.append(m_key)
         avail_months = sorted(list(set(avail_months)), reverse=True)
 
         return {
@@ -896,7 +870,9 @@ class EnterpriseServices:
         if search and not customer_search:
             customer_search = search
 
-        m_key = target_month[:7] if (target_month and target_month != "ALL") else "2026-10"
+        m_key = validate_month_key(target_month, allow_all=True) if target_month else None
+        if not m_key or m_key == "ALL":
+            m_key = self.current_forecast_month()
 
         # 1. Missing mobile on eligible refills
         q1 = self.db.query(RefillDecisionModel).filter(
@@ -913,7 +889,7 @@ class EnterpriseServices:
             prev_y, prev_m = (y - 1, 12) if m == 1 else (y, m - 1)
             prev_str = f"{prev_y:04d}-{prev_m:02d}"
         except Exception:
-            prev_str = "2026-09"
+            prev_str = (self.forecast_as_of().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
 
         q2 = self.db.query(RefillDecisionModel).filter(
             RefillDecisionModel.is_eligible == False,
@@ -1020,101 +996,82 @@ class EnterpriseServices:
         return filtered[offset : offset + limit]
 
     def get_consensus_regimen_analytics(self) -> Dict[str, Any]:
-        """Return clinical dosage regimen distribution and human consensus benchmark analytics."""
+        """Regimen / archetype prevalence computed from eligible decisions, and
+        benchmarks taken from the latest completed evaluation run (no typed-in numbers)."""
+        from collections import Counter
+        from database.models import MLEvaluationRunModel
+        from refillcare.engine.persistence import parse_decision_provenance
+
+        reasons = [
+            r[0]
+            for r in self.db.query(RefillDecisionModel.decision_reason)
+            .filter(RefillDecisionModel.is_eligible == True, RefillDecisionModel.path == "PATH_A")
+            .all()
+        ]
+        reg_counter: Counter = Counter()
+        arch_counter: Counter = Counter()
+        for reason in reasons:
+            arch, regimen = parse_decision_provenance(reason)
+            reg_counter[regimen] += 1
+            arch_counter[arch] += 1
+        total = sum(reg_counter.values()) or 1
+        regimen_meta = {
+            "1.0 tab/d (OD)": ("Once Daily (OD)", 1.0, "Once-a-day maintenance therapy."),
+            "0.5 tab/d (QOD)": ("Alternate Day / Intermittent (QOD)", 0.5, "Alternate-day or intermittent dosing."),
+            "2.0 tabs/d (BD)": ("Twice Daily (BD)", 2.0, "Morning and evening dosing."),
+            "3.0 tabs/d (TID)": ("Thrice Daily (TID) / Multiple", 3.0, "Three or more doses per day."),
+        }
+        regimens = []
+        for key, (label, rate, desc) in regimen_meta.items():
+            cnt = reg_counter.get(key, 0)
+            regimens.append({
+                "regimen": label,
+                "daily_rate": rate,
+                "prevalence_pct": round(100.0 * cnt / total, 1),
+                "sample_count": cnt,
+                "description": f"{desc} (inferred from decision reasons of eligible Path A decisions)",
+            })
+        archetypes = [
+            {"archetype": a, "description": f"{c} eligible Path A decisions", "example": "Computed from current decisions"}
+            for a, c in arch_counter.most_common()
+        ]
+
+        benchmarks = []
+        run = (
+            self.db.query(MLEvaluationRunModel)
+            .filter(MLEvaluationRunModel.status == "COMPLETED")
+            .order_by(MLEvaluationRunModel.completed_at.desc())
+            .first()
+        )
+        evidence = self.get_ml_evidence()
+        if run is not None and run.report:
+            win = run.report.get("evaluation_window") or {}
+            for name, mtr in ((run.report.get("paired_comparison") or {}).get("methods") or {}).items():
+                is_prod = evidence.get("production_model_version") and name == f"engine[{evidence['production_model_version']}]"
+                benchmarks.append({
+                    "method": name,
+                    "within_7_days_pct": float(mtr.get("within_7_days_pct") or 0.0),
+                    "mae_days": float(mtr.get("mae_days") or 0.0),
+                    "status": f"{'Production - ' if is_prod else ''}measured {win.get('start')}..{win.get('end')} (n={mtr.get('n')}, run {run.run_id})",
+                })
+
+        prod_version = evidence.get("production_model_version") or "none"
+        from refillcare.ml import registry as reg
+
+        pv = reg.get_version(self.db, prod_version) if prod_version != "none" else None
         return {
-            "engine_version": "v1.2.0-human-consensus",
-            "total_transitions_trained": 316321,
-            "regimens": [
-                {
-                    "regimen": "Once Daily (OD)",
-                    "daily_rate": 1.0,
-                    "prevalence_pct": 37.1,
-                    "sample_count": 117461,
-                    "description": "Standard once-a-day chronic maintenance therapy (e.g. antihypertensives, statins, oral antidiabetics).",
-                },
-                {
-                    "regimen": "Alternate Day / Intermittent (QOD)",
-                    "daily_rate": 0.5,
-                    "prevalence_pct": 28.8,
-                    "sample_count": 91242,
-                    "description": "Alternate-day therapy, tapering regimens, or intermittent maintenance doses.",
-                },
-                {
-                    "regimen": "Twice Daily (BD)",
-                    "daily_rate": 2.0,
-                    "prevalence_pct": 13.1,
-                    "sample_count": 41281,
-                    "description": "Morning and evening dosed medications (e.g. Metformin BD, phosphate binders).",
-                },
-                {
-                    "regimen": "Thrice Daily (TID) / Multiple",
-                    "daily_rate": 3.0,
-                    "prevalence_pct": 9.1,
-                    "sample_count": 28802,
-                    "description": "High-frequency multi-dose regimens (e.g. post-meal enzyme supplements, Revlamer TID).",
-                },
-                {
-                    "regimen": "Variable / Other",
-                    "daily_rate": 1.5,
-                    "prevalence_pct": 11.9,
-                    "sample_count": 37535,
-                    "description": "Patient-titrated dosages, PRN components, and non-standard strip consumptions.",
-                },
-            ],
-            "archetypes": [
-                {
-                    "archetype": "Multi-Pack Scaled",
-                    "description": "Customer buys 2x or 3x typical quantity (e.g. 60 units instead of 30 units). Prediction scales supply days proportionally.",
-                    "example": "Murlikrishna: Reclide XR 60mg (60 tabs bought vs 30 typical -> 60d predicted)",
-                },
-                {
-                    "archetype": "Early Top-Up Carryover",
-                    "description": "Customer refills before running out. Remaining pill supply is credited as home inventory carryover ($R_{inv}$).",
-                    "example": "Narasimulu: Revlamer 400mg (73 tabs left on purchase date -> 48d predicted)",
-                },
-                {
-                    "archetype": "Partial Purchase Scaled",
-                    "description": "Customer buys a smaller trial or travel strip (e.g. 10 tabs instead of 30 tabs). Prevents sending reminder 20 days too late.",
-                    "example": "10-tab purchase scales interval down to 10 days instead of typical 30 days.",
-                },
-                {
-                    "archetype": "Post-Lapse Reset",
-                    "description": "Customer returns after a prolonged gap (>75 days). Re-establishes cadence based strictly on newly purchased quantity.",
-                    "example": "Return after 120-day lapse resets to exact supply duration.",
-                },
-                {
-                    "archetype": "Consensus Bounded",
-                    "description": "Physical bounds [0.65, 1.50] x D_supply constrain ML predictions to realistic medication depletion physics.",
-                    "example": "Prevents catastrophic ML divergence on noisy transaction intervals.",
-                },
-            ],
-            "benchmarks": [
-                {
-                    "method": "v1.0.0 Baseline (Historical Median)",
-                    "within_7_days_pct": 49.3,
-                    "mae_days": 14.8,
-                    "status": "Superseded",
-                },
-                {
-                    "method": "v1.1.0 Days of Supply Only",
-                    "within_7_days_pct": 48.7,
-                    "mae_days": 13.9,
-                    "status": "Heuristic Only",
-                },
-                {
-                    "method": "v1.2.0-human-consensus (Enterprise)",
-                    "within_7_days_pct": 60.1,
-                    "mae_days": 10.4,
-                    "status": "Active Production (+10.8% accuracy, -4.4d MAE)",
-                },
-            ],
+            "engine_version": prod_version,
+            "total_transitions_trained": int(pv.training_sample_count or 0) if pv else 0,
+            "regimens": regimens,
+            "archetypes": archetypes,
+            "benchmarks": benchmarks,
         }
 
     def get_transaction_channel_kpis(self) -> Dict[str, int]:
         """Dynamically compute transaction channel distribution from processed data."""
         from refillcare.data.transaction_classifier import get_transaction_channel_summary
-        clean_tx_path = PROJECT_ROOT / "data" / "refillcare" / "processed" / "clean_transactions.parquet"
-        raw_csv_path = PROJECT_ROOT / "data" / "refillcare" / "customer_data_fields.csv"
+        clean_tx_path = self.paths.clean_transactions_parquet
+        raw_csv_path = self.paths.master_csv
 
         raw_total = 0
         if raw_csv_path.exists():
@@ -1124,9 +1081,7 @@ class EnterpriseServices:
                     if cnt > 0:
                         raw_total = max(0, cnt - 1)
             except Exception:
-                raw_total = 909651
-        else:
-            raw_total = 909651
+                raw_total = 0
 
         if clean_tx_path.exists():
             try:
@@ -1134,24 +1089,24 @@ class EnterpriseServices:
             except Exception:
                 df = pd.read_parquet(clean_tx_path)
             res = get_transaction_channel_summary(df)
-        elif HISTORY_PARQUET_PATH.exists():
+        elif self.paths.history_parquet.exists():
             try:
-                df = pd.read_parquet(HISTORY_PARQUET_PATH, columns=["transaction_type", "refillcare_eligible"])
+                df = pd.read_parquet(self.paths.history_parquet, columns=["transaction_type", "refillcare_eligible"])
             except Exception:
-                df = pd.read_parquet(HISTORY_PARQUET_PATH)
+                df = pd.read_parquet(self.paths.history_parquet)
             res = get_transaction_channel_summary(df)
         else:
             res = {
-                "total_transactions": 892429,
-                "customer_sales": 889901,
-                "b2b_inter_store": 2528,
+                "total_transactions": 0,
+                "customer_sales": 0,
+                "b2b_inter_store": 0,
                 "unknown": 0,
-                "excluded_from_refillcare": 2528,
-                "refillcare_eligible": 889901,
+                "excluded_from_refillcare": 0,
+                "refillcare_eligible": 0,
             }
 
-        res["raw_total_transactions"] = raw_total or res.get("total_transactions", 909651)
-        res["cleaned_transactions"] = res.get("total_transactions", 892429)
+        res["raw_total_transactions"] = raw_total or res.get("total_transactions", 0)
+        res["cleaned_transactions"] = res.get("total_transactions", 0)
         res["purged_duplicates"] = max(0, res["raw_total_transactions"] - res["cleaned_transactions"])
         return res
 
@@ -1171,14 +1126,15 @@ class EnterpriseServices:
         from refillcare.engine.med_sync import MedSyncEngine
         from refillcare.engine.persistence import RefillPersistenceManager
 
-        pm = RefillPersistenceManager()
+        target_month = validate_month_key(target_month, allow_all=True)
+        pm = self._pm()
         if target_date:
             queue_list = pm.get_today_review_queue(self.db, target_date=target_date)
         elif target_month and target_month != "ALL":
             queue_list = pm.get_monthly_review_queue(self.db, target_month=target_month)
         else:
-            # Default to Specific Date (Active Target Date: 2026-09-30)
-            target_date = date(2026, 9, 30)
+            # Default: the active forecast date (latest sales date + 1 day)
+            target_date = self.forecast_as_of()
             queue_list = pm.get_today_review_queue(self.db, target_date=target_date)
 
         records: List[Dict[str, Any]] = []
@@ -1188,9 +1144,9 @@ class EnterpriseServices:
             for q in queue_list:
                 if customer_id and q.get("customer_id") != customer_id:
                     continue
-                if not is_chronic_medication(str(q.get("item_name") or "")):
-                    continue
+                # queue rows already passed the engine-consistent chronic gate
                 records.append({
+                    "reminder_id": q.get("reminder_id"),
                     "customer_id": q.get("customer_id", ""),
                     "customer_name": q.get("customer_name", "Valued Patient"),
                     "mobile_no": q.get("phone_number"),
@@ -1379,11 +1335,19 @@ class EnterpriseServices:
     def get_quantile_uncertainty_metrics(self) -> Dict[str, Any]:
         """Retrieve 3-head Quantile uncertainty envelope benchmark metrics."""
         import json
-        report_path = PROJECT_ROOT / "data" / "refillcare" / "processed" / "chronic_model_benchmark_report.json"
+        report_path = self.paths.processed_dir / "chronic_model_benchmark_report.json"
         if report_path.exists():
             with open(report_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            data["used_in_production"] = False
+            data["status"] = "offline_experiment"
+            data["note"] = (
+                "Offline experiment from scripts/train_chronic_specialized_model.py. The quantile model is not "
+                "registered and does not serve predictions; production accuracy comes from /api/v1/ml/evaluations."
+            )
+            return data
         return {
+            "used_in_production": False,
             "status": "not_trained",
             "message": "Benchmark report not found. Train via scripts/train_chronic_specialized_model.py.",
         }
@@ -1500,62 +1464,17 @@ class EnterpriseServices:
     # INTERNAL HELPERS
     # --------------------------------------------------------------------------
     def get_active_purchase_history(self) -> pd.DataFrame:
-        """Load persistent purchase history parquet."""
-        if HISTORY_PARQUET_PATH.exists():
-            return pd.read_parquet(HISTORY_PARQUET_PATH)
+        """Load the persistent purchase history parquet."""
+        if self.paths.history_parquet.exists():
+            return pd.read_parquet(self.paths.history_parquet)
         return pd.DataFrame()
 
     def get_active_model_bundle(self) -> Optional[Dict[str, Any]]:
-        """Load active model bundle."""
-        active_model = self.db.query(ModelRegistryModel).filter_by(is_active_production=True).first()
-        if active_model and active_model.artifact_path:
-            p = Path(active_model.artifact_path)
-            if p.exists():
-                return joblib.load(p)
-        if HUMAN_MODEL_PATH.exists():
-            return joblib.load(HUMAN_MODEL_PATH)
-        if DEFAULT_MODEL_PATH.exists():
-            return joblib.load(DEFAULT_MODEL_PATH)
-        return None
+        """Production model bundle (None for the baseline policy)."""
+        from refillcare.ml.model_provider import ModelProvider
 
-    def _register_default_model(self) -> None:
-        """Register the baseline and the validated human-consensus production models."""
-        v100 = self.db.query(ModelRegistryModel).filter_by(version_id="v1.0.0").first()
-        if not v100:
-            m1 = ModelRegistryModel(
-                version_id="v1.0.0",
-                model_name="RefillCare-Hybrid-PathAB",
-                model_type="LightGBM_Heuristic_Hybrid",
-                artifact_path=str(DEFAULT_MODEL_PATH),
-                dataset_cutoff_date=date(2026, 8, 31),
-                training_sample_count=817804,
-                hyperparameters={"learning_rate": 0.05, "n_estimators": 200, "max_depth": 6},
-                metrics_train={"mae_days": 2.8, "within_3_days_pct": 74.2, "within_7_days_pct": 91.5},
-                metrics_val={"mae_days": 3.1, "within_3_days_pct": 71.8, "within_7_days_pct": 89.4},
-                is_active_production=False,
-                created_by="system",
-                notes="Validated August 2026 baseline model bundle (Path A + Path B).",
-            )
-            self.db.add(m1)
-
-        v120 = self.db.query(ModelRegistryModel).filter_by(version_id="v1.2.0-human-consensus").first()
-        if not v120:
-            m2 = ModelRegistryModel(
-                version_id="v1.2.0-human-consensus",
-                model_name="RefillCare-Human-Consensus-PathA",
-                model_type="HistGradientBoosting_Consensus_Hybrid",
-                artifact_path=str(HUMAN_MODEL_PATH),
-                dataset_cutoff_date=date(2026, 8, 31),
-                training_sample_count=330209,
-                hyperparameters={"learning_rate": 0.05, "loss": "absolute_error", "max_iter": 200, "max_depth": 7},
-                metrics_train={"mae_days": 8.9, "within_3_days_pct": 46.2, "within_7_days_pct": 68.4},
-                metrics_val={"mae_days": 10.4, "within_3_days_pct": 39.8, "within_7_days_pct": 60.1},
-                is_active_production=True,
-                created_by="system",
-                notes="Generalized Path A Human Consensus Engine with Daily Dosage Recognition (OD 37%, QOD 29%, BD 13%, TID 9%), Residual Inventory Carryover, and Physical Bounds [0.65, 1.50]x.",
-            )
-            self.db.add(m2)
-        self.db.commit()
+        provider = ModelProvider.from_registry(self.db)
+        return provider.production.bundle if provider.production else None
 
 
 # --------------------------------------------------------------------------
@@ -1576,7 +1495,8 @@ class EnterpriseServices:
         from refillcare.data.medication_classifier import is_chronic_medication
         from refillcare.data.monthly_ingestion import determine_mobile_status
 
-        pm = RefillPersistenceManager()
+        target_month = validate_month_key(target_month, allow_all=True)
+        pm = self._pm()
         if target_date:
             queue = pm.get_today_review_queue(self.db, target_date=target_date)
             target_label = target_date.strftime("%d %B %Y")
@@ -1592,7 +1512,7 @@ class EnterpriseServices:
             target_date_str = None
             target_month_str = target_month
         else:
-            dt = date.today()
+            dt = self.forecast_as_of()
             queue = pm.get_today_review_queue(self.db, target_date=dt)
             target_label = dt.strftime("%d %B %Y")
             target_date_str = dt.strftime("%Y-%m-%d")
@@ -1601,9 +1521,9 @@ class EnterpriseServices:
         raw_records = []
         for q in queue:
             i_name = str(q.get("item_name") or "")
-            if not is_chronic_medication(i_name):
-                continue
+            # queue rows already passed the engine-consistent chronic gate
             raw_records.append({
+                "reminder_id": q.get("reminder_id"),
                 "customer_id": q.get("customer_id", ""),
                 "customer_name": q.get("customer_name", "Valued Patient"),
                 "mobile_no": q.get("phone_number"),
@@ -1618,8 +1538,8 @@ class EnterpriseServices:
                 "dos_days": q.get("estimated_days_of_supply"),
             })
 
-        engine = MedSyncEngine(sync_window_days=sync_window)
-        all_bundles = engine.cluster_patient_decisions(raw_records, sync_window_days=sync_window)
+        engine = MedSyncEngine(sync_window_days=sync_window, default_pharmacy_name=self.store.store_name)
+        all_bundles = engine.cluster_patient_decisions(raw_records, sync_window_days=sync_window, pharmacy_name=self.store.store_name)
 
         # Filter by tier / refill function
         raw_tier = tier.split(" ")[0].upper()
@@ -1632,10 +1552,16 @@ class EnterpriseServices:
         else:
             filtered_b = all_bundles
 
+        from refillcare.whatsapp.consent import load_opt_out_index
+
+        opt_outs = load_opt_out_index(self.db)
         candidate_records = []
         for b in filtered_b:
-            meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
             phone_val = str(b.mobile_no or "").strip()
+            if opt_outs.blocks(getattr(b, "customer_id", None), phone_val):
+                continue
+
+            meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
             mob_stat = determine_mobile_status(phone_val)
             tier_val = getattr(b, "lifecycle_tier", "DUE")
 
@@ -1699,7 +1625,7 @@ class EnterpriseServices:
     ) -> Dict[str, Any]:
         """Render high-contrast formatted WhatsApp template preview."""
         from refillcare.whatsapp.client import RefillWhatsAppClient
-        client = RefillWhatsAppClient()
+        client = RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
         return client.preview_message(
             customer_name=customer_name,
             medications=medications,
@@ -1720,7 +1646,17 @@ class EnterpriseServices:
     ) -> Dict[str, Any]:
         """Dispatch a single test WhatsApp reminder in dry-run or live mode."""
         from refillcare.whatsapp.client import RefillWhatsAppClient
-        client = RefillWhatsAppClient()
+        client = RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
+        from refillcare.whatsapp.consent import is_opted_out
+
+        if is_opted_out(self.db, phone=phone_number):
+            return {
+                "success": False,
+                "message": f"Cannot send: Customer phone {phone_number} has opted out of WhatsApp reminders.",
+                "status_code": 400,
+                "response_payload": {"skipped": True, "reason": "OPTED_OUT"},
+            }
+
         res = client.send_refill_reminder(
             phone_number=phone_number,
             customer_name=customer_name,
@@ -1737,6 +1673,76 @@ class EnterpriseServices:
             "response_payload": res,
         }
 
+    def set_customer_opt_in(self, customer_id: str, opt_in: bool) -> Dict[str, Any]:
+        """Manually toggle a patient's WhatsApp opt-in consent status."""
+        from refillcare.whatsapp.consent import set_opt_in
+
+        customer = set_opt_in(self.db, customer_id, opt_in)
+        return {
+            "customer_id": customer_id,
+            "opt_in_whatsapp": customer.opt_in_whatsapp,
+            "status": "OPTED_IN" if opt_in else "OPTED_OUT",
+            "message": f"Customer '{customer_id}' WhatsApp status set to {'OPTED_IN' if opt_in else 'OPTED_OUT'}."
+        }
+
+    def handle_inbound_whatsapp_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Process incoming WhatsApp webhook payload from Xinno or Meta cloud API.
+        Automatically sets opt_in_whatsapp = False on STOP/UNSUBSCRIBE keywords.
+        """
+        sender_phone = None
+        message_body = None
+
+        # Format A: Meta Cloud / Xinno standard webhook format
+        if "entry" in payload and isinstance(payload["entry"], list):
+            for entry in payload["entry"]:
+                for change in entry.get("changes", []):
+                    val = change.get("value", {})
+                    for msg in val.get("messages", []):
+                        sender_phone = msg.get("from")
+                        if "text" in msg and isinstance(msg["text"], dict):
+                            message_body = msg["text"].get("body")
+                        elif "body" in msg:
+                            message_body = msg.get("body")
+
+        # Format B: Direct CPaaS flat webhook format
+        if not sender_phone:
+            sender_phone = payload.get("from") or payload.get("phone") or payload.get("sender") or payload.get("mobile")
+        if not message_body:
+            message_body = payload.get("message") or payload.get("text") or payload.get("body")
+            if isinstance(message_body, dict):
+                message_body = message_body.get("text") or message_body.get("body")
+
+        if not sender_phone or not message_body:
+            return {
+                "status": "ignored",
+                "action": "none",
+                "message": "Webhook payload does not contain an identifiable sender phone and text message.",
+            }
+
+        from refillcare.whatsapp.consent import CONSENT_STOP, parse_consent_keyword, set_opt_in_by_phone
+
+        keyword = parse_consent_keyword(message_body)
+        if keyword is None:
+            return {
+                "status": "received",
+                "action": "message_logged",
+                "message": f"Inbound message received from {sender_phone}, no opt-out/opt-in keyword detected.",
+                "phone_number": str(sender_phone),
+            }
+
+        is_stop = keyword == CONSENT_STOP
+        matched_cids = set_opt_in_by_phone(self.db, str(sender_phone), opt_in=not is_stop)
+
+        action_name = "opted_out" if is_stop else "opted_in"
+        desc = "opted out of" if is_stop else "opted into"
+        return {
+            "status": "success",
+            "action": action_name,
+            "message": f"Phone {sender_phone} ({', '.join(matched_cids)}) successfully {desc} WhatsApp reminders.",
+            "customer_id": matched_cids[0] if matched_cids else None,
+            "phone_number": str(sender_phone),
+        }
+
 
 if __name__ == "__main__":
     from database.connection import SessionLocal
@@ -1745,5 +1751,6 @@ if __name__ == "__main__":
         print("[SUCCESS] EnterpriseServices initialized successfully.")
         kpis = service.get_operations_kpi()
         print("[INFO] Operations KPIs:", kpis)
-        reminders_today = service.get_daily_reminders(date(2026, 9, 24))
-        print(f"[INFO] Daily reminders on 2026-09-24: {len(reminders_today)} records.")
+        as_of = service.forecast_as_of()
+        reminders_today = service.get_daily_reminders(target_date=as_of)
+        print(f"[INFO] Daily reminders on {as_of}: {len(reminders_today)} records.")

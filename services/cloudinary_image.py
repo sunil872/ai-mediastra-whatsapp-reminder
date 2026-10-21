@@ -43,7 +43,7 @@ def get_cloudinary_config(reload_dotenv: bool = False) -> Dict[str, str]:
         Dict with keys: cloud_name, api_key, api_secret.
     """
     if reload_dotenv:
-        load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+        load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
     cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip()
     api_key = os.getenv("CLOUDINARY_API_KEY", "").strip()
     api_secret = os.getenv("CLOUDINARY_API_SECRET", "").strip()

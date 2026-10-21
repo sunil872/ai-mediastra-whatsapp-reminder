@@ -333,7 +333,8 @@ def test_fastapi_review_queue_and_actions(client, test_db):
     # 3. POST /api/reminders/{reminder_id}/dispatch (DRY-RUN)
     dispatch_res = client.post(f"/api/reminders/{rem_id}/dispatch", json={"is_dry_run": True})
     assert dispatch_res.status_code == 200
-    assert dispatch_res.json()["status"] == "SENT"
+    # A dry run is audit-only: the stage stays APPROVED so the real message can still be sent
+    assert dispatch_res.json()["status"] == "APPROVED"
     assert dispatch_res.json()["is_dry_run"] is True
 
     # 4. Verify Audit Log was recorded

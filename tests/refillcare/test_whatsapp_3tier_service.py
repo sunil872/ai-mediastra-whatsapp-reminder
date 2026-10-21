@@ -205,7 +205,7 @@ def test_dispatcher_batch_execution(in_memory_db):
 
     # Verify stage was updated in DB
     updated_stg = in_memory_db.query(ReminderStageModel).filter_by(reminder_id="REM_STAGE_001").first()
-    assert updated_stg.status == "DRY_RUN_SUCCESS"
+    assert updated_stg.status == "PENDING"  # dry runs never change reminder state
 
     # Verify delivery log was written
     logs = in_memory_db.query(WhatsAppDeliveryLogModel).all()

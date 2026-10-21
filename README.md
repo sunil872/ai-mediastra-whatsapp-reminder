@@ -116,14 +116,57 @@ python scripts/run_sales_pipeline.py --new-sales path/to/sales.xlsx
 
 ## 5. Key REST API Endpoints
 
-| Endpoint | Method | Purpose |
-| :--- | :---: | :--- |
-| `/api/v1/reminders/daily` | `GET` | Retrieve reminders by `target_date`, `target_month`, or `start_date` + `end_date` (rolling horizon). |
-| `/api/v1/medsync/bundles` | `GET` | Get patient-grouped Med-Sync bundles and messages-saved statistics. |
-| `/api/v1/dashboard/kpis` | `GET` | Live operations KPIs and monthly forecast distribution. |
-| `/api/v1/whatsapp/candidates` | `GET` | Clustered WhatsApp outreach candidates ready for dispatch. |
-| `/api/v1/sales/upload` | `POST` | Ingest new sales records with batch ID and online decision sync. |
-| `/api/v1/sales/rollback/{batch_id}` | `POST` | Safely roll back an uploaded batch and restore master CSV. |
+### Core Operations & Outreach
+| Endpoint | Method | Write Key? | Purpose |
+| :--- | :---: | :---: | :--- |
+| `/api/v1/reminders/daily` | `GET` | No | Retrieve scheduled reminders by `target_date`, `target_month`, or `start_date` + `end_date` (rolling horizon). |
+| `/api/v2/med-sync/bundles` | `GET` | No | Retrieve patient-grouped Med-Sync bundles and message-reduction metrics. |
+| `/api/v1/analytics/kpi` | `GET` | No | Live pharmacy operations KPIs, total monitored patients, and forecast metrics. |
+| `/api/v1/whatsapp/candidates` | `GET` | No | Clustered WhatsApp outreach candidates ready for review or dispatch. |
+| `/api/v1/whatsapp/preview` | `POST` | No | Render dynamic 6-variable WhatsApp reminder template preview. |
+| `/api/v1/whatsapp/dispatch` | `POST` | **Yes** | Dispatch scheduled WhatsApp outreach batch via Xinno gateway. |
+| `/api/v1/sales/preview` | `POST` | **Yes** | Diagnostic date pre-flight preview for newly uploaded sales file. |
+| `/api/v1/sales/ingest` | `POST` | **Yes** | Ingest validated sales records into storage with immutable batch ID. |
+| `/api/v1/sales/batches` | `GET` | No | List all historical sales upload batches with checksums and status. |
+| `/api/v1/sales/batches/{id}/rollback` | `POST` | **Yes** | Safely roll back an uploaded batch and restore previous master data. |
+| `/api/v1/medications/rules` | `GET` | No | List active medication classification rules from Supabase / cache. |
+| `/api/v1/medications/rules` | `POST` | **Yes** | Add or update a medication classification rule. |
+| `/api/v1/whatsapp/send-single` | `POST` | **Yes** | Send one test reminder (dry-run by default; refused for opted-out phones). |
+
+### Patient WhatsApp Consent
+| Endpoint | Method | Write Key? | Purpose |
+| :--- | :---: | :---: | :--- |
+| `/api/v1/whatsapp/webhook` | `POST` | No* | Inbound replies from the WhatsApp provider. Standalone `STOP` / `UNSUBSCRIBE` opts out; only an exact `START` opts back in. |
+| `/api/customers/opt-outs` | `GET` | No | Patients currently opted out. |
+| `/api/customers/{id}/opt-out` | `POST` | **Yes** | Pharmacist opts a patient out. |
+| `/api/customers/{id}/opt-in` | `POST` | **Yes** | Pharmacist re-enables reminders. |
+
+\* The webhook must be reachable by the provider, so it has no write key yet. Add a provider secret / signature check before exposing the server publicly.
+Every send path (batch, Med-Sync, single stage, test send) skips opted-out patients.
+
+### ML Lifecycle & Model Registry (`/api/v1/ml`)
+Train / validation / test windows are derived from the latest sale on every run, so they move
+automatically when a new month of sales is uploaded.
+
+| Endpoint | Method | Write Key? | Purpose |
+| :--- | :---: | :---: | :--- |
+| `/api/v1/ml/plan` | `GET` | No | Current train / validation / test windows and whether a retrain is due. |
+| `/api/v1/ml/models` | `GET` | No | Registered versions (production, shadow, candidates, retired). |
+| `/api/v1/ml/models/{id}/gate` | `GET` | No | Promotion-gate verdict for a version on its latest evaluation. |
+| `/api/v1/ml/evaluations` | `GET` / `POST` | POST: **Yes** | List evaluation runs / start an out-of-time backtest (background). |
+| `/api/v1/ml/evaluations/{run_id}` | `GET` | No | Full evaluation report. |
+| `/api/v1/ml/retrain` | `POST` | **Yes** | Train on the train window, select on validation, gate on test; `promote_best` promotes only if the gate approves. |
+| `/api/v1/ml/train` | `POST` | **Yes** | Train one candidate (cutoff defaults to the planned train window). |
+| `/api/v1/ml/models/{id}/promote` | `POST` | **Yes** | Promote a version - refused (409) unless the gate approves. |
+| `/api/v1/ml/models/{id}/status` | `POST` | **Yes** | Move a version to candidate / shadow / retired. |
+| `/api/v1/ml/outcomes/summary` | `GET` | No | Live outcomes of past reminders (on time / late / open). |
+| `/api/v1/ml/health` | `GET` | No | Serving model, prediction sources, fallback-rate alarm, data freshness. |
+
+CLI equivalents: `python scripts/ml_cli.py plan | retrain [--promote] | freshness | list | gate --version <id>`.
+
+### API Security & Write Protection
+- **Read Endpoints:** Publicly accessible across the local pharmacy network.
+- **Write Endpoints:** Protected by `require_api_key`. Pass header `X-API-Key: <your_key>` matching `REFILLCARE_API_KEY` from `.env`. When unset, write actions are restricted to `127.0.0.1` (local machine only).
 
 ---
 

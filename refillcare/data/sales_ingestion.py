@@ -11,6 +11,7 @@ Executes the standardized production lifecycle when receiving a new month's sale
 8. Prepare updated reminder schedules and export datasets.
 """
 
+import os
 import io
 import uuid
 import shutil
@@ -265,6 +266,66 @@ def format_display_phone_10digits(phone: Any) -> str:
     return s if s else "-"
 
 
+def _default_data_dir() -> Path:
+    try:
+        from config import PROJECT_ROOT
+        return Path(PROJECT_ROOT) / "data" / "refillcare"
+    except Exception:
+        return Path("data/refillcare")
+
+
+def _is_protected_live_dir(data_dir: Path) -> bool:
+    """Tests must never mutate the live default dataset (tests pass a temp data_dir instead)."""
+    if not os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("REFILLCARE_ALLOW_TEST_OVERWRITE"):
+        return False
+    try:
+        return Path(data_dir).resolve() == _default_data_dir().resolve()
+    except Exception:
+        return True
+
+
+def prune_old_backups(backup_dir: Path, keep: Optional[int] = None) -> int:
+    """Keep only the newest ``REFILLCARE_MAX_BACKUPS`` (default 5) master CSV pre-image backups."""
+    keep = keep if keep is not None else int(os.getenv("REFILLCARE_MAX_BACKUPS", "5"))
+    files = sorted(Path(backup_dir).glob("customer_data_fields_pre_*.csv"), key=lambda f: f.stat().st_mtime, reverse=True)
+    removed = 0
+    for f in files[keep:]:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def remove_records_from_master_csv(master_csv_path: Path, removed_df: pd.DataFrame) -> int:
+    """Remove exactly the rolled-back rows from the master CSV (later batches are preserved).
+
+    Matching key: customerId + itemId + invoice_date (DD-MM-YYYY) + invoice_number.
+    """
+    master_csv_path = Path(master_csv_path)
+    if removed_df is None or removed_df.empty or not master_csv_path.exists():
+        return 0
+
+    def _key_frame(df: pd.DataFrame) -> pd.Series:
+        d = pd.to_datetime(df["invoice_date"], errors="coerce", dayfirst=True).dt.strftime("%d-%m-%Y").fillna("")
+        inv = df["invoice_number"].astype(str).str.strip() if "invoice_number" in df.columns else ""
+        return (
+            df["customerId"].astype(str).str.strip().str.lower() + "|" + df["itemId"].astype(str).str.strip().str.lower()
+            + "|" + d + "|" + inv
+        )
+
+    master = pd.read_csv(master_csv_path, dtype=str, keep_default_na=False)
+    removed_keys = set(_key_frame(removed_df).tolist())
+    mask = _key_frame(master).isin(removed_keys)
+    n = int(mask.sum())
+    if n:
+        tmp = master_csv_path.with_suffix(".rollback.tmp")
+        master[~mask].to_csv(tmp, index=False)
+        os.replace(tmp, master_csv_path)
+    return n
+
+
 def append_sales_records_to_master_csv(
     records_df: pd.DataFrame,
     master_csv_path: Optional[Union[str, Path]] = None,
@@ -281,13 +342,13 @@ def append_sales_records_to_master_csv(
         return 0
 
     if master_csv_path is None:
-        try:
-            from config import PROJECT_ROOT
-            master_csv_path = PROJECT_ROOT / "data" / "refillcare" / "customer_data_fields.csv"
-        except Exception:
-            master_csv_path = Path("data/refillcare/customer_data_fields.csv")
+        master_csv_path = _default_data_dir() / "customer_data_fields.csv"
     else:
         master_csv_path = Path(master_csv_path)
+
+    if _is_protected_live_dir(master_csv_path.parent):
+        logger.debug("Pytest test mode detected: skipping live master CSV mutation.")
+        return len(records_df)
 
     if not master_csv_path.exists():
         logger.warning(f"Master CSV does not exist at {master_csv_path}, skipping append.")
@@ -302,6 +363,7 @@ def append_sales_records_to_master_csv(
         backup_path = backup_dir / f"customer_data_fields_pre_{ts}{suffix}.csv"
         shutil.copy(master_csv_path, backup_path)
         logger.info(f"Safety pre-image backup created at: {backup_path}")
+        prune_old_backups(backup_dir)
     except Exception as e:
         logger.warning(f"Could not create safety backup before master append: {e}")
 
@@ -356,6 +418,7 @@ def process_monthly_sales_data(
     existing_history_df: Optional[pd.DataFrame] = None,
     storage: Optional[RefillCareStorage] = None,
     source_filename: str = "uploaded_sales.xlsx",
+    data_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Process incoming monthly sales data with batch traceability without mutating unselected history.
 
@@ -507,31 +570,35 @@ def process_monthly_sales_data(
         try:
             append_sales_records_to_master_csv(
                 records_df=records_to_append,
+                master_csv_path=Path(data_dir or _default_data_dir()) / "customer_data_fields.csv",
                 batch_id=import_batch_id,
             )
         except Exception as e:
             logger.warning(f"Error appending records to master CSV: {e}")
 
-    try:
-        from config import PROJECT_ROOT
-        proc_dir = PROJECT_ROOT / "data" / "refillcare" / "processed"
-        proc_dir.mkdir(parents=True, exist_ok=True)
-        updated_history_df.to_parquet(proc_dir / "purchase_history.parquet", index=False)
+    data_dir_path = Path(data_dir or _default_data_dir())
+    if _is_protected_live_dir(data_dir_path):
+        logger.debug("Pytest test mode detected: skipping live parquet writes.")
+    else:
+        try:
+            proc_dir = data_dir_path / "processed"
+            proc_dir.mkdir(parents=True, exist_ok=True)
+            updated_history_df.to_parquet(proc_dir / "purchase_history.parquet", index=False)
 
-        clean_tx_path = proc_dir / "clean_transactions.parquet"
-        if clean_tx_path.exists() and new_records_added > 0:
-            from refillcare.data.transaction_classifier import classify_transactions_df
-            from refillcare.data.cleaning import clean_transactions
-            new_clean = clean_transactions(records_to_append)
-            new_clean = classify_transactions_df(new_clean, invoice_col="invoice_number")
-            existing_clean = pd.read_parquet(clean_tx_path)
-            combined_clean = pd.concat([existing_clean, new_clean], ignore_index=True)
-            subset_cols = [c for c in ["customerId", "itemId", "invoice_date", "invoice_number"] if c in combined_clean.columns]
-            if subset_cols:
-                combined_clean = combined_clean.drop_duplicates(subset=subset_cols, keep="first")
-            combined_clean.to_parquet(clean_tx_path, index=False)
-    except Exception as e:
-        logger.warning(f"Error updating processed parquets: {e}")
+            clean_tx_path = proc_dir / "clean_transactions.parquet"
+            if clean_tx_path.exists() and new_records_added > 0:
+                from refillcare.data.transaction_classifier import classify_transactions_df
+                from refillcare.data.cleaning import clean_transactions
+                new_clean = clean_transactions(records_to_append)
+                new_clean = classify_transactions_df(new_clean, invoice_col="invoice_number")
+                existing_clean = pd.read_parquet(clean_tx_path)
+                combined_clean = pd.concat([existing_clean, new_clean], ignore_index=True)
+                subset_cols = [c for c in ["customerId", "itemId", "invoice_date", "invoice_number"] if c in combined_clean.columns]
+                if subset_cols:
+                    combined_clean = combined_clean.drop_duplicates(subset=subset_cols, keep="first")
+                combined_clean.to_parquet(clean_tx_path, index=False)
+        except Exception as e:
+            logger.warning(f"Error updating processed parquets: {e}")
 
     # Determine latest available sales date in DD-MM-YYYY format
     if not updated_history_df.empty and "invoice_date" in updated_history_df.columns:
@@ -583,6 +650,7 @@ def rollback_monthly_sales_import(
     current_history_df: pd.DataFrame,
     import_batch_id: str,
     storage: Optional[RefillCareStorage] = None,
+    data_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Safely undo a sales data import by removing records associated with import_batch_id.
 
@@ -634,6 +702,7 @@ def rollback_monthly_sales_import(
         }
 
     # Retain strictly the unaffected transactions
+    removed_df = current_history_df[batch_mask].copy().reset_index(drop=True)
     remaining_df = current_history_df[~batch_mask].copy().reset_index(drop=True)
 
     # Reconstruct canonical purchase history from remaining transactions
@@ -642,22 +711,22 @@ def rollback_monthly_sales_import(
         restored_history_df = enrich_total_units_purchased(restored_history_df)
 
     # Save restored purchase history to disk
-    try:
-        from config import PROJECT_ROOT
-        proc_dir = PROJECT_ROOT / "data" / "refillcare" / "processed"
-        proc_dir.mkdir(parents=True, exist_ok=True)
-        restored_history_df.to_parquet(proc_dir / "purchase_history.parquet", index=False)
+    data_dir_path = Path(data_dir or _default_data_dir())
+    csv_rows_removed = 0
+    if _is_protected_live_dir(data_dir_path):
+        logger.debug("Pytest test mode detected: skipping live rollback parquet/CSV mutation.")
+    else:
+        try:
+            proc_dir = data_dir_path / "processed"
+            proc_dir.mkdir(parents=True, exist_ok=True)
+            restored_history_df.to_parquet(proc_dir / "purchase_history.parquet", index=False)
 
-        # Restore master customer_data_fields.csv from backup if available
-        backup_dir = PROJECT_ROOT / "data" / "refillcare" / "backups"
-        matches = list(backup_dir.glob(f"customer_data_fields_pre_*_{import_batch_id}.csv"))
-        if matches:
-            latest_bak = sorted(matches)[-1]
-            master_csv = PROJECT_ROOT / "data" / "refillcare" / "customer_data_fields.csv"
-            shutil.copy(latest_bak, master_csv)
-            logger.info(f"Restored master CSV from pre-image backup: {latest_bak}")
-    except Exception as e:
-        logger.warning(f"Error restoring artifacts during rollback: {e}")
+            # Remove exactly this batch's rows from the master CSV. (Restoring this batch's
+            # pre-image snapshot would also delete every later batch's rows.)
+            csv_rows_removed = remove_records_from_master_csv(data_dir_path / "customer_data_fields.csv", removed_df)
+            logger.info(f"Removed {csv_rows_removed} rows of batch {import_batch_id} from master CSV.")
+        except Exception as e:
+            logger.warning(f"Error restoring artifacts during rollback: {e}")
 
     # Determine restored latest sales date
     if not restored_history_df.empty and "invoice_date" in restored_history_df.columns:
@@ -676,6 +745,8 @@ def rollback_monthly_sales_import(
         "message": f"Successfully rolled back import batch '{import_batch_id}'. Removed {records_to_remove:,} records.",
         "import_batch_id": import_batch_id,
         "records_removed": records_to_remove,
+        "removed_records_df": removed_df,
+        "master_csv_rows_removed": csv_rows_removed,
         "restored_latest_sales_date": restored_latest_date_str,
         "restored_history_df": restored_history_df,
         "storage_rollback": storage_res,

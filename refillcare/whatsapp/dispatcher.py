@@ -18,9 +18,40 @@ from database.models import (
 )
 from refillcare.data.monthly_ingestion import determine_mobile_status, format_display_phone_10digits
 from refillcare.whatsapp.client import RefillWhatsAppClient
+from refillcare.whatsapp.consent import load_opt_out_index
 from refillcare.whatsapp.template_formatter import get_tier_for_stage_offset
 
 logger = logging.getLogger("refillcare_whatsapp_dispatcher")
+
+MAX_LIVE_ATTEMPTS = 3
+
+
+def live_requires_approval() -> bool:
+    """Live sends require pharmacist APPROVED stages unless explicitly disabled."""
+    import os
+
+    return os.getenv("REFILLCARE_LIVE_REQUIRES_APPROVAL", "true").strip().lower() in ("1", "true", "yes", "on")
+
+
+def already_delivered_live(db: Session, reminder_id: str) -> bool:
+    return (
+        db.query(WhatsAppDeliveryLogModel)
+        .filter(
+            WhatsAppDeliveryLogModel.reminder_id == reminder_id,
+            WhatsAppDeliveryLogModel.is_dry_run == False,  # noqa: E712
+            WhatsAppDeliveryLogModel.status == "SUCCESS",
+        )
+        .first()
+        is not None
+    )
+
+
+def live_attempts(db: Session, reminder_id: str) -> int:
+    return (
+        db.query(WhatsAppDeliveryLogModel)
+        .filter(WhatsAppDeliveryLogModel.reminder_id == reminder_id, WhatsAppDeliveryLogModel.is_dry_run == False)  # noqa: E712
+        .count()
+    )
 
 
 class RefillWhatsAppDispatcher:
@@ -57,15 +88,15 @@ class RefillWhatsAppDispatcher:
         status_code = res.get("status_code", 200 if dry_run else 500)
         msg_id = res.get("message_id")
 
-        # 1. Update Database Stage Model
-        if dry_run:
-            stage.status = "DRY_RUN_SUCCESS" if is_ok else "DRY_RUN_FAILED"
-        else:
+        # 1. Update Database Stage Model - only live sends change state; a dry run is audit-only
+        if not dry_run:
             stage.status = "SENT" if is_ok else "FAILED"
-            stage.sent_at = datetime.utcnow()
-            stage.provider_msg_id = msg_id
-            if not is_ok:
+            if is_ok:
+                stage.sent_at = datetime.utcnow()
+                stage.provider_msg_id = msg_id
+            else:
                 stage.failure_reason = res.get("message")
+            stage.updated_at = datetime.utcnow()
 
         # 2. Append to WhatsAppDeliveryLogModel
         log_entry = WhatsAppDeliveryLogModel(
@@ -75,9 +106,9 @@ class RefillWhatsAppDispatcher:
             template_name=self.client.template_name,
             xinno_message_id=msg_id,
             is_dry_run=dry_run,
-            status="DRY_RUN_SUCCESS" if dry_run else ("SUCCESS" if is_ok else "FAILED"),
+            status=("DRY_RUN_SUCCESS" if is_ok else "DRY_RUN_FAILED") if dry_run else ("SUCCESS" if is_ok else "FAILED"),
             http_status_code=status_code,
-            response_payload=str(res.get("response", {})),
+            response_payload=str(res.get("response", {}))[:4000],
             error_detail=res.get("message") if not is_ok else None,
             dispatched_at=datetime.utcnow(),
         )
@@ -108,11 +139,17 @@ class RefillWhatsAppDispatcher:
             rate_limit_delay_sec: Throttle delay between live requests.
         """
         # Query active scheduled stages
+        if dry_run:
+            allowed_status = ["PENDING", "DUE", "APPROVED"]
+        elif live_requires_approval():
+            allowed_status = ["APPROVED", "FAILED"]
+        else:
+            allowed_status = ["PENDING", "DUE", "APPROVED", "FAILED"]
         query = db.query(ReminderStageModel).join(
             ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id
         ).filter(
             ReminderCycleModel.is_active == True,
-            ReminderStageModel.status.in_(["PENDING", "SCHEDULED", "DRY_RUN_SUCCESS", "FAILED"]),
+            ReminderStageModel.status.in_(allowed_status),
         )
 
         if target_date:
@@ -140,10 +177,27 @@ class RefillWhatsAppDispatcher:
 
         all_stages = query.all()
 
-        # Filter only valid mobile numbers
+        opt_outs = load_opt_out_index(db)
+
+        # Filter only valid mobile numbers and opted-in customers
         valid_candidates = []
+        skipped_already_sent = 0
+        skipped_opted_out = 0
         for stg in all_stages:
             dec = getattr(stg.cycle, "decision", None)
+            if dec is None or not dec.is_eligible:
+                continue
+
+            if opt_outs.blocks(dec.customer_id, dec.mobile_no):
+                skipped_opted_out += 1
+                continue
+
+            if not dry_run:
+                if already_delivered_live(db, stg.reminder_id):
+                    skipped_already_sent += 1
+                    continue
+                if stg.status == "FAILED" and live_attempts(db, stg.reminder_id) >= MAX_LIVE_ATTEMPTS:
+                    continue
             phone = dec.mobile_no if dec and dec.mobile_no else ""
             cust_name = dec.customer_name if dec and dec.customer_name else "Valued Customer"
             med_name = dec.item_name if dec and dec.item_name else "Prescription Medication"
@@ -201,6 +255,8 @@ class RefillWhatsAppDispatcher:
             "success_count": success_count,
             "failed_count": failed_count,
             "is_dry_run": dry_run,
+            "skipped_already_sent": skipped_already_sent,
+            "requires_approval": (not dry_run) and live_requires_approval(),
             "tier_filter": tier_filter,
             "delivery_logs": logs,
             "delivery_summary": logs,
@@ -212,7 +268,22 @@ class RefillWhatsAppDispatcher:
         bundle: Any,
         dry_run: bool = True,
     ) -> Dict[str, Any]:
-        """Dispatch a synchronized multi-medication WhatsApp reminder."""
+        """Dispatch a synchronized multi-medication WhatsApp reminder.
+
+        Live sends are idempotent per bundle_id and per covered reminder stage, require the
+        covered stages to be APPROVED (unless disabled) and mark them SENT on success.
+        """
+        stage_ids = list(getattr(bundle, "stage_reminder_ids", []) or [])
+        if not dry_run:
+            if not stage_ids:
+                return {"success": False, "status_code": None, "message": "Live bundle send refused: bundle carries no reminder stage ids."}
+            if already_delivered_live(db, bundle.bundle_id) or any(already_delivered_live(db, sid) for sid in stage_ids):
+                return {"success": False, "status_code": None, "message": "Skipped: already delivered live (idempotency guard).", "skipped": True}
+            stages = db.query(ReminderStageModel).filter(ReminderStageModel.reminder_id.in_(stage_ids)).all()
+            allowed = {"APPROVED"} if live_requires_approval() else {"PENDING", "DUE", "APPROVED"}
+            not_ready = [st.reminder_id for st in stages if st.status not in allowed]
+            if not stages or not_ready:
+                return {"success": False, "status_code": None, "message": f"Live bundle send refused: stages not approved ({len(not_ready)}).", "skipped": True}
         phone = bundle.mobile_no or ""
         cust_name = bundle.customer_name or "Valued Customer"
         med_names = [item.item_name for item in bundle.synced_items] if bundle.synced_items else [bundle.anchor_item_name]
@@ -242,13 +313,23 @@ class RefillWhatsAppDispatcher:
             template_name=self.client.template_name,
             xinno_message_id=msg_id,
             is_dry_run=dry_run,
-            status="DRY_RUN_SUCCESS" if dry_run else ("SUCCESS" if is_ok else "FAILED"),
+            status=("DRY_RUN_SUCCESS" if is_ok else "DRY_RUN_FAILED") if dry_run else ("SUCCESS" if is_ok else "FAILED"),
             http_status_code=status_code,
-            response_payload=str(res.get("response", {})),
+            response_payload=str(res.get("response", {}))[:4000],
             error_detail=res.get("message") if not is_ok else None,
             dispatched_at=datetime.utcnow(),
         )
         db.add(log_entry)
+        if not dry_run and stage_ids:
+            now = datetime.utcnow()
+            for st in db.query(ReminderStageModel).filter(ReminderStageModel.reminder_id.in_(stage_ids)).all():
+                st.status = "SENT" if is_ok else "FAILED"
+                st.updated_at = now
+                if is_ok:
+                    st.sent_at = now
+                    st.provider_msg_id = msg_id
+                else:
+                    st.failure_reason = res.get("message")
         db.commit()
 
         return res
@@ -262,16 +343,28 @@ class RefillWhatsAppDispatcher:
         rate_limit_delay_sec: float = 0.05,
     ) -> Dict[str, Any]:
         """Dispatch a batch of Med-Sync synchronized bundles."""
-        valid_bundles = [b for b in bundles if determine_mobile_status(b.mobile_no or "") == "Valid"]
+        opt_outs = load_opt_out_index(db)
+        valid_bundles = []
+        for b in bundles:
+            if determine_mobile_status(b.mobile_no or "") != "Valid":
+                continue
+            if opt_outs.blocks(getattr(b, "customer_id", None), b.mobile_no):
+                continue
+            valid_bundles.append(b)
+
         batch_slice = valid_bundles[:batch_limit]
 
         logs: List[Dict[str, Any]] = []
         success_count = 0
         failed_count = 0
 
+        skipped = 0
         for b in batch_slice:
             res = self.dispatch_medsync_bundle_record(db=db, bundle=b, dry_run=dry_run)
             is_ok = res.get("success", False)
+            if res.get("skipped"):
+                skipped += 1
+                continue
             if is_ok:
                 success_count += 1
             else:
@@ -302,6 +395,7 @@ class RefillWhatsAppDispatcher:
             "success_count": success_count,
             "failed_count": failed_count,
             "is_dry_run": dry_run,
+            "skipped_not_approved_or_already_sent": skipped,
             "delivery_logs": logs,
             "delivery_summary": logs,
         }

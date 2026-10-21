@@ -412,6 +412,11 @@ def get_catalog_item_salt(item_name: str) -> Optional[Dict[str, str]]:
 _SUPABASE_CLIENT = None
 _CACHED_RULES_TIMESTAMP: float = 0.0
 _CACHE_TTL_SECONDS: float = 300.0  # 5 minutes in-memory TTL
+# Negative cache: after a failed / empty Supabase fetch, do not retry on every classification
+# call (an outage previously cost ~2 s per item). Retry at most once per interval.
+_FAILURE_RETRY_SECONDS: float = float(os.getenv("SUPABASE_RULES_RETRY_SECONDS", "60"))
+_LAST_FETCH_ATTEMPT: float = 0.0
+_RULES_SOURCE: str = "builtin"  # builtin | supabase
 
 _DYNAMIC_EXCLUSIONS: Set[str] = set()
 _DYNAMIC_CHRONIC: Set[str] = set()
@@ -436,12 +441,41 @@ def get_supabase_client():
     return None
 
 
+def _reset_fetch_throttle() -> None:
+    global _LAST_FETCH_ATTEMPT
+    _LAST_FETCH_ATTEMPT = 0.0
+
+
+def clear_classification_caches() -> None:
+    """Drop memoised classification results (call whenever the rule set changes)."""
+    for fn_name in ("is_chronic_medication", "classify_medication_cached"):
+        fn = globals().get(fn_name)
+        if fn is not None and hasattr(fn, "cache_clear"):
+            fn.cache_clear()
+
+
+def get_rules_status() -> Dict[str, Any]:
+    """Diagnostics for /health: where classification rules currently come from."""
+    return {
+        "source": _RULES_SOURCE,
+        "dynamic_exclusions": len(_DYNAMIC_EXCLUSIONS),
+        "dynamic_chronic": len(_DYNAMIC_CHRONIC),
+        "last_success_epoch": _CACHED_RULES_TIMESTAMP or None,
+        "last_attempt_epoch": _LAST_FETCH_ATTEMPT or None,
+    }
+
+
 def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
     """Fetch active dynamic classification rules from Supabase with full pagination and local fallback."""
     global _CACHED_RULES_TIMESTAMP, _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC, _DYNAMIC_EXCLUSION_REGEX, _DYNAMIC_CHRONIC_REGEX
+    global _LAST_FETCH_ATTEMPT, _RULES_SOURCE
     now = time.time()
     if (now - _CACHED_RULES_TIMESTAMP) < _CACHE_TTL_SECONDS and (_DYNAMIC_EXCLUSIONS or _DYNAMIC_CHRONIC):
         return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
+    if _LAST_FETCH_ATTEMPT > 0 and (now - _LAST_FETCH_ATTEMPT) < _FAILURE_RETRY_SECONDS:
+        # A fetch was attempted recently (failed, empty, or just refreshed): serve last known rules.
+        return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
+    _LAST_FETCH_ATTEMPT = now
 
     client = get_supabase_client()
     if client:
@@ -483,6 +517,9 @@ def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
                         return re.compile(r"(?:\b|_)" + esc + r"(?:MG|ML|MCG|GM|G|IU)?(?:\b|_)", re.IGNORECASE)
                     return re.compile(r"(?:\b|_)" + esc + r"(?:\b|_)", re.IGNORECASE)
 
+                if excl_set != _DYNAMIC_EXCLUSIONS or chr_set != _DYNAMIC_CHRONIC:
+                    clear_classification_caches()
+                _RULES_SOURCE = "supabase"
                 _DYNAMIC_EXCLUSIONS = excl_set
                 _DYNAMIC_CHRONIC = chr_set
                 _DYNAMIC_EXCLUSION_REGEX = [_compile_rule_regex(k) for k in excl_set]
@@ -525,7 +562,8 @@ def add_classification_rule(
             on_conflict="medication_name_or_keyword,rule_type"
         ).execute()
         _CACHED_RULES_TIMESTAMP = 0.0  # Invalidate cache for immediate sync
-        is_chronic_medication.cache_clear()
+        _reset_fetch_throttle()
+        clear_classification_caches()
         get_dynamic_classification_rules()
         return {"status": "success", "message": f"Rule for '{clean_kw}' saved as {clean_type}.", "data": res.data}
     except Exception as e:
@@ -580,6 +618,8 @@ def delete_classification_rule(rule_id: str) -> Dict[str, Any]:
     try:
         res = client.table("medication_classification_rules").delete().eq("id", rule_id).execute()
         _CACHED_RULES_TIMESTAMP = 0.0
+        _reset_fetch_throttle()
+        clear_classification_caches()
         get_dynamic_classification_rules()
         return {"status": "success", "message": "Rule deleted successfully."}
     except Exception as e:
@@ -744,6 +784,18 @@ def classify_medication(
                     "exclusion_reason": f"Non-chronic item ({clean_cat}).",
                 }
 
+    # 6b. Insulin (pens, cartridges, refills, vials) is chronic maintenance therapy regardless of
+    # brand - detected by active salt or device + insulin brand markers, not only by Supabase rules.
+    from refillcare.data.packing import is_insulin_product
+
+    if is_insulin_device or is_insulin_product(raw_name, raw_pack, raw_salt):
+        return {
+            "is_chronic_eligible": True,
+            "category": "CHRONIC_MEDICATION",
+            "matched_rule": "CHRONIC_INSULIN_THERAPY",
+            "exclusion_reason": None,
+        }
+
     # 7. Check Dynamic Supabase Chronic Markers
     for p in _DYNAMIC_CHRONIC_REGEX:
         if p.search(raw_name) or (raw_salt and p.search(raw_salt)):
@@ -860,7 +912,7 @@ def verify_medication_chronic_status(
     Tier 2: Personal Patient Repurchase Cadence (>= 3 recurring purchases)
     Tier 3: Cross-Customer Population Consensus (Repeat purchase rate >= 35%)
     """
-    rule_res = classify_medication(item_name, packing=packing, salt_name=salt_name)
+    rule_res = classify_medication_cached(item_name, packing, salt_name)
     
     # Strict Clinical Gate: If explicitly excluded by rules (formulation gate, acute molecules, Supabase exclusion) -> Always False
     if not rule_res["is_chronic_eligible"]:
@@ -886,6 +938,17 @@ def verify_medication_chronic_status(
         }
 
     return rule_res
+
+
+@lru_cache(maxsize=65536)
+def classify_medication_cached(
+    item_name: str,
+    packing: Optional[str] = None,
+    salt_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Memoised ``classify_medication`` (returns a shared dict - do not mutate)."""
+    get_dynamic_classification_rules()  # keeps the rule TTL / change-detection ticking
+    return classify_medication(item_name, packing=packing, salt_name=salt_name)
 
 
 @lru_cache(maxsize=32768)

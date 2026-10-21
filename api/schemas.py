@@ -53,6 +53,9 @@ class SalesIngestionResponse(BaseModel):
     latest_sales_date: str
     date_range: str
     records_requiring_review: int
+    online_sync: Dict[str, Any] = Field(default_factory=dict)
+    ml_data_freshness: Optional[Dict[str, Any]] = None
+    ml_retrain_queued: bool = False
     message: str
 
 
@@ -163,14 +166,17 @@ class ModelVersionItem(BaseModel):
     model_name: str
     model_type: str
     artifact_path: str
-    dataset_cutoff_date: date
-    training_sample_count: int
-    hyperparameters: Optional[Dict[str, Any]]
-    metrics_train: Optional[Dict[str, Any]]
-    metrics_val: Optional[Dict[str, Any]]
+    dataset_cutoff_date: Optional[date] = None
+    training_sample_count: int = 0
+    hyperparameters: Optional[Dict[str, Any]] = None
+    metrics_train: Optional[Dict[str, Any]] = Field(None, description="In-sample training fit (not a performance claim)")
+    metrics_val: Optional[Dict[str, Any]] = Field(None, description="Latest measured out-of-time evaluation summary")
     is_active_production: bool
     created_at: datetime
-    notes: Optional[str]
+    notes: Optional[str] = None
+    status: Optional[str] = None
+    is_validated: bool = False
+    latest_evaluation_run_id: Optional[str] = None
 
 
 class TrainModelRequest(BaseModel):
@@ -183,17 +189,23 @@ class TrainModelRequest(BaseModel):
 # WhatsApp Schemas
 # ------------------------------------------------------------------------------
 class WhatsAppBatchDispatchRequest(BaseModel):
-    reminder_date: date
+    reminder_date: Optional[date] = None
+    target_month: Optional[str] = Field(None, description="YYYY-MM (alternative to reminder_date)")
+    tier_filter: Optional[str] = Field("ALL", description="ALL, DUE, FOLLOWUP, LAPSED")
     dry_run: bool = True
-    batch_size: int = 50
+    batch_size: int = Field(50, ge=1, le=500)
 
 
 class WhatsAppDispatchResponse(BaseModel):
     total_eligible: int
+    total_candidates: Optional[int] = None
+    valid_candidates: Optional[int] = None
     dispatched_count: int
     success_count: int
     failed_count: int
     is_dry_run: bool
+    skipped_already_sent: Optional[int] = None
+    requires_approval: Optional[bool] = None
     delivery_summary: List[Dict[str, Any]]
 
 
@@ -210,16 +222,19 @@ class OperationsKPISummary(BaseModel):
     customers_requiring_review: int
     active_model_version: str
     active_batch_id: Optional[str]
-    human_consensus_active: Optional[bool] = True
-    consensus_model_version: Optional[str] = "v1.2.0-human-consensus"
-    consensus_7d_accuracy_pct: Optional[float] = 60.1
+    model_is_validated: bool = False
+    measured_backtest_within_7_days_pct: Optional[float] = Field(None, description="From the latest evaluation run of the production model; null if never evaluated")
+    measured_backtest_mae_days: Optional[float] = None
+    measured_backtest_run_id: Optional[str] = None
+    live_within_7_days_pct: Optional[float] = Field(None, description="Realised accuracy of past predictions (refill_decision_outcomes)")
+    live_resolved_predictions: Optional[int] = None
     channel_summary: Optional[Dict[str, Any]] = None
-    target_prediction_month: Optional[str] = "2026-10"
-    target_month_reminders_count: Optional[int] = 15552
+    target_prediction_month: Optional[str] = None
+    target_month_reminders_count: Optional[int] = None
     monthly_stage_distribution: Optional[Dict[str, int]] = None
-    adherence_rate_pct: Optional[float] = 80.0
-    chronic_medicines_count: Optional[int] = 150
-    out_of_stock_or_critical: Optional[int] = 592
+    adherence_rate_pct: Optional[float] = Field(None, description="Measured refill rate (resolved / (resolved + no refill)); null until outcomes exist")
+    chronic_medicines_count: Optional[int] = None
+    out_of_stock_or_critical: Optional[int] = None
 
 
 class DosageRegimenItem(BaseModel):
@@ -244,8 +259,8 @@ class BenchmarkComparisonItem(BaseModel):
 
 
 class ConsensusRegimenAnalyticsSummary(BaseModel):
-    engine_version: str = "v1.2.0-human-consensus"
-    total_transitions_trained: int = 316321
+    engine_version: str
+    total_transitions_trained: int = 0
     regimens: List[DosageRegimenItem]
     archetypes: List[ArchetypeItem]
     benchmarks: List[BenchmarkComparisonItem]
@@ -276,6 +291,9 @@ class RefillDecisionItem(BaseModel):
     created_at: datetime
     archetype: Optional[str] = "Consensus"
     dosage_regimen: Optional[str] = "1.0/d (OD)"
+    model_version: Optional[str] = None
+    prediction_source: Optional[str] = None
+    raw_ml_prediction_days: Optional[float] = None
 
 
 class ReminderQueueItem(BaseModel):
@@ -524,3 +542,19 @@ class WhatsAppSingleSendResponse(BaseModel):
     message: str
     status_code: int
     response_payload: Optional[Dict[str, Any]] = None
+
+
+class CustomerOptInOutResponse(BaseModel):
+    customer_id: str
+    opt_in_whatsapp: bool
+    status: str
+    message: str
+
+
+class WhatsAppWebhookResponse(BaseModel):
+    status: str
+    action: str
+    message: str
+    customer_id: Optional[str] = None
+    phone_number: Optional[str] = None
+

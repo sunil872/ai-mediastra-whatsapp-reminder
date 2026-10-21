@@ -16,7 +16,6 @@ import pandas as pd
 from refillcare.data.cleaning import aggregate_invoice_items, clean_transactions
 from refillcare.data.history import create_purchase_history
 from refillcare.data.packing import enrich_total_units_purchased
-from refillcare.features.engineering import build_feature_dataset
 from refillcare.models.prediction import generate_batch_predictions
 
 
@@ -139,6 +138,7 @@ def run_historical_holdout_validation(
         history_df = enrich_total_units_purchased(history_df)
 
     # 6. Build Feature Dataset strictly from pre-cutoff purchase history
+    from refillcare.features.engineering import build_feature_dataset
     feature_df = build_feature_dataset(history_df)
 
     # 7. Isolate the latest purchase event per customer + medicine as of cutoff

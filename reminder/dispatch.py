@@ -43,7 +43,7 @@ logger = logging.getLogger("refillcare.dispatch")
 # Ensure .env is loaded
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DOTENV_PATH = _PROJECT_ROOT / ".env"
-load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
 
 # Approved RefillCare WhatsApp Template Name
 REFILLCARE_TEMPLATE_NAME = WHATSAPP_TEMPLATE_NAME

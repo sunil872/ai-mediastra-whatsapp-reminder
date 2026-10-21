@@ -26,7 +26,7 @@ logger = logging.getLogger("refillcare_whatsapp")
 # Explicitly load .env from project root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DOTENV_PATH = _PROJECT_ROOT / ".env"
-load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
 
 DEFAULT_API_URL = "https://whatsapp.xinno.in/REST/directApi/message"
 DEFAULT_TEMPLATE_NAME = "refillcare_medicine_reminder"
@@ -43,12 +43,17 @@ def normalize_e164_whatsapp_phone(phone_number: str, country_code: str = "91") -
         raise ValueError(f"Invalid phone number containing no digits: '{phone_number}'")
 
     if len(cleaned) == 10:
-        return f"{country_code}{cleaned}"
+        normalized = f"{country_code}{cleaned}"
     elif len(cleaned) == 11 and cleaned.startswith("0"):
-        return f"{country_code}{cleaned[1:]}"
-    elif len(cleaned) == 12 and cleaned.startswith(country_code):
-        return cleaned
-    return cleaned
+        normalized = f"{country_code}{cleaned[1:]}"
+    elif len(cleaned) == len(country_code) + 10 and cleaned.startswith(country_code):
+        normalized = cleaned
+    else:
+        raise ValueError(f"Invalid mobile number length ({len(cleaned)} digits): '{phone_number}'")
+    # Indian mobile numbers start with 6-9 after the country code
+    if country_code == "91" and normalized[2] not in "6789":
+        raise ValueError(f"Not a valid Indian mobile number: '{phone_number}'")
+    return normalized
 
 
 def mask_phone_for_log(phone: str) -> str:
@@ -112,7 +117,7 @@ class RefillWhatsAppClient:
         store_contact: Optional[str] = None,
         param_count: int = 6,
     ):
-        load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+        load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
         self.api_url = (api_url or os.getenv("XINNO_API_URL", DEFAULT_API_URL)).strip() or DEFAULT_API_URL
         self.api_key = (api_key or os.getenv("XINNO_API_KEY", "")).strip()
         self.waba_number = (waba_number or os.getenv("XINNO_WABA_NUMBER", "")).strip()

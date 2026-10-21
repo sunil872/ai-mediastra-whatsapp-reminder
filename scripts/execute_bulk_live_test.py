@@ -31,7 +31,7 @@ if str(proj_root) not in sys.path:
     sys.path.insert(0, str(proj_root))
 
 from dotenv import load_dotenv
-load_dotenv(dotenv_path=proj_root / ".env", override=True)
+load_dotenv(dotenv_path=proj_root / ".env", override=False)  # deployment env vars win over .env
 
 import pandas as pd
 

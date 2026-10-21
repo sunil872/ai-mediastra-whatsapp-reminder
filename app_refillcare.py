@@ -78,7 +78,6 @@ def find_artifact_path(relative_path: str) -> Path:
         Path.cwd() / relative_path,
         Path("..") / relative_path,
         Path("../..") / relative_path,
-        Path(r"C:\Users\sunil\ai-mediastra-whatsapp-reminder\ai-mediastra-whatsapp-reminder") / relative_path,
     ]
     for c in candidates:
         if c.exists():
@@ -168,7 +167,7 @@ def _count_lines_in_csv_file(file_path: str, mtime: float, size: int) -> int:
                 return max(0, cnt - 1)
     except Exception:
         pass
-    return 909651
+    return 0
 
 
 def get_master_raw_transaction_count(_active_data_override: Optional[int] = None) -> int:
@@ -184,16 +183,13 @@ def get_master_raw_transaction_count(_active_data_override: Optional[int] = None
             return _count_lines_in_csv_file(str(csv_file), stat.st_mtime, stat.st_size)
         except Exception:
             pass
-    return 909651
+    return 0  # no master file yet - never show a stale hard-coded count
 
 
 @st.cache_data(show_spinner=False)
 def _read_clean_channel_metrics_cached(file_path: str, mtime: float, size: int) -> Dict[str, int]:
     """Dynamically parse channel distribution from clean_transactions.parquet, cached by file stat."""
-    tot_clean = 892429
-    cust_sales = 889901
-    b2b_sales = 2528
-    refill_el = 889901
+    tot_clean = cust_sales = b2b_sales = refill_el = 0
     try:
         df_c_tx = pd.read_parquet(file_path, columns=["transaction_type", "refillcare_eligible"])
         chan_col = "transaction_type" if "transaction_type" in df_c_tx.columns else None
@@ -230,12 +226,7 @@ def get_clean_transaction_channel_metrics() -> Dict[str, int]:
             return _read_clean_channel_metrics_cached(str(clean_tx_file), stat.st_mtime, stat.st_size)
         except Exception:
             pass
-    return {
-        "tot_clean": 892429,
-        "cust_sales": 889901,
-        "b2b_sales": 2528,
-        "refill_el": 889901,
-    }
+    return {"tot_clean": 0, "cust_sales": 0, "b2b_sales": 0, "refill_el": 0}
 
 
 def determine_mobile_status(phone: Any) -> str:
@@ -1323,6 +1314,33 @@ def load_v1_reminder_queue_df(
 
 
 @st.cache_data(ttl=5, show_spinner=False)
+def get_forecast_anchor_month() -> str:
+    """Active forecast month = month of (latest purchase in the decision store + 1 day)."""
+    try:
+        from database.connection import SessionLocal
+        from database.models import RefillDecisionModel
+        from sqlalchemy import func
+
+        with SessionLocal() as db:
+            latest = db.query(func.max(RefillDecisionModel.last_purchase_date)).scalar()
+        if latest:
+            return (latest + timedelta(days=1)).strftime("%Y-%m")
+    except Exception:
+        pass
+    return date.today().strftime("%Y-%m")
+
+
+def shift_month(month_key: str, delta: int) -> str:
+    y, m = map(int, month_key.split("-"))
+    idx = y * 12 + (m - 1) + delta
+    return f"{idx // 12:04d}-{idx % 12 + 1:02d}"
+
+
+def month_label(month_key: str) -> str:
+    y, m = map(int, month_key.split("-"))
+    return f"{date(y, m, 1).strftime('%B %Y')} ({month_key})"
+
+
 def get_enterprise_dashboard_kpis(history_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
     """Retrieve live operations KPIs and monthly forecast distribution dynamically from enterprise.db."""
     cust_count = 0
@@ -1330,11 +1348,11 @@ def get_enterprise_dashboard_kpis(history_df: Optional[pd.DataFrame] = None) -> 
         cust_count = int(pd.Series(history_df["customerId"]).nunique())
 
     kpis = {
-        "customers_monitored": cust_count or 14096,
+        "customers_monitored": cust_count,
         "upcoming_reminders": 0,
         "reminders_due_today": 0,
         "customers_needing_review": 0,
-        "target_month": "2026-10",
+        "target_month": get_forecast_anchor_month(),
         "target_month_reminders": 0,
         "monthly_stage_distribution": {},
     }
@@ -1363,10 +1381,9 @@ def get_enterprise_dashboard_kpis(history_df: Optional[pd.DataFrame] = None) -> 
             dist = {r[0]: int(r[1]) for r in stage_rows if r[0]}
             kpis["monthly_stage_distribution"] = dist
 
-            if "2026-10" in dist:
-                kpis["target_month"] = "2026-10"
-            elif dist:
-                kpis["target_month"] = list(dist.keys())[-1]
+            if kpis["target_month"] not in dist and dist:
+                future = [k for k in dist if k >= kpis["target_month"]]
+                kpis["target_month"] = future[0] if future else list(dist.keys())[-1]
 
             target_m = kpis["target_month"]
             target_stage_cnt = dist.get(target_m, 0)
@@ -1454,7 +1471,7 @@ def load_v1_customers_needing_review_df(target_month: Optional[str] = None) -> p
                     prev_y, prev_m = (y - 1, 12) if m == 1 else (y, m - 1)
                     prev_str = f"{prev_y:04d}-{prev_m:02d}"
                 except Exception:
-                    prev_str = "2026-09"
+                    prev_str = shift_month(get_forecast_anchor_month(), -1)
                 q2 = q2.filter(RefillDecisionModel.last_purchase_date.like(f"{prev_str}%"))
             r_cold = q2.limit(2000).all()
 
@@ -1754,7 +1771,7 @@ def render_app():
         due_today_count = 0
 
     # Calculate Sales Data Available Coverage and Latest Sales Date
-    sales_coverage_str = "Dec 2020 – Aug 2026"
+    sales_coverage_str = "N/A"
     latest_sales_date_str = "N/A"
     eval_data_for_dates = history_data if (history_data is not None and not history_data.empty) else recent_data
     if eval_data_for_dates is not None and not eval_data_for_dates.empty and "invoice_date" in eval_data_for_dates.columns:
@@ -1781,7 +1798,7 @@ def render_app():
             st.rerun()
 
     # Main Client Tabs
-    tab_dash, tab_upload, tab_results, tab_reminders, tab_medsync, tab_review, tab_whatsapp = st.tabs([
+    tab_dash, tab_upload, tab_results, tab_reminders, tab_medsync, tab_review, tab_whatsapp, tab_ml = st.tabs([
         "📊 Operations Dashboard",
         "📁 Data Update",
         "🎯 Prediction Results",
@@ -1789,6 +1806,7 @@ def render_app():
         "📦 Med-Sync Bundles",
         "⚠️ Customers Needing Review",
         "💬 WhatsApp",
+        "🧠 ML Models",
     ])
 
     # --------------------------------------------------------------------------
@@ -1812,7 +1830,7 @@ def render_app():
 
         # Monthly Forecast Pipeline - Dynamically computed from active eligible chronic stages
         dist = dash_kpis.get("monthly_stage_distribution", {})
-        target_m_str = dash_kpis.get("target_month", "2026-10")
+        target_m_str = dash_kpis.get("target_month") or get_forecast_anchor_month()
         try:
             t_y, t_m = map(int, target_m_str.split("-"))
             target_label = f"{date(t_y, t_m, 1).strftime('%B %Y')} ({target_m_str})"
@@ -1820,9 +1838,10 @@ def render_app():
             next_m_str = f"{n_y:04d}-{n_m:02d}"
             next_label = f"{date(n_y, n_m, 1).strftime('%B %Y')} ({next_m_str})"
         except Exception:
-            target_label = "October 2026 (2026-10)"
-            next_m_str = "2026-11"
-            next_label = "November 2026 (2026-11)"
+            target_m_str = get_forecast_anchor_month()
+            target_label = month_label(target_m_str)
+            next_m_str = shift_month(target_m_str, 1)
+            next_label = month_label(next_m_str)
 
         target_stage_cnt = dist.get(target_m_str, dash_kpis.get("upcoming_reminders", 0))
         next_stage_cnt = dist.get(next_m_str, 0)
@@ -2141,36 +2160,28 @@ def render_app():
                         st.session_state["sales_processed_file"] = uploaded_file.name
                         st.session_state["last_import_batch_id"] = process_result.get("import_batch_id")
 
-                        # Dynamic Continuous-Observation Decision Evaluation & Cycle Sync
+                        # Same post-ingest path as the FastAPI /sales/ingest endpoint: mirror the batch,
+                        # re-score touched customer-items with the registry's serving model, sync
+                        # cycles, expire stages, refresh outcomes, re-plan the ML windows.
                         with st.spinner("Synchronizing refill cycles and superseding repurchases in database..."):
                             try:
-                                from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
-                                from refillcare.engine.persistence import RefillPersistenceManager
+                                import hashlib
                                 from database.connection import SessionLocal
-
-                                p_metrics = process_result["metrics"]
-                                latest_d_val = p_metrics.get("latest_sales_date")
-                                if isinstance(latest_d_val, str):
-                                    try:
-                                        max_d = datetime.strptime(latest_d_val, "%d-%m-%Y").date()
-                                    except Exception:
-                                        max_d = date.today()
-                                elif isinstance(latest_d_val, (date, datetime)):
-                                    max_d = latest_d_val if isinstance(latest_d_val, date) else latest_d_val.date()
-                                else:
-                                    max_d = date.today()
-
-                                eval_as_of = max_d + timedelta(days=1)
-                                engine = UnifiedRefillDecisionEngine()
-                                _, decisions_list = engine.evaluate_all_customer_items(
-                                    process_result["updated_history_df"], as_of_date=eval_as_of
+                                from refillcare.engine.post_ingest import (
+                                    ml_freshness_after_ingest,
+                                    mirror_import_batch,
+                                    sync_after_ingest,
                                 )
 
                                 with SessionLocal() as db:
-                                    pm = RefillPersistenceManager()
-                                    pm.save_refill_decisions(db, decisions_list)
-                                    sync_metrics = pm.sync_reminder_cycles(db, decisions_list)
-                                    st.session_state["online_sync_metrics"] = sync_metrics
+                                    mirror_import_batch(
+                                        db, process_result, uploaded_file.name,
+                                        checksum=hashlib.sha256(uploaded_file.getvalue()).hexdigest(),
+                                    )
+                                    st.session_state["online_sync_metrics"] = sync_after_ingest(db, process_result)
+                                    st.session_state["ml_data_freshness"] = ml_freshness_after_ingest(
+                                        db, process_result["updated_history_df"]
+                                    )
                             except Exception as e:
                                 st.warning(f"Note: Refill cycle sync completed with notification: {e}")
 
@@ -2181,6 +2192,7 @@ def render_app():
                         st.session_state.pop("sales_validation_run", None)
                         st.session_state.pop("sales_validation_file", None)
                         st.cache_data.clear()
+                        st.cache_resource.clear()
                         st.rerun()
                     else:
                         st.warning(process_result.get("message", "Processing completed with warnings."))
@@ -2227,6 +2239,24 @@ def render_app():
                     with p7:
                         st.metric("Records Requiring Review", f"{p_metrics['records_requiring_review']:,}")
 
+                    sync_m = st.session_state.get("online_sync_metrics") or {}
+                    if sync_m:
+                        s1, s2, s3, s4 = st.columns(4)
+                        with s1:
+                            st.metric("Customer-Items Re-scored", f"{sync_m.get('customer_items_rescored', 0):,}")
+                        with s2:
+                            st.metric("Reminder Cycles Created", f"{sync_m.get('cycles_created', 0):,}")
+                        with s3:
+                            st.metric("Cycles Superseded (Repurchase)", f"{sync_m.get('cycles_superseded', 0):,}")
+                        with s4:
+                            st.metric("Past-Due Stages Expired", f"{sync_m.get('stages_expired', 0):,}")
+                    fresh = st.session_state.get("ml_data_freshness") or {}
+                    if fresh.get("retrain_recommended"):
+                        st.info(
+                            "🧭 **New sales data moved the ML evaluation windows.** A model retrain is recommended - "
+                            "see the 🧠 ML Models tab."
+                        )
+
                 # Section: Undo Last Import (Rollback)
                 active_batch_id = st.session_state.get("last_import_batch_id")
                 if active_batch_id:
@@ -2253,6 +2283,14 @@ def render_app():
                                     storage=storage,
                                 )
                             if rb_result["status"] == "success":
+                                try:
+                                    from database.connection import SessionLocal
+                                    from refillcare.engine.post_ingest import revert_after_rollback
+
+                                    with SessionLocal() as db:
+                                        revert_after_rollback(db, rb_result, active_batch_id)
+                                except Exception as e:
+                                    st.warning(f"Rollback removed the sales records, but reminder-state revert reported: {e}")
                                 st.session_state.active_history_data = rb_result["restored_history_df"]
                                 st.session_state.active_sales_data = rb_result["restored_history_df"]
                                 st.session_state.pop("last_import_batch_id", None)
@@ -2262,6 +2300,7 @@ def render_app():
                                 st.session_state.pop("active_ineligible_df", None)
                                 st.session_state.pop("prediction_gen_metrics", None)
                                 st.cache_data.clear()
+                                st.cache_resource.clear()
                                 st.success(f"✅ {rb_result['message']} Latest Sales Date restored to `{rb_result['restored_latest_sales_date']}`.")
                                 st.rerun()
                             else:
@@ -2519,7 +2558,14 @@ def render_app():
         st.caption("Review calculated refill predictions, expected runout dates, and lifecycle timelines.")
 
         # Target Month Filter for Predictions
-        pred_month_opts = ["October 2026 (Active Forecast)", "November 2026 (Next Cycle)", "September 2026 (Historical)", "All Forecast Months"]
+        _anchor_m = get_forecast_anchor_month()
+        _pred_months = {
+            f"{month_label(_anchor_m)} - Active Forecast": _anchor_m,
+            f"{month_label(shift_month(_anchor_m, 1))} - Next Cycle": shift_month(_anchor_m, 1),
+            f"{month_label(shift_month(_anchor_m, -1))} - Historical": shift_month(_anchor_m, -1),
+            "All Forecast Months": None,
+        }
+        pred_month_opts = list(_pred_months.keys())
         p_c1, p_c2, p_c3, p_c4 = st.columns([1.8, 1.8, 1.4, 1.2])
         with p_c1:
             sel_pred_month_label = st.selectbox(
@@ -2536,14 +2582,7 @@ def render_app():
         with p_c4:
             pred_path_filter = st.selectbox("Clinical Path", ["All Paths", "PATH_A", "PATH_B"], key="pred_path_filter_select")
 
-        if "October" in sel_pred_month_label:
-            sel_m_key = "2026-10"
-        elif "November" in sel_pred_month_label:
-            sel_m_key = "2026-11"
-        elif "September" in sel_pred_month_label:
-            sel_m_key = "2026-09"
-        else:
-            sel_m_key = None
+        sel_m_key = _pred_months.get(sel_pred_month_label)
 
         forecast_df = load_v1_refill_decisions_df(target_month=sel_m_key)
 
@@ -2625,7 +2664,7 @@ def render_app():
     # --------------------------------------------------------------------------
     with tab_reminders:
         st.markdown("### 📅 Customer Reminder List")
-        st.write("View patients scheduled for refill outreach by **Specific Date** or for the **Complete Month** (e.g. September 2026) from the persistent decision engine.")
+        st.write("View patients scheduled for refill outreach by **Specific Date** or for the **Complete Month** (e.g. the active forecast month) from the persistent decision engine.")
 
         # Determine available dates and months from enterprise.db
         avail_dates = get_available_reminder_dates()
@@ -2684,12 +2723,11 @@ def render_app():
                 file_stem = f"reminder_list_rolling_30d_{horizon_start.strftime('%Y%m%d')}_{horizon_end.strftime('%Y%m%d')}"
                 st.caption(f"🗓️ **Active Horizon:** {horizon_start.strftime('%d-%b-%Y')} → {horizon_end.strftime('%d-%b-%Y')} (30 Days Outreach)")
             else:
-                # Default to 2026-10 if present, else latest month in avail_months
+                # Default to the active forecast month (latest sale + 1 day), else the latest month
                 default_m_idx = 0
-                if "2026-10" in avail_months:
-                    default_m_idx = avail_months.index("2026-10")
-                elif "2026-09" in avail_months:
-                    default_m_idx = avail_months.index("2026-09")
+                _anchor_m = get_forecast_anchor_month()
+                if _anchor_m in avail_months:
+                    default_m_idx = avail_months.index(_anchor_m)
                 elif avail_months:
                     default_m_idx = len(avail_months) - 1
 
@@ -2699,7 +2737,7 @@ def render_app():
                     index=default_m_idx,
                     format_func=lambda m: month_labels.get(m, m),
                     key="reminder_month_selector",
-                    help="Select target prediction month (e.g. September 2026) to view all scheduled outreach.",
+                    help="Select target prediction month to view all scheduled outreach.",
                 )
                 selected_date = None
                 horizon_start, horizon_end = None, None
@@ -3748,9 +3786,15 @@ def render_app():
             elif raw_tier == "LAPSED":
                 filtered_b = [b for b in filtered_b if getattr(b, "lifecycle_tier", "DUE") == "LAPSED" or getattr(b, "refill_function", "DUE_REFILL") == "LAPSED_REENGAGEMENT"]
 
+            from refillcare.whatsapp.consent import load_opt_out_index
+
+            with SessionLocal() as consent_db:
+                wa_opt_outs = load_opt_out_index(consent_db)
             for b in filtered_b:
-                meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
                 phone_val = b.mobile_no or ""
+                if wa_opt_outs.blocks(getattr(b, "customer_id", None), phone_val):
+                    continue  # patient opted out of WhatsApp (same rule as API / dispatcher)
+                meds_list = [item.item_name for item in b.synced_items] if b.synced_items else [b.anchor_item_name]
                 mob_stat = determine_mobile_status(phone_val)
                 tier_val = getattr(b, "lifecycle_tier", "DUE")
 
@@ -3893,7 +3937,13 @@ def render_app():
                     st.warning("⚠️ **Missing or Incomplete Mobile Number.** Please enter a valid 10-digit number or 12-digit format (91XXXXXXXXXX) to dispatch.")
 
                 if btn_send_test:
-                    if not test_is_dry_run and mob_check != "Valid":
+                    from refillcare.whatsapp.consent import is_opted_out
+
+                    with SessionLocal() as consent_db:
+                        test_opted_out = is_opted_out(consent_db, phone=test_phone_input)
+                    if test_opted_out:
+                        st.error(f"🛑 **Dispatch Blocked:** {test_phone_input} has opted out of WhatsApp reminders.")
+                    elif not test_is_dry_run and mob_check != "Valid":
                         st.error("🛑 **Dispatch Blocked:** Cannot send live WhatsApp message to a missing or invalid phone number.")
                     else:
                         mode_label = "Dry-Run simulation" if test_is_dry_run else "LIVE WhatsApp message"
@@ -3958,6 +4008,48 @@ def render_app():
                         df_logs = pd.DataFrame(batch_outcome["delivery_logs"])
                         st.dataframe(df_logs, use_container_width=True, hide_index=True)
 
+        # Section: Patient WhatsApp consent (opt-out / opt-in)
+        st.markdown("#### 🚫 Patient WhatsApp Consent")
+        st.caption(
+            "Patients who reply STOP (or are opted out here) are skipped by every send path: "
+            "batch, Med-Sync, single stage and test send. Only an exact START reply opts back in."
+        )
+        from refillcare.whatsapp.consent import list_opted_out, set_opt_in
+
+        cc1, cc2, cc3 = st.columns([2.5, 1, 1])
+        with cc1:
+            consent_cid = st.text_input("Customer ID", key="wa_consent_customer_id", placeholder="e.g. S0/12345")
+        with cc2:
+            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+            btn_opt_out = st.button("Opt Out", key="btn_wa_opt_out", use_container_width=True)
+        with cc3:
+            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+            btn_opt_in = st.button("Opt In", key="btn_wa_opt_in", use_container_width=True)
+        if (btn_opt_out or btn_opt_in):
+            if not consent_cid.strip():
+                st.warning("Enter a customer ID first.")
+            else:
+                with SessionLocal() as consent_db:
+                    set_opt_in(consent_db, consent_cid.strip(), opt_in=bool(btn_opt_in))
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.success(f"Customer `{consent_cid.strip()}` is now {'opted in' if btn_opt_in else 'opted out'}.")
+                st.rerun()
+        with SessionLocal() as consent_db:
+            opted_rows = list_opted_out(consent_db)
+        if opted_rows:
+            st.dataframe(
+                pd.DataFrame([{
+                    "Customer ID": r["customer_id"],
+                    "Name": r["customer_name"] or "-",
+                    "Mobile": format_display_phone_10digits(r["mobile_number"]) if r["mobile_number"] else "-",
+                    "Updated": (r["updated_at"] or "-").replace("T", " ")[:16],
+                } for r in opted_rows]),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.info("No patients have opted out.")
+
         # Section: Delivery Audit Log Trail
         st.markdown("#### 📜 Persistent WhatsApp Delivery Logs & Audit Trail")
         with SessionLocal() as db_session:
@@ -3978,6 +4070,163 @@ def render_app():
                 st.dataframe(pd.DataFrame(logs_data), use_container_width=True, hide_index=True, height=280)
             else:
                 st.info("No delivery log entries recorded yet.")
+
+    # --------------------------------------------------------------------------
+    # TAB 8: ML MODELS (registry, dynamic windows, evaluations, promotion gate)
+    # Same domain layer as FastAPI /api/v1/ml/* - Streamlit never calls the API.
+    # --------------------------------------------------------------------------
+    with tab_ml:
+        from database.connection import SessionLocal
+        from database.models import MLEvaluationRunModel
+        from refillcare.ml import registry as ml_reg
+        from refillcare.ml.evaluation import BASELINE_METHOD, engine_method_name
+        from refillcare.ml.service import data_freshness, gate_for_version, promote, retrain_cycle
+
+        st.markdown("### 🧠 Refill-Interval Models")
+        st.caption(
+            "Train / validation / test windows are re-derived from the latest sale every time this tab "
+            "loads, so they move forward automatically when a new month of sales is uploaded."
+        )
+
+        with SessionLocal() as ml_db:
+            fresh = data_freshness(ml_db, history_data if history_data is not None and not history_data.empty else None)
+            plan = fresh.get("plan")
+
+            # --- Data freshness & windows
+            if not plan:
+                st.warning(fresh.get("reason", "Not enough sales history to plan evaluation windows."))
+            else:
+                f1, f2, f3, f4 = st.columns(4)
+                with f1:
+                    st.metric("Serving Model", fresh.get("production_version") or "none")
+                with f2:
+                    st.metric("Trained Up To", str(fresh.get("production_train_cutoff") or "unknown"))
+                with f3:
+                    st.metric("Sales Data Up To", str(plan["data_end"]))
+                with f4:
+                    lag = fresh.get("days_of_new_training_data")
+                    st.metric("Newer Training Data", f"{lag} days" if lag is not None else "-")
+                if fresh.get("retrain_recommended"):
+                    st.warning("🧭 **Retrain recommended:** newer sales data is available or the serving model is not validated.")
+                else:
+                    st.success("✅ Serving model is current.")
+
+                st.dataframe(pd.DataFrame([
+                    {"Window": "Train", "From": str(plan["train"]["start"]), "To": str(plan["train"]["end"]),
+                     "Purchases": f"{plan['train']['purchases']:,}", "Used For": "Fit the candidate model"},
+                    {"Window": "Validation", "From": str(plan["validation"]["start"]), "To": str(plan["validation"]["end"]),
+                     "Purchases": f"{plan['validation']['purchases']:,}", "Used For": "Pick the best model"},
+                    {"Window": "Test", "From": str(plan["test"]["start"]), "To": str(plan["test"]["end"]),
+                     "Purchases": f"{plan['test']['purchases']:,}", "Used For": "Promotion gate only (never used to choose)"},
+                    {"Window": "Not scored", "From": f"last {plan['censor_buffer_days']} days", "To": str(plan["data_end"]),
+                     "Purchases": "-", "Used For": "Refills not yet observable"},
+                ]), use_container_width=True, hide_index=True)
+
+            # --- Registry
+            st.markdown("#### 🤖 Model Version Registry")
+            versions = ml_reg.list_versions(ml_db)
+            reg_rows = []
+            for v in versions:
+                summ = ml_reg.to_dict(v, ml_db).get("evaluation_summary") or {}
+                met = (summ.get("methods") or {}).get(engine_method_name(v.version_id)) or {}
+                reg_rows.append({
+                    "Version": v.version_id,
+                    "Type": v.model_type,
+                    "Status": v.status + (" ✓ validated" if v.is_validated else ""),
+                    "Train Cutoff": str(v.train_window_end or "-"),
+                    "Train Samples": f"{v.training_sample_count:,}" if v.training_sample_count else "-",
+                    "Within ±7d (measured)": f"{met['within_7_days_pct']:.1f}%" if met.get("within_7_days_pct") is not None else "-",
+                    "MAE (days)": met.get("mae_days", "-"),
+                })
+            st.dataframe(pd.DataFrame(reg_rows), use_container_width=True, hide_index=True)
+
+            # --- Promotion gate & promote
+            version_ids = [v.version_id for v in versions]
+            g1, g2, g3 = st.columns([2.5, 1, 1])
+            with g1:
+                sel_version = st.selectbox("Model version", version_ids, key="ml_gate_version") if version_ids else None
+            with g2:
+                st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+                btn_gate = st.button("Check Gate", key="btn_ml_gate", use_container_width=True)
+            with g3:
+                st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
+                btn_promote = st.button("Promote", key="btn_ml_promote", use_container_width=True)
+
+            if sel_version and (btn_gate or btn_promote):
+                gate = gate_for_version(ml_db, sel_version)
+                if btn_promote:
+                    res = promote(ml_db, sel_version, promoted_by="streamlit")
+                    if res.get("promoted"):
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                        st.success(f"✅ `{sel_version}` is now the production model.")
+                    else:
+                        st.error(f"🛑 Promotion refused by the evidence gate: {', '.join(res['decision'].get('failed_checks', []))}")
+                    gate = res.get("decision", gate)
+                st.markdown(f"**Gate for `{sel_version}`:** {'✅ APPROVED' if gate.get('approved') else '❌ REJECTED'}")
+                st.dataframe(pd.DataFrame([
+                    {"Passed": "✅" if c.get("passed") else "❌", "Check": c.get("check"), "Detail": c.get("detail", "")}
+                    for c in gate.get("checks", [])
+                ]), use_container_width=True, hide_index=True)
+
+            # --- Retrain cycle
+            st.markdown("#### 🔁 Retrain on the Current Windows")
+            st.caption(
+                "Trains on the train window, selects the best model on validation, then applies the promotion "
+                "gate on the untouched test window. Needs ~2-3 GB free RAM and can take several minutes."
+            )
+            r1, r2 = st.columns(2)
+            with r1:
+                btn_retrain = st.button("🔁 Retrain & Evaluate", key="btn_ml_retrain", use_container_width=True)
+            with r2:
+                btn_retrain_promote = st.button("🚀 Retrain & Promote if Gate Approves", key="btn_ml_retrain_promote", use_container_width=True)
+            if btn_retrain or btn_retrain_promote:
+                with st.spinner("Running retrain cycle (train → validation → test gate)..."):
+                    try:
+                        cycle = retrain_cycle(ml_db, promote_best=bool(btn_retrain_promote), created_by="streamlit")
+                        st.session_state["ml_last_cycle"] = cycle
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                    except Exception as e:
+                        st.error(f"Retrain cycle failed: {e}")
+            cycle = st.session_state.get("ml_last_cycle")
+            if cycle:
+                st.markdown(
+                    f"**Last cycle:** candidate `{cycle['candidate_version']}` · selected on validation "
+                    f"`{cycle['selected_on_validation']}` · gate {'✅ approved' if cycle['gate'].get('approved') else '❌ rejected'}"
+                    f" · {'promoted' if cycle.get('promoted') else 'not promoted'}"
+                )
+                st.dataframe(pd.DataFrame([
+                    {"Version": vid,
+                     "Validation ±7d": cycle["validation"]["versions"][vid].get("within_7_days_pct"),
+                     "Test ±7d": cycle["test"]["versions"][vid].get("within_7_days_pct"),
+                     "Test MAE (days)": cycle["test"]["versions"][vid].get("mae_days")}
+                    for vid in cycle["test"]["versions"]
+                ]), use_container_width=True, hide_index=True)
+
+            # --- Recent evaluations
+            st.markdown("#### 📏 Recent Out-of-Time Evaluations")
+            runs = ml_db.query(MLEvaluationRunModel).order_by(MLEvaluationRunModel.started_at.desc()).limit(10).all()
+            if runs:
+                ev_rows = []
+                for r in runs:
+                    summ = ml_reg.summarize_report_for_version(r.report, r.model_version or "") if r.report else {}
+                    methods = (summ or {}).get("methods") or {}
+                    cand = methods.get(engine_method_name(r.model_version or "")) or {}
+                    base = methods.get(BASELINE_METHOD) or {}
+                    win = (summ or {}).get("evaluated_window") or {}
+                    ev_rows.append({
+                        "Run": r.run_id,
+                        "Status": r.status,
+                        "Window": f"{win.get('start')} → {win.get('end')}" if win else "-",
+                        "Paired Events": (summ or {}).get("n_paired_events") or "-",
+                        "Candidate": r.model_version or "-",
+                        "Candidate ±7d": cand.get("within_7_days_pct", "-"),
+                        "Baseline ±7d": base.get("within_7_days_pct", "-"),
+                    })
+                st.dataframe(pd.DataFrame(ev_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("No evaluations yet. Use **Retrain & Evaluate** above.")
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ logger = logging.getLogger("xinno_whatsapp")
 # Explicitly load .env from project root directory
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DOTENV_PATH = _PROJECT_ROOT / ".env"
-load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
 
 # Default API URL from Postman collection in docs/whatsapp_api_postman_collection.json
 DEFAULT_API_URL = "https://cpaasreseller.notify24x7.com/REST/directApi/message"
@@ -68,7 +68,7 @@ def get_config_diagnostic() -> Dict[str, str]:
     """
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent
     _DOTENV_PATH = _PROJECT_ROOT / ".env"
-    load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+    load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
 
     api_key_set = bool(os.getenv("XINNO_API_KEY", "").strip())
     return {
@@ -230,7 +230,7 @@ def send_template_message(
     # 1. Load configuration from environment variables
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent
     _DOTENV_PATH = _PROJECT_ROOT / ".env"
-    load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+    load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
 
     api_url = os.getenv("XINNO_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
     api_key = os.getenv("XINNO_API_KEY", "").strip()

@@ -72,6 +72,7 @@ class MedSyncBundle:
     refill_function: str = "DUE_REFILL"  # DUE_REFILL, REFILL_FOLLOW_UP, or LAPSED_REENGAGEMENT
     status: str = "PENDING"
     created_at: datetime = field(default_factory=datetime.now)
+    stage_reminder_ids: List[str] = field(default_factory=list)  # reminder_stages covered by this bundle
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -329,6 +330,7 @@ class MedSyncEngine:
             patient_key = f"{cname}::{clean_mobile}"
 
             norm_rec = {
+                "reminder_id": _extract_field(r, "reminder_id"),
                 "customer_id": cid,
                 "customer_name": cname,
                 "mobile_no": clean_mobile if clean_mobile != "-" else "-",
@@ -461,6 +463,7 @@ class MedSyncEngine:
                     latest_p90_date=latest_p90,
                     lifecycle_tier=tier,
                     refill_function=func_tag,
+                    stage_reminder_ids=[str(c["reminder_id"]) for c in cluster if c.get("reminder_id")],
                 )
                 bundle.bundled_message_text = self.generate_bundle_whatsapp_message(bundle, pharmacy_name=pharmacy)
                 bundles.append(bundle)

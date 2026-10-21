@@ -31,6 +31,8 @@ from refillcare.engine.decision_types import (
     STATUS_APPROVED,
     STATUS_CANCELLED,
     STATUS_DUE,
+    STATUS_EXPIRED,
+    STATUS_ROLLED_BACK,
     STATUS_FAILED,
     STATUS_PENDING,
     STATUS_REJECTED,
@@ -41,6 +43,18 @@ from refillcare.engine.reminder_lifecycle import get_stage_message_template
 from refillcare.whatsapp.template_formatter import get_refill_function
 from services.xinno_whatsapp import send_template_message
 from utils.validators import mask_phone, normalize_to_whatsapp_number
+
+
+def decision_is_chronic(item_name: str, purchase_count: Optional[int], cadence_median: Optional[float]) -> bool:
+    from refillcare.data.medication_classifier import verify_medication_chronic_status
+
+    return bool(
+        verify_medication_chronic_status(
+            item_name,
+            patient_history_count=int(purchase_count or 1),
+            patient_median_interval=float(cadence_median) if cadence_median else None,
+        )["is_chronic_eligible"]
+    )
 
 
 def parse_decision_provenance(reason: Optional[str]) -> Tuple[str, str]:
@@ -74,9 +88,90 @@ def parse_decision_provenance(reason: Optional[str]) -> Tuple[str, str]:
 class RefillPersistenceManager:
     """Enterprise database-backed persistence manager for RefillCare V1."""
 
-    def __init__(self, store_name: str = "PHARMA HUBB", store_contact: str = "9876543210"):
-        self.store_name = store_name
-        self.store_contact = store_contact
+    def __init__(self, store_name: Optional[str] = None, store_contact: Optional[str] = None):
+        import os
+
+        # Store settings come from .env (MEDICAL_STORE_NAME / MEDICAL_STORE_CONTACT) unless passed in.
+        self.store_name = (store_name or os.getenv("MEDICAL_STORE_NAME", "") or "Pharmacy").strip()
+        self.store_contact = (store_contact or os.getenv("MEDICAL_STORE_CONTACT", "") or "").strip()
+
+    # ------------------------------------------------------------------
+    # Lifecycle maintenance
+    # ------------------------------------------------------------------
+    def expire_past_due_stages(self, db: Session, today: Optional[date] = None) -> int:
+        """Move unsent stages whose send date has passed to EXPIRED (they must never be sent late)."""
+        today = today or date.today()
+        stages = (
+            db.query(ReminderStageModel)
+            .filter(
+                ReminderStageModel.target_send_date < today,
+                ReminderStageModel.status.in_([STATUS_PENDING, STATUS_DUE, STATUS_APPROVED]),
+            )
+            .all()
+        )
+        now = datetime.utcnow()
+        for st in stages:
+            st.status = STATUS_EXPIRED
+            st.failure_reason = f"Send date {st.target_send_date.isoformat()} passed before dispatch (expired {today.isoformat()})"
+            st.updated_at = now
+        db.commit()
+        return len(stages)
+
+    def revert_rolled_back_purchases(self, db: Session, removed: Dict[str, Set[date]]) -> Dict[str, int]:
+        """Undo the decision / cycle / stage effects of purchases removed by a sales-batch rollback.
+
+        Args:
+            removed: {customer_item_key: {purchase dates removed by the rollback}}
+
+        - cycles anchored on a removed purchase are deactivated and their unsent stages ROLLED_BACK
+          (sent stages are kept for the audit trail); their decisions are marked ineligible;
+        - cycles that were superseded *by* a removed purchase are re-activated and their
+          SUPERSEDED_BY_PURCHASE stages return to PENDING (past send dates are then expired).
+        """
+        metrics = {"cycles_rolled_back": 0, "stages_rolled_back": 0, "cycles_reactivated": 0, "stages_restored": 0, "decisions_invalidated": 0}
+        if not removed:
+            return metrics
+        now = datetime.utcnow()
+        keys = list(removed.keys())
+        for i in range(0, len(keys), 500):
+            chunk = keys[i : i + 500]
+            cycles = db.query(ReminderCycleModel).filter(ReminderCycleModel.customer_item_key.in_(chunk)).all()
+            for c in cycles:
+                dates = removed.get(str(c.customer_item_key), set())
+                if c.last_purchase_date in dates:
+                    if c.is_active:
+                        metrics["cycles_rolled_back"] += 1
+                    c.is_active = False
+                    c.superseded_at = now
+                    for st in c.stages:
+                        if st.status in (STATUS_PENDING, STATUS_DUE, STATUS_APPROVED):
+                            st.status = STATUS_ROLLED_BACK
+                            st.failure_reason = "Created by a rolled-back sales batch"
+                            st.updated_at = now
+                            metrics["stages_rolled_back"] += 1
+                    if c.decision is not None and c.decision.is_eligible:
+                        c.decision.is_eligible = False
+                        c.decision.decision_reason = f"ROLLED_BACK: {c.decision.decision_reason}"
+                        metrics["decisions_invalidated"] += 1
+                elif c.superseded_by_purchase_date in dates:
+                    c.is_active = True
+                    c.superseded_at = None
+                    c.superseded_by_purchase_date = None
+                    metrics["cycles_reactivated"] += 1
+                    for st in c.stages:
+                        if st.status == STATUS_SUPERSEDED:
+                            st.status = STATUS_PENDING
+                            st.failure_reason = None
+                            st.updated_at = now
+                            metrics["stages_restored"] += 1
+            # Decisions keyed on removed purchases without a cycle (ineligible ones)
+            for d in db.query(RefillDecisionModel).filter(RefillDecisionModel.customer_item_key.in_(chunk)).all():
+                if d.last_purchase_date in removed.get(str(d.customer_item_key), set()) and d.is_eligible:
+                    d.is_eligible = False
+                    d.decision_reason = f"ROLLED_BACK: {d.decision_reason}"
+                    metrics["decisions_invalidated"] += 1
+        db.commit()
+        return metrics
 
     def save_refill_decisions(self, db: Session, decisions: List[RefillDecision]) -> int:
         """
@@ -128,6 +223,12 @@ class RefillPersistenceManager:
                 existing.predicted_interval_days = dec.predicted_interval_days
                 existing.expected_refill_date = dec.expected_refill_date
                 existing.decision_reason = dec.decision_reason
+                existing.mobile_no = dec.mobile_no
+                existing.model_version = getattr(dec, "model_version", None)
+                existing.prediction_source = getattr(dec, "prediction_source", None)
+                existing.raw_ml_prediction_days = getattr(dec, "raw_ml_prediction_days", None)
+                existing.shadow_model_version = getattr(dec, "shadow_model_version", None)
+                existing.shadow_predicted_interval_days = getattr(dec, "shadow_predicted_interval_days", None)
                 existing.updated_at = now
             else:
                 new_rec = RefillDecisionModel(
@@ -153,6 +254,11 @@ class RefillPersistenceManager:
                     last_purchase_date=dec.last_purchase_date,
                     expected_refill_date=dec.expected_refill_date,
                     decision_reason=dec.decision_reason,
+                    model_version=getattr(dec, "model_version", None),
+                    prediction_source=getattr(dec, "prediction_source", None),
+                    raw_ml_prediction_days=getattr(dec, "raw_ml_prediction_days", None),
+                    shadow_model_version=getattr(dec, "shadow_model_version", None),
+                    shadow_predicted_interval_days=getattr(dec, "shadow_predicted_interval_days", None),
                     created_at=now,
                     updated_at=now,
                 )
@@ -391,12 +497,13 @@ class RefillPersistenceManager:
 
         results = query.all()
         queue: List[Dict[str, Any]] = []
-        from refillcare.data.medication_classifier import is_chronic_medication
 
         for stage, dec in results:
             c_name = dec.customer_name if dec else "Valued Customer"
             i_name = dec.item_name if dec else stage.item_id
-            if not is_chronic_medication(str(i_name)):
+            # Same chronic gate as the decision engine (rules + personal recurrence), so list
+            # counts and KPI counts agree.
+            if not decision_is_chronic(str(i_name), dec.purchase_count if dec else 1, dec.cadence_median if dec else None):
                 continue
             phone = dec.mobile_no if dec else None
             p_masked = mask_phone(phone) if phone else "MISSING"
@@ -427,6 +534,8 @@ class RefillPersistenceManager:
                 "predicted_interval_days": dec.predicted_interval_days if dec else None,
                 "estimated_days_of_supply": dec.dos_days if (dec and dec.dos_days) else (dec.predicted_interval_days if dec else 30.0),
                 "decision_reason": reason,
+                "model_version": dec.model_version if dec else None,
+                "prediction_source": dec.prediction_source if dec else None,
                 "archetype": arch,
                 "dosage_regimen": regimen,
                 "message_text": stage.message_text,
@@ -520,9 +629,17 @@ class RefillPersistenceManager:
         authorizer: str = "pharmacist",
     ) -> Dict[str, Any]:
         """
-        Dispatch reminder via Xinno gateway or simulation in strict DRY-RUN mode.
-        Requires the reminder stage to be in APPROVED state first.
+        Dispatch one APPROVED reminder stage via the RefillCare 6-parameter WhatsApp template.
+
+        - DRY-RUN: payload is built and audited; the stage status is NOT changed, so the real
+          message can still be sent later.
+        - LIVE: idempotent - refused if this reminder was already delivered live; the cycle must
+          still be active and the decision eligible; the phone must be a valid mobile number.
         """
+        from refillcare.data.sales_ingestion import determine_mobile_status
+        from refillcare.whatsapp.client import RefillWhatsAppClient
+        from refillcare.whatsapp.template_formatter import get_tier_for_stage_offset
+
         stage = db.query(ReminderStageModel).filter(ReminderStageModel.reminder_id == reminder_id).first()
         if not stage:
             raise ValueError(f"Reminder stage '{reminder_id}' not found.")
@@ -530,64 +647,85 @@ class RefillPersistenceManager:
         if stage.status != STATUS_APPROVED:
             raise ValueError(f"Cannot dispatch reminder in state '{stage.status}'. Stage must be APPROVED by pharmacist first.")
 
-        # Fetch associated decision for customer details
-        dec = (
-            db.query(RefillDecisionModel)
-            .join(ReminderCycleModel, RefillDecisionModel.decision_id == ReminderCycleModel.decision_id)
-            .filter(ReminderCycleModel.cycle_id == stage.cycle_id)
-            .first()
-        )
+        cycle = db.query(ReminderCycleModel).filter(ReminderCycleModel.cycle_id == stage.cycle_id).first()
+        dec = cycle.decision if cycle is not None else None
+        if cycle is None or not cycle.is_active or dec is None or not dec.is_eligible:
+            raise ValueError("Cannot dispatch: the refill cycle is no longer active or the decision is not eligible.")
 
-        phone = dec.mobile_no if dec else None
-        c_name = dec.customer_name if (dec and dec.customer_name) else "Valued Customer"
-        i_name = dec.item_name if (dec and dec.item_name) else stage.item_id
+        from refillcare.whatsapp.consent import is_opted_out
 
-        if not phone:
-            stage.status = STATUS_FAILED
-            stage.failure_reason = "Missing valid phone number"
-            db.commit()
-            return {"reminder_id": reminder_id, "status": STATUS_FAILED, "error": "Missing phone number"}
+        if is_opted_out(db, dec.customer_id, dec.mobile_no):
+            raise ValueError(f"Cannot dispatch: Customer '{dec.customer_id}' has opted out of WhatsApp reminders.")
 
-        # Perform dispatch
-        dispatch_res = send_template_message(
+        if not is_dry_run:
+            already = (
+                db.query(WhatsAppDeliveryLogModel)
+                .filter(
+                    WhatsAppDeliveryLogModel.reminder_id == reminder_id,
+                    WhatsAppDeliveryLogModel.is_dry_run == False,  # noqa: E712
+                    WhatsAppDeliveryLogModel.status == "SUCCESS",
+                )
+                .first()
+            )
+            if already is not None:
+                raise ValueError(f"Reminder '{reminder_id}' was already delivered live (idempotency guard).")
+
+        phone = dec.mobile_no
+        c_name = dec.customer_name or "Valued Customer"
+        i_name = dec.item_name or stage.item_id
+        now = datetime.utcnow()
+
+        if not phone or determine_mobile_status(phone) != "Valid":
+            if not is_dry_run:
+                stage.status = STATUS_FAILED
+                stage.failure_reason = "Missing or invalid mobile number"
+                stage.updated_at = now
+                db.commit()
+            return {"reminder_id": reminder_id, "status": stage.status, "is_dry_run": is_dry_run, "success": False, "error": "Missing or invalid mobile number"}
+
+        client = RefillWhatsAppClient(store_name=self.store_name or None, store_contact=self.store_contact or None)
+        dispatch_res = client.send_refill_reminder(
             phone_number=str(phone),
             customer_name=str(c_name),
-            store_name=self.store_name,
+            medications=str(i_name),
+            expected_refill_date=stage.expected_refill_date,
+            tier=get_tier_for_stage_offset(stage.stage_offset),
+            stage_offset=stage.stage_offset,
             dry_run=is_dry_run,
+            reminder_id=reminder_id,
         )
+        ok = bool(dispatch_res.get("success"))
+        msg_id = dispatch_res.get("message_id")
 
-        # Audit Log
-        now = datetime.utcnow()
-        audit_rec = WhatsAppDeliveryLogModel(
+        db.add(WhatsAppDeliveryLogModel(
             reminder_id=reminder_id,
             phone_number=str(phone),
             customer_name=str(c_name),
-            template_name="refillcare_medicine_reminder",
-            xinno_message_id=dispatch_res.get("provider_msg_id"),
+            template_name=client.template_name,
+            xinno_message_id=msg_id,
             is_dry_run=is_dry_run,
-            status="DRY_RUN_SUCCESS" if is_dry_run else ("SUCCESS" if dispatch_res.get("success") else "FAILED"),
-            http_status_code=200 if dispatch_res.get("success") else 400,
-            response_payload=str(dispatch_res),
-            error_detail=dispatch_res.get("error"),
+            status="DRY_RUN_SUCCESS" if (is_dry_run and ok) else ("DRY_RUN_FAILED" if is_dry_run else ("SUCCESS" if ok else "FAILED")),
+            http_status_code=dispatch_res.get("status_code"),
+            response_payload=str(dispatch_res.get("response"))[:4000],
+            error_detail=None if ok else dispatch_res.get("message"),
             dispatched_at=now,
-        )
-        db.add(audit_rec)
+        ))
 
-        if dispatch_res.get("success"):
-            stage.status = STATUS_SENT
-            stage.sent_at = now
-            stage.provider_msg_id = dispatch_res.get("provider_msg_id")
-        else:
-            stage.status = STATUS_FAILED
-            stage.failure_reason = dispatch_res.get("error")
-
-        stage.updated_at = now
+        if not is_dry_run:
+            if ok:
+                stage.status = STATUS_SENT
+                stage.sent_at = now
+                stage.provider_msg_id = msg_id
+            else:
+                stage.status = STATUS_FAILED
+                stage.failure_reason = dispatch_res.get("message")
+            stage.updated_at = now
         db.commit()
 
         return {
             "reminder_id": reminder_id,
             "status": stage.status,
             "is_dry_run": is_dry_run,
-            "provider_msg_id": stage.provider_msg_id,
-            "success": dispatch_res.get("success"),
+            "provider_msg_id": msg_id if not is_dry_run else None,
+            "success": ok,
         }

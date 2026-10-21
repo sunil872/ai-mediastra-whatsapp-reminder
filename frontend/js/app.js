@@ -4,6 +4,30 @@
 
 import { ApiClient } from "./api.js";
 
+
+// ------------------------------------------------------------------------------
+// Security: escape every data value interpolated into innerHTML (stored-XSS guard).
+// Patient / medicine names come from uploaded POS files and must never be treated as HTML.
+// ------------------------------------------------------------------------------
+function esc(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+window.refillcareEscape = esc;
+
+function monthKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // Global State
 let activeFile = null;
 
@@ -15,9 +39,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupActionListeners();
   setupQuickActions();
   window.loadMedRules = setupMedicationRules();
+  setupMlActions();
+  setupConsentActions();
+  setupApiKeyButton();
   
-  // Dynamic default date (defaults to current date e.g. 2026-09-30)
-  const todayStr = new Date().toISOString().split("T")[0];
+  // Dynamic default date (local calendar date)
+  const todayStr = localDateStr(new Date());
   const dateInput = document.getElementById("reminder-target-date");
   if (dateInput) dateInput.value = todayStr;
 
@@ -104,7 +131,7 @@ function setupNavigation() {
       if (tabId === "tab-medsync") loadMedSyncBundles();
       if (tabId === "tab-review") loadReviewQueue();
       if (tabId === "tab-models") loadModels();
-      if (tabId === "tab-whatsapp") loadWhatsAppGateway();
+      if (tabId === "tab-whatsapp") { loadWhatsAppGateway(); loadOptedOut(); }
     });
   });
 }
@@ -119,10 +146,19 @@ async function loadInitialData() {
     if (document.getElementById("kpi-transactions")) document.getElementById("kpi-transactions").innerText = Number(kpis.total_sales_transactions).toLocaleString();
     if (document.getElementById("kpi-upcoming")) document.getElementById("kpi-upcoming").innerText = Number(kpis.upcoming_reminders_count).toLocaleString();
     if (document.getElementById("kpi-due-today")) document.getElementById("kpi-due-today").innerText = Number(kpis.reminders_due_today ?? 0).toLocaleString();
-    if (document.getElementById("kpi-chronic-count")) document.getElementById("kpi-chronic-count").innerText = `${kpis.chronic_medicines_count ?? 0}+`;
+    if (document.getElementById("kpi-chronic-count")) document.getElementById("kpi-chronic-count").innerText = (kpis.chronic_medicines_count != null ? `${kpis.chronic_medicines_count}+` : "-");
     if (document.getElementById("kpi-latest-date")) document.getElementById("kpi-latest-date").innerText = kpis.latest_sales_date;
     if (document.getElementById("sales-coverage-badge")) document.getElementById("sales-coverage-badge").innerText = kpis.sales_coverage_date_range;
-    if (document.getElementById("sidebar-active-model")) document.getElementById("sidebar-active-model").innerText = kpis.active_model_version;
+    if (document.getElementById("sidebar-active-model")) {
+      const v = kpis.active_model_version || "none";
+      const evidence = kpis.measured_backtest_within_7_days_pct != null
+        ? ` · ${kpis.measured_backtest_within_7_days_pct}% ±7d (measured)`
+        : " · not yet evaluated";
+      document.getElementById("sidebar-active-model").innerText = `${v}${kpis.model_is_validated ? " ✓" : ""}${evidence}`;
+    }
+    if (document.getElementById("kpi-target-month-label") && kpis.target_prediction_month) {
+      document.getElementById("kpi-target-month-label").innerText = `${kpis.target_prediction_month} forecast target pipeline`;
+    }
 
     // Load Transaction Channel Breakdown
     try {
@@ -160,14 +196,14 @@ async function loadBatches() {
       const tr = document.createElement("tr");
       const isRolledBack = b.processing_status === "ROLLED_BACK";
       tr.innerHTML = `
-        <td><code>${b.import_batch_id}</code></td>
-        <td>${b.source_filename}</td>
+        <td><code>${esc(b.import_batch_id)}</code></td>
+        <td>${esc(b.source_filename)}</td>
         <td>${new Date(b.upload_timestamp).toLocaleString()}</td>
         <td>${b.detected_date_range || "-"}</td>
         <td><strong>${Number(b.records_inserted).toLocaleString()}</strong></td>
-        <td><span class="badge ${isRolledBack ? 'badge-danger' : 'badge-success'}">${b.processing_status}</span></td>
+        <td><span class="badge ${isRolledBack ? 'badge-danger' : 'badge-success'}">${esc(b.processing_status)}</span></td>
         <td>
-          <button class="btn btn-outline btn-sm btn-rollback" data-batch="${b.import_batch_id}" ${isRolledBack ? 'disabled' : ''}>
+          <button class="btn btn-outline btn-sm btn-rollback" data-batch="${esc(b.import_batch_id)}" ${isRolledBack ? 'disabled' : ''}>
             ${isRolledBack ? 'Rolled Back' : '↺ Undo Import'}
           </button>
         </td>
@@ -209,15 +245,15 @@ async function loadPredictionSnapshots() {
     snapshots.forEach((s) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${s.customer_id}</td>
+        <td>${esc(s.customer_id)}</td>
         <td><strong>${s.customer_name || 'Patient'}</strong></td>
         <td>${s.phone_number || '<span class="badge badge-warning">Missing</span>'}</td>
-        <td>${s.item_name}</td>
-        <td>${s.last_purchase_date}</td>
-        <td>${s.estimated_days_of_supply} d</td>
-        <td><strong>${s.expected_refill_date}</strong></td>
-        <td>${s.reminder_date}</td>
-        <td><span class="badge badge-info">${s.prediction_source}</span></td>
+        <td>${esc(s.item_name)}</td>
+        <td>${esc(s.last_purchase_date)}</td>
+        <td>${esc(s.estimated_days_of_supply)} d</td>
+        <td><strong>${esc(s.expected_refill_date)}</strong></td>
+        <td>${esc(s.reminder_date)}</td>
+        <td><span class="badge badge-info">${esc(s.prediction_source)}</span></td>
       `;
       tbody.appendChild(tr);
     });
@@ -233,8 +269,8 @@ async function initReminderMonthOptions() {
     const months = await ApiClient.getReminderMonths();
     if (months && months.length > 0) {
       monthSelect.innerHTML = "";
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      const defaultMonth = months.includes(currentMonth) ? currentMonth : (months.includes("2026-10") ? "2026-10" : months[months.length - 1]);
+      const currentMonth = monthKey(new Date());
+      const defaultMonth = months.includes(currentMonth) ? currentMonth : months[months.length - 1];
       months.forEach(m => {
         const opt = document.createElement("option");
         opt.value = m;
@@ -335,7 +371,7 @@ function renderFilteredReminders(filterLabel = "") {
   if (filtered.length === 0) {
     if (countBadge) countBadge.innerText = searchQuery ? "0 Matching" : "0 Scheduled";
     tbody.innerHTML = searchQuery
-      ? `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 2rem;">No reminders match "${searchQuery}".</td></tr>`
+      ? `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 2rem;">No reminders match "${esc(searchQuery)}".</td></tr>`
       : `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 2rem;">No reminders scheduled for ${filterLabel || "selected period"}.</td></tr>`;
     return;
   }
@@ -360,16 +396,16 @@ function renderFilteredReminders(filterLabel = "") {
           ? '<span class="badge badge-warning">REFILL_FOLLOW_UP</span>' 
           : '<span class="badge badge-primary">DUE_REFILL</span>');
     tr.innerHTML = `
-      <td><strong>${r.customer_name}</strong></td>
+      <td><strong>${esc(r.customer_name)}</strong></td>
       <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-warning">Missing</span>'}</code></td>
-      <td><span class="badge ${isValidPhone ? 'badge-success' : 'badge-warning'}">${r.mobile_status}</span></td>
+      <td><span class="badge ${isValidPhone ? 'badge-success' : 'badge-warning'}">${esc(r.mobile_status)}</span></td>
       <td>${funcBadge}</td>
-      <td>${r.item_name}</td>
-      <td>${r.last_purchase_date}</td>
-      <td>${r.estimated_days_of_supply} d</td>
-      <td>${r.expected_refill_date}</td>
-      <td><strong>${r.reminder_date}</strong></td>
-      <td><span class="badge badge-info">${r.reminder_stage}</span></td>
+      <td>${esc(r.item_name)}</td>
+      <td>${esc(r.last_purchase_date)}</td>
+      <td>${esc(r.estimated_days_of_supply)} d</td>
+      <td>${esc(r.expected_refill_date)}</td>
+      <td><strong>${esc(r.reminder_date)}</strong></td>
+      <td><span class="badge badge-info">${esc(r.reminder_stage)}</span></td>
     `;
     tbody.appendChild(tr);
   });
@@ -416,14 +452,14 @@ async function loadReminders(forceFetch = false) {
     const mobileFilter = document.getElementById("reminder-mobile-filter")?.value || "All";
 
     if (viewMode === "MONTH") {
-      targetMonth = monthSelect ? monthSelect.value : "2026-10";
+      targetMonth = monthSelect && monthSelect.value ? monthSelect.value : monthKey(new Date());
       filterLabel = monthSelect?.options[monthSelect.selectedIndex]?.text || targetMonth;
       if (dateInput) dateInput.style.display = "none";
       if (monthSelect) monthSelect.style.display = "inline-block";
     } else if (viewMode === "ROLLING_30D") {
-      const baseStr = dateInput?.value || "2026-10-14";
+      const baseStr = dateInput?.value || localDateStr(new Date());
       const baseD = new Date(baseStr);
-      const startD = isNaN(baseD.getTime()) ? new Date(2026, 9, 14) : baseD;
+      const startD = isNaN(baseD.getTime()) ? new Date() : baseD;
       const endD = new Date(startD.getTime() + 29 * 24 * 60 * 60 * 1000);
       startDate = startD.toISOString().split("T")[0];
       endDate = endD.toISOString().split("T")[0];
@@ -484,7 +520,7 @@ async function loadReminders(forceFetch = false) {
     const tbody = document.querySelector("#table-reminders tbody");
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: #ef4444; padding: 2rem;">
-        Failed to load reminder list: ${err.message}. Please retry.
+        Failed to load reminder list: ${esc(err.message)}. Please retry.
       </td></tr>`;
     }
   }
@@ -493,7 +529,7 @@ async function loadReminders(forceFetch = false) {
 async function loadReviewQueue() {
   try {
     const monthSelect = document.getElementById("review-target-month");
-    const targetMonth = monthSelect ? monthSelect.value : "2026-10";
+    const targetMonth = monthSelect && monthSelect.value ? monthSelect.value : monthKey(new Date());
     const categoryFilter = document.getElementById("review-category-filter")?.value || "All";
     const mobileFilter = document.getElementById("review-mobile-filter")?.value || "All";
     const custQuery = document.getElementById("review-search-cust")?.value?.trim().toLowerCase() || "";
@@ -590,19 +626,19 @@ async function loadReviewQueue() {
       tr.innerHTML = `
         <td>
           <strong>${r.customer_name || 'Patient'}</strong><br>
-          <small style="color:var(--text-muted)">ID: ${r.customer_id}</small>
+          <small style="color:var(--text-muted)">ID: ${esc(r.customer_id)}</small>
         </td>
         <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-danger">No Mobile</span>'}</code></td>
         <td>${mobBadge}</td>
         <td><strong>${r.medication_name || '-'}</strong></td>
         <td><span class="badge badge-info">${r.target_month || targetMonth}</span></td>
-        <td><span class="badge ${catBadge}">${r.review_category}</span></td>
-        <td><div style="max-width: 280px; font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);" title="${r.decision_reason}">${r.decision_reason || '-'}</div></td>
+        <td><span class="badge ${catBadge}">${esc(r.review_category)}</span></td>
+        <td><div style="max-width: 280px; font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);" title="${esc(r.decision_reason)}">${r.decision_reason || '-'}</div></td>
         <td>
-          <span class="badge ${pathBadge}">${r.path}</span>
-          <span class="badge ${stabBadge}" style="margin-left: 3px;">${r.stability_tier}</span>
+          <span class="badge ${pathBadge}">${esc(r.path)}</span>
+          <span class="badge ${stabBadge}" style="margin-left: 3px;">${esc(r.stability_tier)}</span>
         </td>
-        <td><span class="badge ${statusBadge}">${r.status}</span></td>
+        <td><span class="badge ${statusBadge}">${esc(r.status)}</span></td>
         <td>${actionHtml}</td>
       `;
       tbody.appendChild(tr);
@@ -633,51 +669,269 @@ async function loadReviewQueue() {
   }
 }
 
+function engineMetrics(summary, versionId) {
+  const methods = summary?.methods || {};
+  return methods[`engine[${versionId}]`] || null;
+}
+
+function fmtPct(v) {
+  return v === null || v === undefined ? "–" : `${Number(v).toFixed(1)}%`;
+}
+
+const STATUS_BADGE = {
+  production: "badge-success",
+  shadow: "badge-purple",
+  candidate: "badge-info",
+  retired: "badge-warning",
+};
+
 async function loadModels() {
+  await Promise.all([loadMlPlan(), loadModelRegistry(), loadMlEvaluations()]);
+}
+
+async function loadMlPlan() {
+  const banner = document.getElementById("ml-freshness-banner");
+  const tbody = document.querySelector("#table-ml-plan tbody");
+  if (!banner || !tbody) return;
+  try {
+    const f = await ApiClient.getMlPlan();
+    const plan = f.plan;
+    if (!plan) {
+      banner.innerHTML = `<span class="badge badge-warning">${esc(f.reason || "Not enough sales history to plan windows.")}</span>`;
+      tbody.innerHTML = "";
+      return;
+    }
+    const lag = f.days_of_new_training_data;
+    banner.innerHTML = `
+      <span class="badge ${f.retrain_recommended ? "badge-warning" : "badge-success"}">
+        ${f.retrain_recommended ? "Retrain recommended" : "Model is current"}
+      </span>
+      <span style="margin-left: 0.6rem; color: var(--text-secondary); font-size: 0.9rem;">
+        Sales data to <strong>${esc(plan.data_end)}</strong> · serving <strong>${esc(f.production_version || "none")}</strong>
+        (trained to ${esc(f.production_train_cutoff || "unknown")})
+        ${lag !== null && lag !== undefined ? ` · ${Number(lag)} days of newer training data available` : ""}
+      </span>`;
+    const rows = [
+      ["Train", plan.train, "Fit the candidate model"],
+      ["Validation", plan.validation, "Pick the best model"],
+      ["Test", plan.test, "Promotion gate only (never used to choose)"],
+    ];
+    tbody.innerHTML = rows.map(([name, w, use]) => `
+      <tr>
+        <td><strong>${name}</strong></td>
+        <td>${esc(w.start)}</td>
+        <td>${esc(w.end)}</td>
+        <td>${Number(w.purchases).toLocaleString()}</td>
+        <td>${use}</td>
+      </tr>`).join("") + `
+      <tr>
+        <td><strong>Not scored</strong></td>
+        <td colspan="3">Last ${Number(plan.censor_buffer_days)} days up to ${esc(plan.data_end)}</td>
+        <td>Refills not yet observable</td>
+      </tr>`;
+  } catch (err) {
+    banner.innerHTML = `<span class="badge badge-danger">${esc(err.message)}</span>`;
+  }
+}
+
+async function loadModelRegistry() {
   try {
     const models = await ApiClient.getModels();
     const tbody = document.querySelector("#table-models tbody");
     tbody.innerHTML = "";
 
     models.forEach((m) => {
+      const met = engineMetrics(m.metrics_val, m.version_id);
+      const status = m.status || (m.is_active_production ? "production" : "candidate");
       const tr = document.createElement("tr");
-      const valMae = m.metrics_val?.mae_days ?? '10.4';
-      const valAcc = m.metrics_val?.within_7_days_pct ?? m.metrics_val?.within_3_days_pct ?? '60.1';
       tr.innerHTML = `
-        <td><strong>${m.version_id}</strong></td>
-        <td>${m.model_type}</td>
-        <td>${m.dataset_cutoff_date}</td>
-        <td>${Number(m.training_sample_count).toLocaleString()}</td>
-        <td><strong>${valMae}</strong></td>
-        <td>${valAcc}%</td>
-        <td><span class="badge ${m.is_active_production ? 'badge-success' : 'badge-info'}">${m.is_active_production ? 'Active' : 'Standby'}</span></td>
+        <td><strong>${esc(m.version_id)}</strong></td>
+        <td>${esc(m.model_type)}</td>
+        <td>${esc(m.dataset_cutoff_date || "–")}</td>
+        <td>${m.training_sample_count ? Number(m.training_sample_count).toLocaleString() : "–"}</td>
+        <td><strong>${fmtPct(met?.within_7_days_pct)}</strong></td>
+        <td>${esc(met?.mae_days ?? "–")}</td>
         <td>
-          <button class="btn btn-outline btn-sm btn-activate-model" data-version="${m.version_id}" ${m.is_active_production ? 'disabled' : ''}>
-            ${m.is_active_production ? 'Active' : 'Promote'}
+          <span class="badge ${STATUS_BADGE[status] || "badge-info"}">${esc(status)}</span>
+          ${m.is_validated ? '<span class="badge badge-success" title="Promoted through the evidence gate">validated</span>' : ""}
+        </td>
+        <td style="white-space: nowrap;">
+          <button class="btn btn-outline btn-sm btn-gate-model" data-version="${esc(m.version_id)}">Gate</button>
+          <button class="btn btn-outline btn-sm btn-activate-model" data-version="${esc(m.version_id)}" ${status === "production" ? "disabled" : ""}>
+            ${status === "production" ? "Active" : "Promote"}
           </button>
         </td>
       `;
       tbody.appendChild(tr);
     });
 
+    document.querySelectorAll(".btn-gate-model").forEach((btn) => {
+      btn.addEventListener("click", () => showGate(btn.getAttribute("data-version")));
+    });
     document.querySelectorAll(".btn-activate-model").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const versionId = btn.getAttribute("data-version");
-        if (confirm(`Promote model version '${versionId}' to active production?`)) {
-          try {
-            const res = await ApiClient.activateModel(versionId);
-            showToast(res.message, "success");
-            await loadModels();
-            await loadInitialData();
-          } catch (err) {
-            showToast(err.message, "error");
-          }
+        if (!confirm(`Promote '${versionId}' to production? It is refused unless the evidence gate approves.`)) return;
+        try {
+          const res = await ApiClient.activateModel(versionId);
+          showToast(res.message, "success");
+          await loadModels();
+          await loadInitialData();
+        } catch (err) {
+          showToast(err.message, "error");
+          await showGate(versionId);
         }
       });
     });
   } catch (err) {
     console.error("Error loading models:", err);
   }
+}
+
+async function showGate(versionId) {
+  const box = document.getElementById("ml-gate-result");
+  if (!box) return;
+  try {
+    const g = await ApiClient.getMlGate(versionId);
+    const checks = (g.checks || []).map((c) => `
+      <tr>
+        <td>${c.passed ? "✅" : "❌"}</td>
+        <td>${esc(c.check)}</td>
+        <td>${esc(c.detail ?? "")}</td>
+      </tr>`).join("");
+    box.innerHTML = `
+      <div style="margin-bottom: 0.5rem;">
+        <strong>Promotion gate for ${esc(versionId)}:</strong>
+        <span class="badge ${g.approved ? "badge-success" : "badge-danger"}">${g.approved ? "APPROVED" : "REJECTED"}</span>
+      </div>
+      <table class="data-table"><thead><tr><th></th><th>Check</th><th>Detail</th></tr></thead><tbody>${checks}</tbody></table>`;
+  } catch (err) {
+    box.innerHTML = `<span class="badge badge-danger">${esc(err.message)}</span>`;
+  }
+}
+
+async function loadMlEvaluations() {
+  const tbody = document.querySelector("#table-ml-evaluations tbody");
+  if (!tbody) return;
+  try {
+    const runs = await ApiClient.getMlEvaluations(10);
+    if (!runs.length) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color: var(--text-secondary);">No evaluations yet. Use "Retrain &amp; Evaluate".</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = runs.map((r) => {
+      const sm = r.summary || {};
+      const cand = engineMetrics(sm, r.candidate_model_version);
+      const base = (sm.methods || {}).historical_median;
+      const w = sm.evaluated_window || {};
+      const badge = r.status === "COMPLETED" ? "badge-success" : r.status === "FAILED" ? "badge-danger" : "badge-info";
+      return `
+        <tr>
+          <td><strong>${esc(r.run_id)}</strong></td>
+          <td><span class="badge ${badge}">${esc(r.status)}</span></td>
+          <td>${w.start ? `${esc(w.start)} → ${esc(w.end)}` : "–"}</td>
+          <td>${sm.n_paired_events ? Number(sm.n_paired_events).toLocaleString() : "–"}</td>
+          <td>${esc(r.candidate_model_version || "–")}</td>
+          <td><strong>${fmtPct(cand?.within_7_days_pct)}</strong></td>
+          <td>${fmtPct(base?.within_7_days_pct)}</td>
+        </tr>`;
+    }).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7">${esc(err.message)}</td></tr>`;
+  }
+}
+
+function setupMlActions() {
+  const start = async (promote) => {
+    const msg = promote
+      ? "Retrain on the planned train window, pick the best on validation, and promote it ONLY if the test-window gate approves?"
+      : "Retrain and evaluate on the current windows (no promotion)?";
+    if (!confirm(`${msg}\n\nThis runs in the background and can take several minutes.`)) return;
+    try {
+      const res = await ApiClient.startMlRetrain(promote);
+      showToast(res.message || "Retrain cycle started", "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+  document.getElementById("btn-ml-retrain")?.addEventListener("click", () => start(false));
+  document.getElementById("btn-ml-retrain-promote")?.addEventListener("click", () => start(true));
+}
+
+// ------------------------------------------------------------------------------
+// Patient WhatsApp consent (opt-out / opt-in)
+// ------------------------------------------------------------------------------
+async function loadOptedOut() {
+  const tbody = document.querySelector("#table-opted-out tbody");
+  if (!tbody) return;
+  try {
+    const rows = await ApiClient.getOptedOutCustomers();
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="5" style="color: var(--text-secondary);">No patients have opted out.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map((r) => `
+      <tr>
+        <td><strong>${esc(r.customer_id)}</strong></td>
+        <td>${esc(r.customer_name || "–")}</td>
+        <td>${esc(r.mobile_number ? formatDisplayPhone10(r.mobile_number) : "–")}</td>
+        <td>${esc(r.updated_at ? r.updated_at.replace("T", " ").slice(0, 16) : "–")}</td>
+        <td><button class="btn btn-outline btn-sm btn-consent-row-optin" data-customer="${esc(r.customer_id)}">Opt In</button></td>
+      </tr>`).join("");
+    document.querySelectorAll(".btn-consent-row-optin").forEach((btn) => {
+      btn.addEventListener("click", () => changeConsent(btn.getAttribute("data-customer"), true));
+    });
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5">${esc(err.message)}</td></tr>`;
+  }
+}
+
+async function changeConsent(customerId, optIn) {
+  if (!customerId) {
+    showToast("Enter a customer ID first.", "error");
+    return;
+  }
+  if (!confirm(`${optIn ? "Re-enable WhatsApp reminders for" : "Opt out"} '${customerId}'?`)) return;
+  try {
+    const res = await ApiClient.setCustomerConsent(customerId, optIn);
+    showToast(res.message, "success");
+    await loadOptedOut();
+    await loadWhatsAppGateway();
+    await loadInitialData();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+function setupConsentActions() {
+  const idInput = () => document.getElementById("consent-customer-id")?.value?.trim();
+  document.getElementById("btn-consent-opt-out")?.addEventListener("click", () => changeConsent(idInput(), false));
+  document.getElementById("btn-consent-opt-in")?.addEventListener("click", () => changeConsent(idInput(), true));
+}
+
+// ------------------------------------------------------------------------------
+// Write API key (sent as X-API-Key by api.js)
+// ------------------------------------------------------------------------------
+function setupApiKeyButton() {
+  const btn = document.getElementById("btn-set-api-key");
+  const label = document.getElementById("api-key-label");
+  const refresh = () => {
+    let has = false;
+    try { has = !!localStorage.getItem("refillcare_api_key"); } catch (e) { /* storage blocked */ }
+    if (label) label.innerText = has ? "Write key set" : "Set write key";
+  };
+  refresh();
+  btn?.addEventListener("click", () => {
+    const val = prompt("Write API key (REFILLCARE_API_KEY). Leave empty to clear:", "");
+    if (val === null) return;
+    try {
+      if (val.trim()) localStorage.setItem("refillcare_api_key", val.trim());
+      else localStorage.removeItem("refillcare_api_key");
+    } catch (e) {
+      showToast("Browser storage is blocked; the key cannot be saved.", "error");
+    }
+    refresh();
+  });
 }
 
 // ------------------------------------------------------------------------------
@@ -715,7 +969,7 @@ function setupUploadDropzone() {
 
 async function handleFileSelected(file) {
   activeFile = file;
-  showToast(`Validating ${file.name}...`, "info");
+  showToast(`Validating ${esc(file.name)}...`, "info");
 
   try {
     const preview = await ApiClient.previewSalesFile(file);
@@ -730,7 +984,7 @@ async function handleFileSelected(file) {
     const warningElem = document.getElementById("diag-warning");
     if (preview.date_diagnostics.warning) {
       warningElem.style.display = "block";
-      warningElem.innerText = `⚠️ ${preview.date_diagnostics.warning}`;
+      warningElem.innerText = `⚠️ ${esc(preview.date_diagnostics.warning)}`;
     } else {
       warningElem.style.display = "none";
     }
@@ -788,7 +1042,7 @@ async function loadMedSyncBundles() {
   let targetDate = null;
 
   if (viewMode === "DATE") {
-    targetDate = dateInput ? dateInput.value : "2026-09-30";
+    targetDate = dateInput && dateInput.value ? dateInput.value : localDateStr(new Date());
     if (dateInput) dateInput.style.display = "inline-block";
     if (monthSelect) monthSelect.style.display = "none";
   } else {
@@ -807,7 +1061,7 @@ async function loadMedSyncBundles() {
     const bundles = data.bundles || [];
     const availableMonths = data.available_months || [];
     const selectedMonth = data.selected_target_month || "";
-    const lastSalesMonth = data.last_sales_month || "September 2026";
+    const lastSalesMonth = data.last_sales_month || "-";
     const activeTarget = data.selected_target || (viewMode === "DATE" ? targetDate : selectedMonth);
 
     // Populate month dropdown if empty or not populated
@@ -828,7 +1082,7 @@ async function loadMedSyncBundles() {
       const activeMonthObj = availableMonths.find(m => m.key === selectedMonth);
       const activeLabel = viewMode === "DATE" ? `Date: ${targetDate}` : (activeMonthObj ? activeMonthObj.label : selectedMonth);
       const winLabel = windowDays === 0 ? "0d (Same-Date Group-By)" : `${windowDays}d`;
-      bannerText.innerHTML = `<strong>${activeLabel}</strong> (predicted from uploaded sales up to <strong>${lastSalesMonth}</strong> with <strong>${winLabel}</strong> sync window) — <strong>${Number(impact.total_prescriptions_synced || 0).toLocaleString()}</strong> prescriptions grouped into <strong>${Number(impact.total_dispatches_generated || 0).toLocaleString()}</strong> bundles.`;
+      bannerText.innerHTML = `<strong>${activeLabel}</strong> (predicted from uploaded sales up to <strong>${esc(lastSalesMonth)}</strong> with <strong>${winLabel}</strong> sync window) — <strong>${Number(impact.total_prescriptions_synced || 0).toLocaleString()}</strong> prescriptions grouped into <strong>${Number(impact.total_dispatches_generated || 0).toLocaleString()}</strong> bundles.`;
     }
 
     const pElem = document.getElementById("medsync-total-prescriptions");
@@ -871,12 +1125,12 @@ async function loadMedSyncBundles() {
       const itemsList = `<div class="synced-prescriptions-wrap">` +
         (b.synced_items || []).map(i => {
           const cls = i.is_anchor ? 'synced-med-pill synced-med-pill-anchor' : 'synced-med-pill synced-med-pill-sync';
-          return `<span class="${cls}">${i.item_name}</span>`;
+          return `<span class="${cls}">${esc(i.item_name)}</span>`;
         }).join("") +
         `</div>`;
 
-      const p10p90 = (b.earliest_p10_date && b.latest_p90_date) ? `${b.earliest_p10_date} → ${b.latest_p90_date}` : "± 7d confidence";
-      const reductionBadge = b.message_reduction_count > 0 ? `<span class="badge badge-success">-${b.message_reduction_count} msgs saved</span>` : `<span class="badge badge-secondary">1 msg</span>`;
+      const p10p90 = (b.earliest_p10_date && b.latest_p90_date) ? `${esc(b.earliest_p10_date)} → ${esc(b.latest_p90_date)}` : "± 7d confidence";
+      const reductionBadge = b.message_reduction_count > 0 ? `<span class="badge badge-success">-${esc(b.message_reduction_count)} msgs saved</span>` : `<span class="badge badge-secondary">1 msg</span>`;
       const dispPhone = formatDisplayPhone10(b.mobile_no);
       const tierBadge = b.lifecycle_tier === "LAPSED" ? '<span class="badge badge-danger">Lapsed Re-engagement</span>' : (b.lifecycle_tier === "FOLLOWUP" ? '<span class="badge badge-warning">Follow-up</span>' : '<span class="badge badge-primary">Due / Advance</span>');
 
@@ -888,14 +1142,14 @@ async function loadMedSyncBundles() {
             : '<span class="badge badge-primary">DUE_REFILL</span>');
 
       tr.innerHTML = `
-        <td><strong>${b.customer_name}</strong></td>
+        <td><strong>${esc(b.customer_name)}</strong></td>
         <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-warning">Missing</span>'}</code></td>
         <td>${funcBadge}</td>
-        <td><strong style="color: var(--primary);">${b.anchor_item_name}</strong></td>
+        <td><strong style="color: var(--primary);">${esc(b.anchor_item_name)}</strong></td>
         <td class="synced-prescriptions-cell">${itemsList}</td>
-        <td style="white-space: nowrap; font-weight: 600;">${b.anchor_refill_date}</td>
+        <td style="white-space: nowrap; font-weight: 600;">${esc(b.anchor_refill_date)}</td>
         <td style="white-space: nowrap;"><small>${p10p90}</small></td>
-        <td style="text-align: center;"><strong>${b.total_items_count}</strong></td>
+        <td style="text-align: center;"><strong>${esc(b.total_items_count)}</strong></td>
         <td>${reductionBadge}</td>
         <td><button class="btn btn-sm btn-outline btn-preview-bundle-wa" data-msg="${encodeURIComponent(b.bundled_message_text || '')}">💬 WhatsApp Copy</button></td>
       `;
@@ -962,7 +1216,13 @@ function setupActionListeners() {
     try {
       showToast("Ingesting sales records...", "info");
       const res = await ApiClient.ingestSalesFile(activeFile);
-      showToast(`✅ Successfully ingested batch ${res.import_batch_id}`, "success");
+      showToast(`✅ Successfully ingested batch ${esc(res.import_batch_id)}`, "success");
+      const fresh = res.ml_data_freshness;
+      if (res.ml_retrain_queued) {
+        showToast("🔁 New sales data: model retrain cycle queued in the background.", "info");
+      } else if (fresh && fresh.retrain_recommended) {
+        showToast("🧭 New sales data moved the evaluation windows: a model retrain is recommended (Model Registry tab).", "info");
+      }
       document.getElementById("upload-preview-area").style.display = "none";
       await loadBatches();
       await loadInitialData();
@@ -1104,11 +1364,13 @@ function setupActionListeners() {
         dry_run: isDryRun,
       });
 
+      // A refused send (e.g. opted-out phone) comes back with success=false in the body.
+      if (!res.success) throw new Error(res.message || "Dispatch refused");
       if (feedbackBox) {
         feedbackBox.style.display = "block";
         feedbackBox.innerHTML = `
           <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid #22c55e; border-radius: 6px; padding: 0.65rem 0.85rem; font-size: 0.82rem; color: #166534;">
-            <strong>✅ ${res.message}</strong> (Status: ${res.status_code})
+            <strong>✅ ${esc(res.message)}</strong> (Status: ${esc(res.status_code)})
           </div>
         `;
       }
@@ -1118,7 +1380,7 @@ function setupActionListeners() {
         feedbackBox.style.display = "block";
         feedbackBox.innerHTML = `
           <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 6px; padding: 0.65rem 0.85rem; font-size: 0.82rem; color: #b91c1c;">
-            <strong>❌ Dispatch Failed:</strong> ${err.message}
+            <strong>❌ Dispatch Failed:</strong> ${esc(err.message)}
           </div>
         `;
       }
@@ -1132,7 +1394,7 @@ function setupActionListeners() {
     try {
       showToast("Simulating batch WhatsApp dispatch (Dry-Run)...", "info");
       const res = await ApiClient.dispatchWhatsApp(targetDate, true, 50);
-      showToast(`Dry-run simulation completed: ${res.success_count} simulated successfully.`, "success");
+      showToast(`Dry-run simulation completed: ${esc(res.success_count)} simulated successfully.`, "success");
       loadWhatsAppGateway();
     } catch (err) {
       showToast(err.message, "error");
@@ -1186,7 +1448,7 @@ function setupMedicationRules() {
       const res = await ApiClient.getMedicationRules(filter, query);
       const rules = res.rules || [];
 
-      if (countBadge) countBadge.innerText = `${rules.length} Rules Active (Supabase)`;
+      if (countBadge) countBadge.innerText = `${esc(rules.length)} Rules Active (Supabase)`;
       tableBody.innerHTML = "";
 
       if (rules.length === 0) {
@@ -1201,14 +1463,14 @@ function setupMedicationRules() {
         const typeLabel = isChronic ? "CHRONIC (ELIGIBLE)" : "EXCLUDE (OTC/FMCG)";
 
         tr.innerHTML = `
-          <td><code><strong>${r.pattern}</strong></code></td>
+          <td><code><strong>${esc(r.pattern)}</strong></code></td>
           <td><span class="badge ${badgeClass}">${typeLabel}</span></td>
           <td><span class="badge badge-info">${r.category || 'CLINICAL'}</span></td>
           <td>${r.brand_name || r.pattern}</td>
           <td style="color: var(--text-muted); font-size: 0.8rem;">${r.notes || '-'}</td>
           <td style="font-size: 0.78rem;">${r.created_by || 'Pharmacist'}</td>
           <td>
-            <button class="action-btn action-btn-delete btn-del-rule" data-id="${r.id}" data-pattern="${r.pattern}" title="Delete Rule">🗑️</button>
+            <button class="action-btn action-btn-delete btn-del-rule" data-id="${esc(r.id)}" data-pattern="${esc(r.pattern)}" title="Delete Rule">🗑️</button>
           </td>
         `;
         tableBody.appendChild(tr);
@@ -1219,10 +1481,10 @@ function setupMedicationRules() {
         btn.addEventListener("click", async () => {
           const ruleId = btn.getAttribute("data-id");
           const pattern = btn.getAttribute("data-pattern");
-          if (confirm(`Are you sure you want to delete rule for '${pattern}' from Supabase?`)) {
+          if (confirm(`Are you sure you want to delete rule for '${esc(pattern)}' from Supabase?`)) {
             try {
               await ApiClient.deleteMedicationRule(ruleId);
-              showToast(`Rule '${pattern}' deleted from Supabase.`, "success");
+              showToast(`Rule '${esc(pattern)}' deleted from Supabase.`, "success");
               await loadRules();
               await loadInitialData();
             } catch (err) {
@@ -1232,7 +1494,7 @@ function setupMedicationRules() {
         });
       });
     } catch (err) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align:center;">Error: ${err.message}</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align:center;">Error: ${esc(err.message)}</td></tr>`;
     }
   };
 
@@ -1265,14 +1527,14 @@ function setupMedicationRules() {
         });
 
         resultBox.style.display = "block";
-        titleElem.innerText = `Diagnosis for: "${res.item_name}"`;
+        titleElem.innerText = `Diagnosis for: "${esc(res.item_name)}"`;
 
         if (res.is_chronic_eligible) {
           badgeElem.className = "badge badge-success";
           badgeElem.innerText = "● CHRONIC MAINTENANCE (ELIGIBLE)";
           detailElem.innerHTML = `
             <div><strong>Classification Status:</strong> <span style="color:#10b981; font-weight:700;">Eligible for automated refill cycle & WhatsApp reminders</span></div>
-            <div><strong>Clinical Category:</strong> ${res.category}</div>
+            <div><strong>Clinical Category:</strong> ${esc(res.category)}</div>
             <div><strong>Matched Rule Pattern:</strong> <code>${res.matched_rule || 'Rule Matched'}</code></div>
             <div><strong>Decision Source:</strong> ${res.source || 'RefillCare Clinical Engine'}</div>
           `;
@@ -1281,7 +1543,7 @@ function setupMedicationRules() {
           badgeElem.innerText = "● EXCLUDED (NON-CHRONIC / OTC)";
           detailElem.innerHTML = `
             <div><strong>Classification Status:</strong> <span style="color:#ef4444; font-weight:700;">Filtered out from reminder outreach (OTC / Acute / Personal Care)</span></div>
-            <div><strong>Clinical Category:</strong> ${res.category}</div>
+            <div><strong>Clinical Category:</strong> ${esc(res.category)}</div>
             <div><strong>Exclusion Reason:</strong> <code>${res.exclusion_reason || res.matched_rule || 'Non-chronic item'}</code></div>
             <div><strong>Decision Source:</strong> ${res.source || 'RefillCare Clinical Engine'}</div>
           `;
@@ -1399,7 +1661,7 @@ async function loadWhatsAppGateway() {
   if (mode === "DATE") {
     targetDate = dateInput?.value || new Date().toISOString().split("T")[0];
   } else {
-    targetMonth = monthSelect?.value || "2026-10";
+    targetMonth = monthSelect?.value || monthKey(new Date());
   }
 
   const tbody = document.getElementById("tbody-wa-candidates");
@@ -1456,11 +1718,11 @@ async function loadWhatsAppGateway() {
           : `<span class="badge badge-warning">Missing</span>`;
 
         tr.innerHTML = `
-          <td><strong>${c.customer_name}</strong></td>
+          <td><strong>${esc(c.customer_name)}</strong></td>
           <td><code>${c.mobile_display || "-"}</code></td>
           <td>${statusBadge}</td>
-          <td><span title="${c.medication}">${c.medication.length > 25 ? c.medication.slice(0, 25) + "..." : c.medication}</span></td>
-          <td><span class="badge badge-primary">${c.stage_offset}d (${c.tier})</span></td>
+          <td><span title="${esc(c.medication)}">${c.medication.length > 25 ? c.medication.slice(0, 25) + "..." : c.medication}</span></td>
+          <td><span class="badge badge-primary">${esc(c.stage_offset)}d (${esc(c.tier)})</span></td>
           <td>${c.expected_refill_date || "-"}</td>
           <td><button class="btn btn-outline btn-sm wa-select-btn" data-index="${idx}" style="padding: 2px 8px; font-size: 0.75rem;">Preview</button></td>
         `;
@@ -1476,7 +1738,7 @@ async function loadWhatsAppGateway() {
   } catch (err) {
     console.error("Error loading WhatsApp gateway candidates:", err);
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 1.5rem;">Error loading candidate queue: ${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 1.5rem;">Error loading candidate queue: ${esc(err.message)}</td></tr>`;
     }
   }
 }
@@ -1492,7 +1754,7 @@ function populatePatientDropdown(candidates) {
   candidates.forEach((c, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.innerText = `${c.customer_name} — ${c.medication} (${c.tier})`;
+    opt.innerText = `${esc(c.customer_name)} — ${esc(c.medication)} (${esc(c.tier)})`;
     sel.appendChild(opt);
   });
 }
@@ -1523,7 +1785,7 @@ async function renderWhatsAppPreview(cand) {
   }
 
   if (previewBadge) {
-    previewBadge.innerText = `${cand.tier} • ${cand.refill_function || "DUE_REFILL"}`;
+    previewBadge.innerText = `${esc(cand.tier)} • ${cand.refill_function || "DUE_REFILL"}`;
   }
 
   try {
@@ -1536,6 +1798,6 @@ async function renderWhatsAppPreview(cand) {
     });
     if (previewBody) previewBody.innerText = res.visual_preview;
   } catch (err) {
-    if (previewBody) previewBody.innerText = `Could not generate message preview: ${err.message}`;
+    if (previewBody) previewBody.innerText = `Could not generate message preview: ${esc(err.message)}`;
   }
 }

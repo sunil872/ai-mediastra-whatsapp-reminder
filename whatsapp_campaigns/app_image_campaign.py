@@ -58,7 +58,7 @@ from services.xinno_image_template import send_image_template_message
 DOTENV_PATH = PROJECT_ROOT / ".env"
 LOG_FILE = PROJECT_ROOT / "logs" / "whatsapp_send.log"
 WHATSAPP_ICON = PROJECT_ROOT / "assets" / "whatsapp.svg"
-load_dotenv(dotenv_path=DOTENV_PATH, override=True)
+load_dotenv(dotenv_path=DOTENV_PATH, override=False)  # deployment env vars win over .env
 
 st.set_page_config(
     page_title="Mediastra WhatsApp Reminder — Image + Text Campaign",

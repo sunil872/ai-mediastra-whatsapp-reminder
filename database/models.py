@@ -25,6 +25,7 @@ from sqlalchemy import (
     Index,
     JSON,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from database.connection import Base
@@ -275,6 +276,13 @@ class RefillDecisionModel(Base):
     expected_refill_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
     decision_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Model provenance (which model produced this prediction, and how)
+    model_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    prediction_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)  # ML, ML_CLAMPED, BASELINE_MEDIAN, HEURISTIC_FALLBACK, DOS, REVIEW, NONE
+    raw_ml_prediction_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    shadow_model_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    shadow_predicted_interval_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -340,3 +348,82 @@ class ReminderStageModel(Base):
         Index("idx_stage_cust_item", "customer_id", "item_id"),
     )
 
+
+
+class MLModelVersionModel(Base):
+    """Model registry with lineage, evaluation evidence and lifecycle status.
+
+    Lifecycle: candidate -> shadow -> production -> retired.
+    At most one production version exists per model_family - enforced in
+    refillcare.ml.registry.promote_version and by the partial unique index below.
+    """
+    __tablename__ = "ml_model_versions"
+
+    version_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    model_family: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # path_a_interval
+    model_type: Mapped[str] = mapped_column(String(64), nullable=False)  # hist_gradient_boosting, baseline_historical_median
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="candidate", index=True)
+    artifact_uri: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # relative to models root; None for baselines
+    feature_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    feature_cols: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    train_window_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    train_window_end: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    training_sample_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    dataset_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    code_commit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    hyperparameters: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    train_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    latest_evaluation_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_validated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    promoted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    promoted_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    promotion_decision: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_one_production_per_family",
+            "model_family",
+            unique=True,
+            sqlite_where=text("status = 'production'"),
+            postgresql_where=text("status = 'production'"),
+        ),
+    )
+
+
+class MLEvaluationRunModel(Base):
+    """A rolling-origin backtest run comparing candidate predictors against baselines on future data."""
+    __tablename__ = "ml_evaluation_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="RUNNING")  # RUNNING, COMPLETED, FAILED
+    model_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    params: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    report: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+
+
+class RefillDecisionOutcomeModel(Base):
+    """Realised outcome of an eligible refill decision: when did the patient actually come back?"""
+    __tablename__ = "refill_decision_outcomes"
+
+    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    customer_item_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    model_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    prediction_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    path: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_purchase_date: Mapped[date] = mapped_column(Date, nullable=False)
+    predicted_refill_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    predicted_interval_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    shadow_model_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    shadow_predicted_interval_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    actual_purchase_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    error_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # predicted - actual (+ = predicted too late)
+    outcome_category: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # ON_TIME, EARLY, LATE, NO_REFILL, OPEN
+    reminder_sent_live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

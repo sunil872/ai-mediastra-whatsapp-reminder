@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOTENV_PATH = PROJECT_ROOT / ".env"
-load_dotenv(dotenv_path=DOTENV_PATH, override=True)
+load_dotenv(dotenv_path=DOTENV_PATH, override=False)  # deployment env vars win over .env
 
 # Application & Environment
 APP_NAME = "Medical Reminder AI / RefillCare"
@@ -53,7 +53,7 @@ DEFAULT_JOBLIB_MODEL_PATH = MODELS_DIR / "refill_model.joblib"
 
 # Reminder & Refill Strategy Settings
 PRIMARY_REMINDER_BUFFER_DAYS = 2
-REMINDER_STAGES_DAYS = [-7, -3, -1, 0, 2, 5, 40]  # 7-Stage Refill Lifecycle
+REMINDER_STAGES_DAYS = [-7, -3, -1, 0, 2, 5, 45]  # 7-Stage Refill Lifecycle
 CHURN_CUTOFF_DAYS = 75  # Hard churn cutoff post-due date
 MIN_PURCHASES_FOR_PATH_A = 6  # Established recurring history threshold
 

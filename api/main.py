@@ -21,11 +21,14 @@ from fastapi import (
     Query,
     status,
     Response,
+    BackgroundTasks,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi import Request
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -66,31 +69,62 @@ from api.schemas import (
     WhatsAppPreviewResponse,
     WhatsAppSingleSendRequest,
     WhatsAppSingleSendResponse,
+    CustomerOptInOutResponse,
+    WhatsAppWebhookResponse,
 )
 from api.services import EnterpriseServices
+from api.ml_routes import router as ml_router
 from refillcare.engine.persistence import RefillPersistenceManager
+from api.security import require_api_key
 from database.models import RefillDecisionModel, ReminderCycleModel, ReminderStageModel
 
-# Initialize database schema
-init_db()
+# The database schema is created / additively migrated lazily on first use
+# (database.connection.get_sessionmaker), so importing the app never touches a live database.
 
 # Create FastAPI app
 app = FastAPI(
     title="RefillCare & Mediastra Enterprise API",
     description="Enterprise Medication Refill Prediction, Prescription Tracking, and WhatsApp Gateway API.",
-    version="2.0.0",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# Enable CORS for cross-origin frontend support
+# CORS: explicit allow-list (comma-separated CORS_ALLOW_ORIGINS); never "*" with credentials
+_cors_origins = [o.strip() for o in os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8501,http://localhost:8501",
+).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Invalid user input (bad month, reversed range, ...) is a 400, not a silent default."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+app.include_router(ml_router)
+
+
+def _pm() -> RefillPersistenceManager:
+    # Store name / contact come from .env (MEDICAL_STORE_NAME / MEDICAL_STORE_CONTACT)
+    return RefillPersistenceManager()
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    contents = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).")
+    return contents
 
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
@@ -99,14 +133,35 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 # 1. SYSTEM HEALTH & METRICS
 # ------------------------------------------------------------------------------
 @app.get("/health", tags=["System"])
-def health_check():
-    """System health and readiness probe."""
+def health_check(db: Session = Depends(get_db)):
+    """Readiness probe: database ping, classification-rule source and serving model."""
+    db_ok = True
+    db_error = None
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:  # pragma: no cover
+        db_ok, db_error = False, str(e)
+    try:
+        from refillcare.data.medication_classifier import get_rules_status
+
+        rules = get_rules_status()
+    except Exception as e:  # pragma: no cover
+        rules = {"error": str(e)}
+    try:
+        from refillcare.ml.model_provider import ModelProvider
+
+        serving = ModelProvider.from_registry(db).describe()
+    except Exception as e:  # pragma: no cover
+        serving = {"error": str(e)}
     return {
-        "status": "healthy",
+        "status": "healthy" if db_ok else "degraded",
         "service": "RefillCare Enterprise API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "timestamp": datetime.utcnow().isoformat(),
-        "database": "connected",
+        "database": "connected" if db_ok else f"error: {db_error}",
+        "write_protection": "api-key" if os.getenv("REFILLCARE_API_KEY") else "local-machine-only",
+        "classification_rules": rules,
+        "serving_model": serving,
     }
 
 
@@ -140,11 +195,12 @@ def get_consensus_regimen_analytics(db: Session = Depends(get_db)):
 @app.post("/api/v1/sales/preview", response_model=SalesPreviewResponse, tags=["Sales Ingestion"])
 async def preview_sales_file(
     file: UploadFile = File(...),
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Validate and preview an uploaded sales file with strict DD-MM-YYYY date diagnostics."""
     srv = EnterpriseServices(db)
-    contents = await file.read()
+    contents = await _read_upload(file)
     try:
         res = srv.preview_sales_file(contents, file.filename or "uploaded_sales.xlsx")
         return res
@@ -154,17 +210,34 @@ async def preview_sales_file(
 
 @app.post("/api/v1/sales/ingest", response_model=SalesIngestionResponse, tags=["Sales Ingestion"])
 async def ingest_sales_file(
+    background: BackgroundTasks,
     file: UploadFile = File(...),
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
-    """Ingest validated sales records into persistent storage with an immutable batch ID."""
+    """Ingest validated sales records into persistent storage with an immutable batch ID.
+
+    The response re-plans the ML train/validation/test windows on the new data
+    (``ml_data_freshness``). With ``ML_AUTO_RETRAIN_ON_INGEST=true`` a due retrain cycle is queued
+    in the background; it only promotes when ``ML_AUTO_PROMOTE=true`` and the gate approves.
+    """
     srv = EnterpriseServices(db)
-    contents = await file.read()
+    contents = await _read_upload(file)
     try:
         res = srv.ingest_sales_file(contents, file.filename or "uploaded_sales.xlsx")
-        return res
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    fresh = res.get("ml_data_freshness") or {}
+    if fresh.get("retrain_recommended") and _env_flag("ML_AUTO_RETRAIN_ON_INGEST"):
+        from api.ml_routes import RetrainRequest, _run_retrain_background
+
+        background.add_task(_run_retrain_background, RetrainRequest(promote_best=_env_flag("ML_AUTO_PROMOTE")), actor)
+        res["ml_retrain_queued"] = True
+    return res
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 @app.get("/api/v1/sales/batches", response_model=List[ImportBatchResponse], tags=["Sales Ingestion"])
@@ -175,7 +248,8 @@ def list_batches(db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/sales/batches/{batch_id}/rollback", response_model=RollbackResponse, tags=["Sales Ingestion"])
-def rollback_import_batch(batch_id: str, db: Session = Depends(get_db)):
+def rollback_import_batch(batch_id: str, actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db)):
     """Safely undo an import batch, remove its records, and restore previous latest date."""
     srv = EnterpriseServices(db)
     try:
@@ -191,6 +265,7 @@ def rollback_import_batch(batch_id: str, db: Session = Depends(get_db)):
 @app.post("/api/v1/predictions/generate", response_model=PredictionGenerationSummary, tags=["Predictions"])
 def generate_predictions(
     req: Optional[GeneratePredictionsRequest] = None,
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Generate updated refill predictions and schedule reminder cycles."""
@@ -216,7 +291,8 @@ def get_prediction_snapshots(
 
 
 @app.post("/api/v1/predictions/evaluate", response_model=OutcomeEvaluationSummary, tags=["Predictions"])
-def evaluate_outcomes(db: Session = Depends(get_db)):
+def evaluate_outcomes(actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db)):
     """Evaluate accuracy of pending prediction snapshots against actual realized purchases."""
     srv = EnterpriseServices(db)
     try:
@@ -267,7 +343,7 @@ def get_daily_reminders(
 
 @app.get("/api/v1/review/summary", response_model=ClinicalReviewSummaryResponse, tags=["Clinical Review Queue"])
 def get_clinical_review_summary(
-    target_month: Optional[str] = Query("2026-10", description="Target forecast month in YYYY-MM format"),
+    target_month: Optional[str] = Query(None, description="Target forecast month YYYY-MM (default: active forecast month)"),
     db: Session = Depends(get_db),
 ):
     """Retrieve aggregate summary counts for the Clinical Review Queue (synced with Streamlit)."""
@@ -277,7 +353,7 @@ def get_clinical_review_summary(
 
 @app.get("/api/v1/review/queue", response_model=List[ClinicalReviewItem], tags=["Clinical Review Queue"])
 def get_clinical_review_queue(
-    target_month: Optional[str] = Query("2026-10", description="Target forecast month in YYYY-MM format"),
+    target_month: Optional[str] = Query(None, description="Target forecast month YYYY-MM (default: active forecast month)"),
     category: Optional[str] = Query(None, description="All, Missing Mobile, Stability Risk, Cold-Start"),
     missing_mobile_only: bool = Query(False, description="Filter for missing mobile numbers only"),
     search: Optional[str] = Query(None, description="Search by customer name, phone, or reason keyword"),
@@ -354,13 +430,14 @@ def list_models(db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/models/{version_id}/activate", tags=["Model Registry"])
-def activate_model(version_id: str, db: Session = Depends(get_db)):
+def activate_model(version_id: str, actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db)):
     """Set active production model version."""
     srv = EnterpriseServices(db)
     try:
-        return srv.activate_model(version_id)
+        return srv.activate_model(version_id, promoted_by=actor)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 # ------------------------------------------------------------------------------
@@ -407,6 +484,7 @@ def preview_whatsapp_message(
 @app.post("/api/v1/whatsapp/send-single", response_model=WhatsAppSingleSendResponse, tags=["WhatsApp Gateway"])
 def send_single_whatsapp(
     req: WhatsAppSingleSendRequest,
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Send or simulate single patient WhatsApp reminder."""
@@ -425,6 +503,7 @@ def send_single_whatsapp(
 @app.post("/api/v1/whatsapp/dispatch", response_model=WhatsAppDispatchResponse, tags=["WhatsApp Gateway"])
 def dispatch_whatsapp(
     req: WhatsAppBatchDispatchRequest,
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Dispatch WhatsApp reminders via Xinno API (supports dry-run mode)."""
@@ -432,11 +511,29 @@ def dispatch_whatsapp(
     try:
         return srv.dispatch_whatsapp_batch(
             reminder_date=req.reminder_date,
+            target_month=getattr(req, "target_month", None),
+            tier_filter=getattr(req, "tier_filter", None) or "ALL",
             dry_run=req.dry_run,
             batch_size=req.batch_size,
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/v1/whatsapp/webhook", response_model=WhatsAppWebhookResponse, tags=["WhatsApp Gateway"])
+async def receive_whatsapp_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Receive incoming WhatsApp replies/callbacks from Xinno or Meta cloud API.
+    Automatically honours STOP / UNSUBSCRIBE messages to opt out patients.
+    """
+    srv = EnterpriseServices(db)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return srv.handle_inbound_whatsapp_webhook(body)
 
 
 # ------------------------------------------------------------------------------
@@ -478,8 +575,8 @@ def get_today_reminder_queue(
     db: Session = Depends(get_db),
 ):
     """Retrieve today's pharmacist review queue with decision provenance."""
-    eval_date = target_date or date.today()
-    pm = RefillPersistenceManager()
+    eval_date = target_date or EnterpriseServices(db).forecast_as_of()
+    pm = _pm()
     return pm.get_today_review_queue(db, target_date=eval_date, path_filter=path, stability_filter=stability)
 
 
@@ -489,7 +586,7 @@ def get_reminder_stage_detail(reminder_id: str, db: Session = Depends(get_db)):
     stage = db.query(ReminderStageModel).filter(ReminderStageModel.reminder_id == reminder_id).first()
     if not stage:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Reminder stage '{reminder_id}' not found.")
-    pm = RefillPersistenceManager()
+    pm = _pm()
     queue = pm.get_today_review_queue(db, target_date=stage.target_send_date)
     for item in queue:
         if item["reminder_id"] == reminder_id:
@@ -498,9 +595,10 @@ def get_reminder_stage_detail(reminder_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/reminders/{reminder_id}/approve", response_model=ReviewActionResponse, tags=["V1 Pharmacist Review Queue"])
-def approve_reminder(reminder_id: str, db: Session = Depends(get_db)):
+def approve_reminder(reminder_id: str, actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db)):
     """Approve a reminder stage for dispatch."""
-    pm = RefillPersistenceManager()
+    pm = _pm()
     try:
         res = pm.approve_reminder_stage(db, reminder_id)
         return ReviewActionResponse(reminder_id=reminder_id, status=res["status"], success=True, message="Approved successfully")
@@ -509,9 +607,10 @@ def approve_reminder(reminder_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/reminders/{reminder_id}/reject", response_model=ReviewActionResponse, tags=["V1 Pharmacist Review Queue"])
-def reject_reminder(reminder_id: str, req: ReviewActionRequest, db: Session = Depends(get_db)):
+def reject_reminder(reminder_id: str, req: ReviewActionRequest, actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db)):
     """Reject a reminder stage with a pharmacist reason."""
-    pm = RefillPersistenceManager()
+    pm = _pm()
     try:
         res = pm.reject_reminder_stage(db, reminder_id, reason=req.reason or "Pharmacist rejected")
         return ReviewActionResponse(reminder_id=reminder_id, status=res["status"], success=True, message=res["reason"])
@@ -520,9 +619,10 @@ def reject_reminder(reminder_id: str, req: ReviewActionRequest, db: Session = De
 
 
 @app.post("/api/reminders/{reminder_id}/dispatch", response_model=ReviewActionResponse, tags=["V1 Pharmacist Review Queue"])
-def dispatch_single_reminder(reminder_id: str, req: ReviewActionRequest, db: Session = Depends(get_db)):
+def dispatch_single_reminder(reminder_id: str, req: ReviewActionRequest, actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db)):
     """Controlled dispatch of a single reminder (DRY-RUN by default)."""
-    pm = RefillPersistenceManager()
+    pm = _pm()
     try:
         res = pm.dispatch_reminder_stage(db, reminder_id, is_dry_run=req.is_dry_run)
         return ReviewActionResponse(
@@ -540,6 +640,8 @@ def dispatch_single_reminder(reminder_id: str, req: ReviewActionRequest, db: Ses
 def get_customer_refill_history(customer_id: str, db: Session = Depends(get_db)):
     """Get complete historical refill cycles and reminder stages for a patient."""
     cycles = db.query(ReminderCycleModel).filter(ReminderCycleModel.customer_id == customer_id).all()
+    if not cycles:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No refill cycles for customer '{customer_id}'.")
     c_name = cycles[0].decision.customer_name if (cycles and cycles[0].decision) else None
 
     cycles_list = []
@@ -570,6 +672,36 @@ def get_customer_refill_history(customer_id: str, db: Session = Depends(get_db))
         total_cycles=len(cycles_list),
         cycles=cycles_list,
     )
+
+
+@app.get("/api/customers/opt-outs", tags=["V1 Refill Decisions"])
+def list_opted_out_customers(db: Session = Depends(get_db)):
+    """Patients who opted out of WhatsApp reminders (via STOP reply or pharmacist action)."""
+    from refillcare.whatsapp.consent import list_opted_out
+
+    return list_opted_out(db)
+
+
+@app.post("/api/customers/{customer_id}/opt-out", response_model=CustomerOptInOutResponse, tags=["V1 Refill Decisions"])
+def opt_out_customer(
+    customer_id: str,
+    actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Manually opt a patient out of automated WhatsApp reminders."""
+    srv = EnterpriseServices(db)
+    return srv.set_customer_opt_in(customer_id=customer_id, opt_in=False)
+
+
+@app.post("/api/customers/{customer_id}/opt-in", response_model=CustomerOptInOutResponse, tags=["V1 Refill Decisions"])
+def opt_in_customer(
+    customer_id: str,
+    actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Manually re-enable automated WhatsApp reminders for a patient."""
+    srv = EnterpriseServices(db)
+    return srv.set_customer_opt_in(customer_id=customer_id, opt_in=True)
 
 
 # ------------------------------------------------------------------------------
@@ -621,6 +753,7 @@ def list_medication_classification_rules(
 @app.post("/api/v1/medications/rules", tags=["Medication Classifier"])
 def add_medication_classification_rule(
     req: AddMedicationRuleRequest,
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Add or update a medication classification rule in Supabase."""
@@ -641,6 +774,7 @@ def add_medication_classification_rule(
 @app.delete("/api/v1/medications/rules/{rule_id}", tags=["Medication Classifier"])
 def delete_medication_classification_rule(
     rule_id: str,
+    actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Delete a medication classification rule from Supabase by its ID."""

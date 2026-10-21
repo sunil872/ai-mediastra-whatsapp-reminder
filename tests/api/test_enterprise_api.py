@@ -18,30 +18,40 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def isolated_sales_history(monkeypatch, tmp_path):
-    """Isolate purchase history to temporary location with small sample to protect memory and production data."""
-    from api import services
-    sample_df = pd.DataFrame([
-        {
-            "customerId": "C101",
-            "customerName": "Existing Patient",
-            "itemId": "I201",
-            "itemName": "Existing Medicine",
-            "invoice_date": "2026-07-01",
-            "quantity": 30,
-            "packing": "10 Tabs",
-            "MOBILE_NO": "9876543210",
-            "import_batch_id": "BATCH_SAMPLE",
-            "transaction_number": "S0/1000",
-            "invoice_number": "S0/1000",
-            "transaction_type": "CUSTOMER_SALE",
-            "refillcare_eligible": True,
-        }
-    ])
-    temp_parquet = tmp_path / "test_purchase_history.parquet"
-    sample_df.to_parquet(temp_parquet, index=False)
-    monkeypatch.setattr(services, "HISTORY_PARQUET_PATH", temp_parquet)
+def isolated_store(monkeypatch, tmp_path):
+    """Run every API test against a temporary store: temp data folder + temp SQLite DB (never live data)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import database.models  # noqa: F401
+    from database.connection import Base, get_db
+
+    data_dir = tmp_path / "store"
+    (data_dir / "processed").mkdir(parents=True)
+    pd.DataFrame([{
+        "customerId": "C101", "customerName": "Existing Patient", "itemId": "I201", "itemName": "Existing Medicine",
+        "invoice_date": "2026-07-01", "quantity": 30, "packing": "10 Tabs", "MOBILE_NO": "9876543210",
+        "import_batch_id": "BATCH_SAMPLE", "transaction_number": "S0/1000", "invoice_number": "S0/1000",
+        "transaction_type": "CUSTOMER_SALE", "refillcare_eligible": True,
+    }]).to_parquet(data_dir / "processed" / "purchase_history.parquet", index=False)
+    monkeypatch.setenv("REFILLCARE_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("MEDICAL_STORE_NAME", "Test Pharmacy")
+
+    engine = create_engine(f"sqlite:///{(tmp_path / 'test.db').as_posix()}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    TestSession = sessionmaker(bind=engine)
+
+    def override_get_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
     yield
+    app.dependency_overrides.clear()
+    engine.dispose()
     import gc
     gc.collect()
 
@@ -152,13 +162,22 @@ def test_daily_reminders_and_csv_export():
 
 
 def test_model_registry():
-    """Verify model version listing and promotion."""
+    """Registry lists real versions only: baseline + legacy model, never fabricated metrics."""
     models_res = client.get("/api/v1/models")
     assert models_res.status_code == 200
     models = models_res.json()
-    assert len(models) >= 2
-    assert any(m["version_id"] == "v1.0.0" for m in models)
-    assert any(m["version_id"] == "v1.2.0-human-consensus" for m in models)
+    ids = {m["version_id"] for m in models}
+    assert "baseline-median-v1" in ids
+    legacy = next((m for m in models if m["version_id"] == "legacy-human-hgb"), None)
+    if legacy is not None:
+        assert legacy["is_validated"] is False
+        assert "within_7_days_pct" not in (legacy["metrics_train"] or {})
+
+
+def test_model_activation_requires_evaluation_evidence():
+    res = client.post("/api/v1/models/baseline-median-v1/activate")
+    assert res.status_code == 409
+    assert "evaluation_required" in res.json()["detail"]
 
 
 def test_consensus_regimen_analytics():
@@ -166,14 +185,15 @@ def test_consensus_regimen_analytics():
     res = client.get("/api/v1/analytics/consensus-regimen")
     assert res.status_code == 200
     data = res.json()
-    assert data["engine_version"] == "v1.2.0-human-consensus"
+    assert data["engine_version"]  # production version id from the registry
     assert len(data["regimens"]) >= 4
     assert any(r["regimen"] == "Once Daily (OD)" for r in data["regimens"])
     assert any(r["regimen"] == "Alternate Day / Intermittent (QOD)" for r in data["regimens"])
     assert any(r["regimen"] == "Twice Daily (BD)" for r in data["regimens"])
     assert any(r["regimen"] == "Thrice Daily (TID) / Multiple" for r in data["regimens"])
-    assert len(data["archetypes"]) >= 4
-    assert len(data["benchmarks"]) >= 3
+    # Benchmarks come only from completed evaluation runs - none exist in a fresh store
+    assert isinstance(data["benchmarks"], list)
+    assert all("measured" in b["status"] for b in data["benchmarks"])
 
 
 def test_whatsapp_dry_run_dispatch():
@@ -211,3 +231,44 @@ def test_quantile_uncertainty_api():
     data = res.json()
     assert ("overall_test_comparison" in data or "quantile_uncertainty_envelope" in data or "status" in data)
 
+
+
+# ------------------------------------------------------------------ WhatsApp consent (opt-out / opt-in)
+def test_webhook_stop_and_exact_start_drive_consent():
+    """Standalone STOP opts out; conversation never changes consent; only an exact START opts back in."""
+    phone = "919999988888"
+    assert client.post("/api/v1/whatsapp/webhook", json={"from": phone, "message": "Can I cancel this and get Dolo?"}).json()["action"] == "message_logged"
+    assert client.post("/api/v1/whatsapp/webhook", json={"from": phone, "message": "Please stop."}).json()["action"] == "opted_out"
+    opted = client.get("/api/customers/opt-outs").json()
+    assert [r["customer_id"] for r in opted] == ["CUST_9999988888"]
+
+    # Conversational "yes" / "restart" must never re-subscribe.
+    for msg in ("Yes, I bought it yesterday", "restart please"):
+        assert client.post("/api/v1/whatsapp/webhook", json={"from": phone, "message": msg}).json()["action"] == "message_logged"
+    assert len(client.get("/api/customers/opt-outs").json()) == 1
+
+    assert client.post("/api/v1/whatsapp/webhook", json={"from": phone, "message": "START"}).json()["action"] == "opted_in"
+    assert client.get("/api/customers/opt-outs").json() == []
+
+
+def test_send_single_returns_response_and_refuses_opted_out_phone():
+    payload = {"phone_number": "919515473474", "customer_name": "Test", "medications": "Telma 40",
+               "expected_refill_date": "2026-10-20", "tier": "DUE", "stage_offset": 0, "dry_run": True}
+    ok = client.post("/api/v1/whatsapp/send-single", json=payload)
+    assert ok.status_code == 200 and ok.json()["success"] is True
+
+    client.post("/api/v1/whatsapp/webhook", json={"from": "919515473474", "message": "STOP"})
+    blocked = client.post("/api/v1/whatsapp/send-single", json=payload).json()
+    assert blocked["success"] is False and blocked["response_payload"]["reason"] == "OPTED_OUT"
+
+
+def test_manual_opt_out_and_opt_in_endpoints():
+    assert client.post("/api/customers/C101/opt-out").json()["opt_in_whatsapp"] is False
+    assert [r["customer_id"] for r in client.get("/api/customers/opt-outs").json()] == ["C101"]
+    assert client.post("/api/customers/C101/opt-in").json()["opt_in_whatsapp"] is True
+    assert client.get("/api/customers/opt-outs").json() == []
+
+
+def test_ml_plan_endpoint_reports_freshness():
+    data = client.get("/api/v1/ml/plan").json()
+    assert "retrain_recommended" in data

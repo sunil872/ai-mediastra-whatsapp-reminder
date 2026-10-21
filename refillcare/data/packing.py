@@ -240,7 +240,31 @@ def enrich_total_units_purchased(
     return out
 
 
-def get_device_clinical_capacity(item_name: Optional[str], packing: Optional[str] = None) -> Optional[float]:
+INSULIN_BRAND_MARKERS = [
+    "BASUGINE", "LANTUS", "TRESIBA", "RYZODEG", "NOVOMIX", "HUMALOG", "HUMINSULIN", "HUMULIN",
+    "FIASP", "TOUJEO", "APIDRA", "INSULATARD", "MIXTARD", "INSUGEN", "DEGLUDEG", "DEGLUDEC",
+    "GLARGINE", "BASALOG", "GLARITUS", "WOSULIN", "NOVORAPID", "ACTRAPID", "LISPRO", "ASPART",
+]
+INSULIN_DEVICE_MARKERS = [
+    "PEN", "CATRIAGE", "CARTRIDGE", "CART", "PENFIL", "PENFILL", "REFIL", "REFILL", "FLEXPEN",
+    "KWIKPEN", "SOLOSTAR", "3ML", "VIAL", "10ML", "INJ",
+]
+
+
+def is_insulin_product(item_name: Optional[str], packing: Optional[str] = None, salt_name: Optional[str] = None) -> bool:
+    """Insulin detection by active salt first (brand-independent), then by known brand markers."""
+    name_upper = str(item_name or "").upper()
+    salt_upper = str(salt_name or "").upper()
+    if "INSULIN" in salt_upper or "INSULIN" in name_upper:
+        return True
+    return any(b in name_upper for b in INSULIN_BRAND_MARKERS)
+
+
+def get_device_clinical_capacity(
+    item_name: Optional[str],
+    packing: Optional[str] = None,
+    salt_name: Optional[str] = None,
+) -> Optional[float]:
     """
     Determine clinical standard in-use capacity / stability ceiling (in days)
     for medical devices, insulin pens, cartridges, and inhalers.
@@ -258,16 +282,11 @@ def get_device_clinical_capacity(item_name: Optional[str], packing: Optional[str
     name_upper = str(item_name).upper()
     pack_upper = str(packing).upper() if packing else ""
 
-    # 1. Insulin Pens, Disposable Pens, Cartridges, Penfills (100IU/ml, 3ml = 300IU)
-    is_insulin = any(ins in name_upper for ins in [
-        "BASUGINE", "LANTUS", "TRESIBA", "RYZODEG", "NOVOMIX", "HUMALOG",
-        "FIASP", "TOUJEO", "APIDRA", "INSULATARD", "MIXTARD", "INSUGEN", "DEGLUDEG"
-    ])
-    is_device = any(dev in name_upper or dev in pack_upper for dev in [
-        "PEN", "CATRIAGE", "CARTRIDGE", "PENFIL", "PENFILL", "FLEXPEN", "KWIKPEN", "SOLOSTAR", "3ML"
-    ])
-    if is_insulin and is_device:
-        return 30.0
+    # 1. Insulin Pens, Disposable Pens, Cartridges, Penfills, Vials (28-30 day in-use stability)
+    if is_insulin_product(item_name, packing, salt_name):
+        is_device = any(dev in name_upper or dev in pack_upper for dev in INSULIN_DEVICE_MARKERS)
+        if is_device or "INSULIN" in str(salt_name or "").upper():
+            return 30.0
 
     # 2. Inhalers, MDIs, Respicaps, Rotacaps
     is_inhaler = any(inh in name_upper for inh in [

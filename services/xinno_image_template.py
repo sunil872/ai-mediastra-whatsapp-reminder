@@ -72,7 +72,7 @@ logger = logging.getLogger("xinno_image_template")
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DOTENV_PATH = _PROJECT_ROOT / ".env"
-load_dotenv(dotenv_path=_DOTENV_PATH, override=True)
+load_dotenv(dotenv_path=_DOTENV_PATH, override=False)  # deployment env vars win over .env
 
 # Matches the existing text-template service default
 DEFAULT_API_URL = "https://cpaasreseller.notify24x7.com/REST/directApi/message"
@@ -209,7 +209,7 @@ def send_image_template_message(
     # 1. Load environment
     _proj_root = Path(__file__).resolve().parent.parent
     _dotenv = _proj_root / ".env"
-    load_dotenv(dotenv_path=_dotenv, override=True)
+    load_dotenv(dotenv_path=_dotenv, override=False)  # deployment env vars win over .env
 
     api_url = os.getenv("XINNO_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
     api_key = os.getenv("XINNO_API_KEY", "").strip()

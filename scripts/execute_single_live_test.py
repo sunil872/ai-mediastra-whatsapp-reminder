@@ -33,7 +33,7 @@ from services.xinno_image_template import send_image_template_message
 
 def run_live_test():
     # 1. Load environment
-    load_dotenv(dotenv_path=_ROOT / ".env", override=True)
+    load_dotenv(dotenv_path=_ROOT / ".env", override=False)  # deployment env vars win over .env
     
     csv_path = _ROOT / "data" / "image_campaign_single_test_customer.csv"
     if not csv_path.exists():

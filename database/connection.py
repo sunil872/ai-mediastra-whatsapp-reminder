@@ -1,15 +1,18 @@
 """Enterprise Database Engine and Session Management.
 
 Supports PostgreSQL via DATABASE_URL or fallback to local SQLite for offline/development mode.
+v1 is single-store: one database. The schema is created / additively migrated on first use.
 """
 
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Generator
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SQLITE_PATH = PROJECT_ROOT / "data" / "refillcare" / "processed" / "enterprise.db"
@@ -38,12 +41,35 @@ else:
         echo=False,
     )
 
-from sqlalchemy.orm import DeclarativeBase
 
 class Base(DeclarativeBase):
     pass
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+_SessionFactory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+_schema_ready = False
+_schema_lock = threading.Lock()
+
+
+def init_db() -> None:
+    """Create missing tables and add missing nullable columns (idempotent)."""
+    global _schema_ready
+    with _schema_lock:
+        if _schema_ready:
+            return
+        import database.models  # noqa: F401  (register all models on Base.metadata)
+        from database.migrations import apply_additive_migrations, drop_prototype_tenant_ml_tables
+
+        drop_prototype_tenant_ml_tables(engine)
+        Base.metadata.create_all(bind=engine)
+        apply_additive_migrations(engine, Base.metadata)
+        _schema_ready = True
+
+
+def SessionLocal() -> Session:  # noqa: N802  (kept for backwards compatibility)
+    """Open a session on the store database (schema ensured on first use)."""
+    init_db()
+    return _SessionFactory()
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -53,25 +79,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-
-def init_db() -> None:
-    """Create all database tables and ensure schema migrations if they do not exist."""
-    Base.metadata.create_all(bind=engine)
-
-    # SQLite lightweight migration guard for added columns
-    if DATABASE_URL and DATABASE_URL.startswith("sqlite"):
-        try:
-            with engine.connect() as conn:
-                from sqlalchemy import text
-                cursor = conn.execute(text("PRAGMA table_info(sales_transactions)"))
-                existing_cols = [row[1] for row in cursor.fetchall()]
-                if "transaction_type" not in existing_cols and len(existing_cols) > 0:
-                    conn.execute(text("ALTER TABLE sales_transactions ADD COLUMN transaction_type VARCHAR(32) DEFAULT 'CUSTOMER_SALE'"))
-                if "refillcare_eligible" not in existing_cols and len(existing_cols) > 0:
-                    conn.execute(text("ALTER TABLE sales_transactions ADD COLUMN refillcare_eligible BOOLEAN DEFAULT 1"))
-                if "exclusion_reason" not in existing_cols and len(existing_cols) > 0:
-                    conn.execute(text("ALTER TABLE sales_transactions ADD COLUMN exclusion_reason VARCHAR(64)"))
-                conn.commit()
-        except Exception:
-            pass

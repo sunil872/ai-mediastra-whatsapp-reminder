@@ -68,7 +68,10 @@
         <span class="status-dot"></span>
         <span id="api-status-text">FastAPI Connected</span>
       </div>
-      <div>Active Model: <strong id="sidebar-active-model">v1.2.0-consensus</strong></div>
+      <div>Active Model: <strong id="sidebar-active-model">loading…</strong></div>
+      <div style="margin-top: 0.4rem;">
+        <button class="btn btn-outline btn-sm" id="btn-set-api-key" title="Write actions send this key as X-API-Key">🔑 <span id="api-key-label">Set write key</span></button>
+      </div>
       <div>Mediastra Refillcare v2.0.0</div>
     </div>
   </aside>
@@ -101,7 +104,7 @@
         <!-- Notification Bell -->
         <button class="header-btn" id="btn-notifications" title="Clinical Notifications">
           <span>🔔</span>
-          <span class="notification-badge">2</span>
+          <span class="notification-badge" id="notification-badge" style="display:none;"></span>
         </button>
 
         <!-- Dark/Light Theme Toggle -->
@@ -126,11 +129,11 @@
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-blue">👥</div>
-              <span class="kpi-trend-pill trend-up">▲ +12% MoM</span>
+              <span class="kpi-trend-pill trend-up">Unique patients</span>
             </div>
             <div class="kpi-title">Monitored Patients</div>
             <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-customers">14,071</div>
+              <div class="kpi-value" id="kpi-customers">–</div>
               <div class="kpi-sparkline">
                 <span class="spark-bar" style="height: 12px; background: #3b82f6;"></span>
                 <span class="spark-bar" style="height: 16px; background: #3b82f6;"></span>
@@ -146,11 +149,11 @@
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-green">💊</div>
-              <span class="kpi-trend-pill trend-up">★ 80% Adherence</span>
+              <span class="kpi-trend-pill trend-up">Forecast month</span>
             </div>
             <div class="kpi-title">Scheduled Refills</div>
             <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-upcoming">11,212</div>
+              <div class="kpi-value" id="kpi-upcoming">–</div>
               <div class="kpi-sparkline">
                 <span class="spark-bar" style="height: 14px; background: #10b981;"></span>
                 <span class="spark-bar" style="height: 18px; background: #10b981;"></span>
@@ -159,7 +162,7 @@
                 <span class="spark-bar" style="height: 26px; background: #059669;"></span>
               </div>
             </div>
-            <div class="kpi-subtext">October 2026 forecast target pipeline</div>
+            <div class="kpi-subtext" id="kpi-target-month-label">Active forecast pipeline</div>
           </div>
 
           <!-- Card 3: Due Today -->
@@ -186,11 +189,11 @@
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-purple">🏥</div>
-              <span class="kpi-trend-pill trend-info">▲ +43%</span>
+              <span class="kpi-trend-pill trend-info">Supabase rules</span>
             </div>
             <div class="kpi-title">Chronic Therapy Portfolio</div>
             <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-chronic-count">1,920+</div>
+              <div class="kpi-value" id="kpi-chronic-count">–</div>
               <div class="kpi-sparkline">
                 <span class="spark-bar" style="height: 10px; background: #8b5cf6;"></span>
                 <span class="spark-bar" style="height: 15px; background: #8b5cf6;"></span>
@@ -234,51 +237,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td><code>#P-00270</code></td>
-                  <td>Oct 01, 2026</td>
-                  <td><strong>Ramesh Kumar</strong></td>
-                  <td>Telma 40 (Strip 15 Tab)</td>
-                  <td>Oct 07, 2026</td>
-                  <td><span class="badge badge-success">● DUE_REFILL</span></td>
-                  <td>
-                    <div class="action-btn-group">
-                      <button class="action-btn action-btn-approve" title="Approve Refill">✓</button>
-                      <button class="action-btn" title="View History">📋</button>
-                      <button class="action-btn action-btn-delete" title="Reject">✕</button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><code>#P-00269</code></td>
-                  <td>Oct 01, 2026</td>
-                  <td><strong>Sunita Sharma</strong></td>
-                  <td>Glycomet GP2 (Strip 15 Tab)</td>
-                  <td>Oct 08, 2026</td>
-                  <td><span class="badge badge-info">● SCHEDULED</span></td>
-                  <td>
-                    <div class="action-btn-group">
-                      <button class="action-btn action-btn-approve" title="Approve Refill">✓</button>
-                      <button class="action-btn" title="View History">📋</button>
-                      <button class="action-btn action-btn-delete" title="Reject">✕</button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><code>#P-00268</code></td>
-                  <td>Oct 02, 2026</td>
-                  <td><strong>Anand Verma</strong></td>
-                  <td>Atorva 10 (Strip 10 Tab)</td>
-                  <td>Oct 09, 2026</td>
-                  <td><span class="badge badge-purple">● MED-SYNC</span></td>
-                  <td>
-                    <div class="action-btn-group">
-                      <button class="action-btn action-btn-approve" title="Approve Refill">✓</button>
-                      <button class="action-btn" title="View History">📋</button>
-                      <button class="action-btn action-btn-delete" title="Reject">✕</button>
-                    </div>
-                  </td>
-                </tr>
+                <tr><td colspan="7" style="text-align:center; color: var(--text-muted);">Live refill activity appears in the Reminder List tab.</td></tr>
               </tbody>
             </table>
           </div>
@@ -521,8 +480,7 @@
               </select>
               <input type="date" id="reminder-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
               <select id="reminder-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="2026-10" selected>October 2026 (2026-10)</option>
-              </select>
+                              </select>
               <select id="reminder-stage-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
                 <option value="ALL" selected>All Stages</option>
                 <option value="-7 days">-7 days (Early Heads-up)</option>
@@ -758,9 +716,7 @@
             </div>
             <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
               <select id="review-target-month" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="2026-10" selected>October 2026 (2026-10)</option>
-                <option value="2026-09">September 2026 (2026-09)</option>
-              </select>
+                                              </select>
               <select id="review-category-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
                 <option value="All" selected>All Categories</option>
                 <option value="Missing Mobile">Missing Mobile (46)</option>
@@ -798,11 +754,37 @@
         </div>
       </section>
 
-      <!-- TAB 8: MODEL REGISTRY -->
+      <!-- TAB 8: MODEL REGISTRY & ML LIFECYCLE -->
       <section id="tab-models" class="tab-pane">
-        <div class="card">
+        <!-- Data freshness & dynamic train / validation / test windows -->
+        <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
-            <h3 class="card-title">🤖 Model Version Registry & Artifact Lineage</h3>
+            <div>
+              <h3 class="card-title">🧭 Data Freshness & Evaluation Windows</h3>
+              <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
+                Windows are re-derived from the latest sale on every load, so they move forward automatically when a new month is uploaded.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <button class="btn btn-outline" id="btn-ml-retrain">🔁 Retrain &amp; Evaluate</button>
+              <button class="btn btn-primary" id="btn-ml-retrain-promote">🚀 Retrain &amp; Promote if Gate Approves</button>
+            </div>
+          </div>
+          <div id="ml-freshness-banner" style="margin: 0.5rem 0 1rem;"></div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-ml-plan">
+              <thead>
+                <tr><th>Window</th><th>From</th><th>To</th><th>Purchases</th><th>Used for</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Registry -->
+        <div class="card" style="margin-bottom: 1.25rem;">
+          <div class="card-header">
+            <h3 class="card-title">🤖 Model Version Registry</h3>
           </div>
           <div class="table-responsive">
             <table class="data-table" id="table-models">
@@ -810,13 +792,29 @@
                 <tr>
                   <th>Version ID</th>
                   <th>Model Type</th>
-                  <th>Cutoff Date</th>
+                  <th>Train Cutoff</th>
                   <th>Train Samples</th>
-                  <th>Val MAE (Days)</th>
-                  <th>Within 3d (%)</th>
+                  <th>Within ±7d (measured)</th>
+                  <th>MAE (days)</th>
                   <th>Status</th>
                   <th>Action</th>
                 </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="ml-gate-result" style="margin-top: 1rem;"></div>
+        </div>
+
+        <!-- Recent evaluations -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📏 Recent Out-of-Time Evaluations</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-ml-evaluations">
+              <thead>
+                <tr><th>Run</th><th>Status</th><th>Window</th><th>Paired Events</th><th>Candidate</th><th>Candidate ±7d</th><th>Baseline ±7d</th></tr>
               </thead>
               <tbody></tbody>
             </table>
@@ -853,10 +851,9 @@
 
             <div style="display: flex; flex-direction: column; gap: 0.25rem;">
               <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;" id="wa-target-label">Target Date</label>
-              <input type="date" id="wa-target-date" value="2026-10-13" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+              <input type="date" id="wa-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
               <select id="wa-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="2026-10" selected>October 2026 (2026-10)</option>
-              </select>
+                              </select>
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 0.25rem;">
@@ -1037,6 +1034,31 @@
               </div>
               <div id="wa-single-send-feedback" style="margin-top: 0.75rem; display: none;"></div>
             </div>
+          </div>
+        </div>
+
+        <!-- Patient WhatsApp consent (opt-out / opt-in) -->
+        <div class="card" style="margin-top: 1.25rem;">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">🚫 Patient WhatsApp Consent</h3>
+              <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
+                Patients who reply STOP (or are opted out here) are skipped by every send path: batch, Med-Sync, single stage and test send.
+              </p>
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem;">
+            <input type="text" id="consent-customer-id" placeholder="Customer ID (e.g. S0/12345)" style="padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); width: 240px;">
+            <button class="btn btn-danger" id="btn-consent-opt-out">Opt Out</button>
+            <button class="btn btn-outline" id="btn-consent-opt-in">Opt In</button>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-opted-out">
+              <thead>
+                <tr><th>Customer ID</th><th>Name</th><th>Mobile</th><th>Updated</th><th>Action</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
           </div>
         </div>
       </section>
