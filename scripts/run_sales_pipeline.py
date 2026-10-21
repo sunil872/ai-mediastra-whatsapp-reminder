@@ -243,8 +243,8 @@ def main():
     parser.add_argument(
         "--salt-master",
         type=Path,
-        default=Path("data/refillcare/SALT WISE ITEMS.xlsx"),
-        help="Path to salt composition master Excel file (default: data/refillcare/SALT WISE ITEMS.xlsx).",
+        default=None,
+        help="Path to the item / salt master (default: data/refillcare/SALT ITEMS LIST.csv, or REFILLCARE_SALT_CATALOG).",
     )
     parser.add_argument(
         "--as-of-date",

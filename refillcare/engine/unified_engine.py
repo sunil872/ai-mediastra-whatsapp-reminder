@@ -108,6 +108,8 @@ class UnifiedRefillDecisionEngine:
         default_lead_buffer_days: int = 3,
         model_provider: Optional[Any] = None,
         identity_guard: Optional[bool] = None,
+        population_stats: Optional[Any] = None,
+        rules: Optional[Any] = None,
     ):
         """
         Args:
@@ -115,14 +117,21 @@ class UnifiedRefillDecisionEngine:
                 models). None keeps the legacy global human model.
             identity_guard: block outreach when the latest purchases of a customer key carry
                 different mobile numbers (merged patients). Default: env REFILLCARE_IDENTITY_GUARD (on).
+            population_stats: refillcare.features.context.PopulationStats (salt priors). Built
+                from the scored data by ``evaluate_all_customer_items`` when not given.
+            rules: refillcare.engine.prediction_rules.EngineRules. Default: from env.
         """
         import os
+
+        from refillcare.engine.prediction_rules import EngineRules
 
         self.default_lead_buffer_days = default_lead_buffer_days
         self.model_provider = model_provider
         if identity_guard is None:
             identity_guard = os.getenv("REFILLCARE_IDENTITY_GUARD", "true").strip().lower() in ("1", "true", "yes", "on")
         self.identity_guard = identity_guard
+        self.population_stats = population_stats
+        self.rules = rules if rules is not None else EngineRules.from_env()
 
     # ------------------------------------------------------------------
     # Provenance & safety post-processing
@@ -276,10 +285,13 @@ class UnifiedRefillDecisionEngine:
         transaction_numbers: Optional[List[str]] = None,
         salt_name: Optional[str] = None,
         mobile_history: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> RefillDecision:
         """Evaluate a single customer-item purchase history deterministically.
 
         ``mobile_history`` (mobile number per purchase, chronological) enables the identity guard.
+        ``context`` = ``refillcare.features.context.build_context(...)`` (visit + salt priors);
+        when omitted only the engine's salt priors are used.
         """
         dec = self._evaluate_core(
             customer_id=customer_id,
@@ -293,6 +305,7 @@ class UnifiedRefillDecisionEngine:
             as_of_date=as_of_date,
             transaction_numbers=transaction_numbers,
             salt_name=salt_name,
+            context=context,
         )
         return self._finalize(dec, mobile_history)
 
@@ -309,6 +322,7 @@ class UnifiedRefillDecisionEngine:
         as_of_date: Optional[date] = None,
         transaction_numbers: Optional[List[str]] = None,
         salt_name: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> RefillDecision:
         """Evaluate a single customer-item purchase history deterministically.
 
@@ -378,6 +392,13 @@ class UnifiedRefillDecisionEngine:
 
         # Compute DOS/EDS
         dos_days, latest_units = self.compute_dos(dates, quantities, packings, item_name, salt_name)
+
+        # Cross-item context: visit features (if supplied) + salt priors (engine-level)
+        ctx: Dict[str, Any] = dict(context or {})
+        if "salt_stats" not in ctx and self.population_stats is not None:
+            from refillcare.features.context import salt_key
+
+            ctx["salt_stats"] = self.population_stats.lookup(salt_key(salt_name, item_name))
 
         # Medication therapy classification gate: Exclude generic OTC / FMCG / Acute / Personal Care items
         from refillcare.data.medication_classifier import verify_medication_chronic_status
@@ -493,6 +514,7 @@ class UnifiedRefillDecisionEngine:
                     quantities=quantities,
                     packings=packings,
                     item_name=item_name,
+                    context=ctx,
                 )
 
                 from refillcare.data.packing import get_device_clinical_capacity
@@ -506,9 +528,24 @@ class UnifiedRefillDecisionEngine:
                     except (TypeError, ValueError):
                         q_last = 1.0
                     device_cap_days = device_cap_unit * q_last
+                    from refillcare.engine.prediction_rules import device_ceiling_days
+
+                    device_cap_days = device_ceiling_days(self.rules.device_cap_mode, device_cap_days, cad_med_val)
 
                 provider = self.model_provider
                 prod_kwargs = self._consensus_kwargs(provider.production if provider is not None else None)
+                routed_to_median = None
+                if prod_kwargs.get("use_ml", True):
+                    from refillcare.data.packing import is_insulin_product
+
+                    from refillcare.engine.prediction_rules import is_normal_quantity
+
+                    if self.rules.high_stability_median and stability_tier == STABILITY_HIGH and is_normal_quantity(feats):
+                        routed_to_median = "high-stability"
+                    elif self.rules.insulin_median and is_insulin_product(item_name, packings[-1] if packings else None, salt_name):
+                        routed_to_median = "insulin"
+                    if routed_to_median:
+                        prod_kwargs = {"use_ml": False, "model_version": prod_kwargs.get("model_version")}
                 consensus = evaluate_human_hybrid_prediction(
                     features=feats,
                     stability_tier=stability_tier,
@@ -529,6 +566,16 @@ class UnifiedRefillDecisionEngine:
                 predicted_interval = consensus["predicted_interval_days"]
                 reason_rule = consensus["consensus_reason"]
                 review_required = consensus["review_required"]
+                if routed_to_median:
+                    reason_rule = f"{reason_rule} [rule: {routed_to_median} -> personal median]"
+                if self.rules.dom_anchor and not review_required:
+                    from refillcare.engine.prediction_rules import dom_anchor_interval
+
+                    anchored, moved = dom_anchor_interval(last_date, predicted_interval, feats, purchase_count)
+                    if moved:
+                        reason_rule = f"{reason_rule} [rule: day-of-month anchor {predicted_interval}d -> {anchored}d]"
+                        predicted_interval = anchored
+                        consensus = {**consensus, "predicted_interval_days": anchored}
 
                 # Check 2: Model-Supply Divergence Guardrail (routes to Pharmacist Review)
                 if review_required:
@@ -663,9 +710,19 @@ class UnifiedRefillDecisionEngine:
                 path_b_sub_reason = "6M_RECURRING (>=3 distinct months)"
 
         if is_path_b_eligible:
-            # For eligible Path B, DOS/EDS is the authoritative prediction
+            # Short history: DOS/EDS, optionally blended with the personal median shrunk toward the
+            # salt median (refillcare.engine.prediction_rules.path_b_interval).
             if dos_days is not None and 10.0 <= dos_days <= 180.0:
-                predicted_interval = int(round(dos_days))
+                from refillcare.engine.prediction_rules import dom_anchor_interval, path_b_interval
+
+                pb_days, pb_method = path_b_interval(self.rules.path_b_mode, intervals, dos_days, ctx.get("salt_stats"))
+                predicted_interval = int(round(pb_days if pb_days is not None else dos_days))
+                if self.rules.dom_anchor:
+                    from refillcare.features.point_in_time import compute_point_in_time_features_single
+
+                    pb_feats = compute_point_in_time_features_single(dates=dates, quantities=quantities, packings=packings, item_name=item_name)
+                    predicted_interval, _ = dom_anchor_interval(last_date, predicted_interval, pb_feats, purchase_count)
+                path_b_sub_reason = f"{path_b_sub_reason}; method={pb_method}"
                 exp_date = last_date + timedelta(days=predicted_interval)
                 cycle_id = f"RC-{customer_id}-{item_id}-{last_date.strftime('%Y%m%d')}"
 
@@ -716,7 +773,7 @@ class UnifiedRefillDecisionEngine:
                     predicted_interval_days=predicted_interval,
                     last_purchase_date=last_date,
                     expected_refill_date=exp_date,
-                    decision_reason=f"Path B Eligible ({path_b_sub_reason}): Authoritative DOS/EDS prediction ({predicted_interval}d).",
+                    decision_reason=f"Path B Eligible ({path_b_sub_reason}): short-history prediction ({predicted_interval}d).",
                     cycle_id=cycle_id,
                 )
             else:
@@ -775,9 +832,14 @@ class UnifiedRefillDecisionEngine:
         self,
         df: pd.DataFrame,
         as_of_date: Optional[date] = None,
+        only_keys: Optional[set] = None,
     ) -> Tuple[pd.DataFrame, List[RefillDecision]]:
         """
         Evaluate full transaction dataframe in high-speed grouped batch.
+
+        ``df`` must contain every purchase of the patients being scored (visit features look at
+        their other medicines). ``only_keys`` = {(customerId, itemId)} limits which customer-items
+        are scored (incremental re-scoring after an upload).
 
         Returns:
             (decisions_df, decisions_list)
@@ -800,6 +862,10 @@ class UnifiedRefillDecisionEngine:
             df_clean = df_clean.loc[df_clean["invoice_date"].dt.date <= as_of_date]
 
         df_clean = pd.DataFrame(df_clean).sort_values("invoice_date").reset_index(drop=True)
+        # Patient = name + mobile, therapy = salt group (env switches; no-op on already-keyed rows)
+        from refillcare.data.identity import normalise_trajectory_keys
+
+        df_clean = normalise_trajectory_keys(df_clean)
 
         trajectories = {}
         cids = df_clean["customerId"].astype(str).values
@@ -845,10 +911,26 @@ class UnifiedRefillDecisionEngine:
                 t["packings"].append(packings[i] if bool(pd.notna(packings[i])) else None)
                 t["mobiles"].append(mobiles[i] if bool(pd.notna(mobiles[i])) else None)
 
+        from refillcare.features.context import PopulationStats, VisitIndex, build_context
+
+        visit_index = VisitIndex.from_trajectories({k: t["dates"] for k, t in trajectories.items()})
+        if self.population_stats is None:
+            self.population_stats = PopulationStats.from_events(
+                pd.DataFrame({
+                    "customerId": cids, "itemId": iids, "date": inv_dates,
+                    "quantity": qtys, "packing": packings, "salt": salts, "itemName": inames,
+                }),
+                as_of=as_of_date,
+            )
+
         decisions: List[RefillDecision] = []
         records_list: List[Dict[str, Any]] = []
 
         for key, t in trajectories.items():
+            if only_keys is not None and (str(t["cid"]).strip(), str(t["iid"]).strip()) not in only_keys:
+                continue
+            ctx_as_of = min(as_of_date, max(t["dates"])) if (as_of_date and t["dates"]) else (max(t["dates"]) if t["dates"] else as_of_date)
+            context = build_context(visit_index, self.population_stats, t["cid"], t["iid"], ctx_as_of, t.get("salt"), t["iname"]) if ctx_as_of else None
             dec = self.evaluate_customer_item_trajectory(
                 customer_id=t["cid"],
                 customer_name=str(t["cname"]) if pd.notna(t["cname"]) else str(t["cid"]),
@@ -861,6 +943,7 @@ class UnifiedRefillDecisionEngine:
                 as_of_date=as_of_date,
                 salt_name=t.get("salt"),
                 mobile_history=t["mobiles"],
+                context=context,
             )
             decisions.append(dec)
             records_list.append(dec.to_dict())

@@ -98,10 +98,12 @@ def seed_supabase_medication_rules():
                 "is_active": True,
             })
 
-    # 5. Mine leading oral chronic brands from SALT WISE ITEMS.csv catalog
+    # 5. Mine leading oral chronic brands from the SALT ITEMS LIST.csv catalog
     import csv
     import re
-    catalog_path = PROJECT_ROOT / "data" / "refillcare" / "SALT WISE ITEMS.csv"
+    from refillcare.data.enrichment import default_salt_catalog_path
+
+    catalog_path = default_salt_catalog_path()
     if catalog_path.exists():
         print(f"[+] Mining chronic brands from {catalog_path.name}...")
         chronic_brand_counts = {}

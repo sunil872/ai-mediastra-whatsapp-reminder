@@ -5,6 +5,8 @@ Examples:
     python scripts/ml_cli.py retrain                                  # train -> select on validation -> gate on test
     python scripts/ml_cli.py retrain --promote                        # ... and promote the best if the gate approves
     python scripts/ml_cli.py freshness                                # does fresher training data improve accuracy?
+    python scripts/ml_cli.py rules-ab --version <id>                  # which prediction rules help? (read-only)
+    python scripts/ml_cli.py rolling --folds 3                        # is the gain real across several unseen months?
     python scripts/ml_cli.py list
     python scripts/ml_cli.py train                                    # cutoff defaults to the planned train window
     python scripts/ml_cli.py evaluate --versions legacy-human-hgb baseline-median-v1 <new_version> --candidate <new_version>
@@ -42,6 +44,13 @@ def main() -> int:
     fr.add_argument("--step-days", type=int, help="gap between the two training cutoffs (default 30)")
     fr.add_argument("--max-events", type=int, default=3000)
     fr.add_argument("--max-train-events", type=int, default=150000)
+    ab = sub.add_parser("rules-ab", help="compare every prediction rule on the same unseen events (read-only)")
+    ab.add_argument("--version", help="model version (default: production)")
+    ab.add_argument("--max-events", type=int, default=3000)
+    ro = sub.add_parser("rolling", help="score the model + current rules on several back-to-back unseen months")
+    ro.add_argument("--folds", type=int, help="number of test months (default ML_ROLLING_FOLDS or 3)")
+    ro.add_argument("--max-events", type=int, default=3000)
+    ro.add_argument("--max-train-events", type=int, default=150000)
     rt = sub.add_parser("retrain")
     rt.add_argument("--promote", action="store_true", help="promote the validation-selected model if the test gate approves")
     rt.add_argument("--by", default="cli")
@@ -81,6 +90,15 @@ def main() -> int:
 
             _print(freshness_experiment(db, step_days=args.step_days, created_by="cli",
                                         max_eval_events=args.max_events, max_train_events=args.max_train_events))
+        elif args.cmd == "rules-ab":
+            from refillcare.ml.service import compare_rules
+
+            _print(compare_rules(db, version_id=args.version, max_events=args.max_events))
+        elif args.cmd == "rolling":
+            from refillcare.ml.service import rolling_evaluation
+
+            _print(rolling_evaluation(db, n_folds=args.folds, created_by="cli",
+                                      max_eval_events=args.max_events, max_train_events=args.max_train_events))
         elif args.cmd == "retrain":
             from refillcare.ml.service import retrain_cycle
 

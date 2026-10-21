@@ -24,6 +24,7 @@ from refillcare.data.transaction_classifier import (
     get_transaction_channel_summary,
 )
 from refillcare.data.enrichment import (
+    default_salt_catalog_path,
     load_salt_master,
     enrich_with_salt,
 )
@@ -49,7 +50,7 @@ def run_refillcare_data_pipeline(
 
     Args:
         transactions_path: Path to customer_data_fields.csv.
-        salt_master_path: Path to SALT WISE ITEMS.xlsx.
+        salt_master_path: Path to the item master (default: data/refillcare/SALT ITEMS LIST.csv).
         output_dir: Directory to store processed datasets.
         save_artifacts: Whether to write outputs to disk.
 
@@ -58,7 +59,7 @@ def run_refillcare_data_pipeline(
     """
     base_dir = Path(__file__).resolve().parent.parent.parent
     tx_path = Path(transactions_path) if transactions_path else base_dir / "data" / "refillcare" / "customer_data_fields.csv"
-    salt_path = Path(salt_master_path) if salt_master_path else base_dir / "data" / "refillcare" / "SALT WISE ITEMS.xlsx"
+    salt_path = Path(salt_master_path) if salt_master_path else default_salt_catalog_path()
     out_dir = Path(output_dir) if output_dir else base_dir / "data" / "refillcare" / "processed"
 
     print("================================================================")

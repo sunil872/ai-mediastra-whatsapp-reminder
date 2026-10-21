@@ -106,7 +106,7 @@ nb1_cells = [
     md_cell("""# RefillCare — Phase 1: Exploratory Data Analysis & System Discovery
 
 ## 1. Objective
-The objective of Phase 1 is to profile and audit the raw pharmacy transaction dataset (`customer_data_fields.csv`) and the medicine master catalog (`SALT WISE ITEMS.xlsx`).
+The objective of Phase 1 is to profile and audit the raw pharmacy transaction dataset (`customer_data_fields.csv`) and the medicine master catalog (`SALT ITEMS LIST.csv`).
 
 Key questions addressed:
 - What is the primary customer and medicine identity?
@@ -118,7 +118,7 @@ Key questions addressed:
 
     code_cell(COMMON_HEADER + """
 raw_csv_path = find_file("data/refillcare/customer_data_fields.csv")
-salt_excel_path = find_file("data/refillcare/SALT WISE ITEMS.xlsx")
+salt_excel_path = find_file("data/refillcare/SALT ITEMS LIST.csv")
 
 print(f"Project root:  {project_root}")
 print(f"Raw CSV path:  {raw_csv_path} (exists: {raw_csv_path.exists()})")

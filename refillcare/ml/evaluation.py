@@ -46,6 +46,9 @@ def prepare_purchase_events(history_df: pd.DataFrame) -> pd.DataFrame:
     df = df[df["customerId"].notna() & df["itemId"].notna()]
     df["invoice_date"] = pd.to_datetime(df["invoice_date"], errors="coerce")
     df = df[df["invoice_date"].notna()]
+    from refillcare.data.identity import normalise_trajectory_keys
+
+    df = normalise_trajectory_keys(df)
     df["customerId"] = df["customerId"].astype(str).str.strip()
     df["itemId"] = df["itemId"].astype(str).str.strip()
     df["quantity"] = pd.to_numeric(df.get("quantity"), errors="coerce") if "quantity" in df.columns else np.nan
@@ -141,7 +144,7 @@ def predict_days_of_supply(ev: Dict[str, Any], engine) -> Optional[float]:
     return float(dos) if dos is not None and dos > 0 else None
 
 
-def predict_engine(ev: Dict[str, Any], engine) -> Dict[str, Any]:
+def predict_engine(ev: Dict[str, Any], engine, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     dec = engine.evaluate_customer_item_trajectory(
         customer_id=ev["customer_id"],
         customer_name=ev["customer_id"],
@@ -154,6 +157,7 @@ def predict_engine(ev: Dict[str, Any], engine) -> Dict[str, Any]:
         as_of_date=ev["dates"][-1],
         salt_name=ev.get("salt"),
         mobile_history=None,  # identity guard is an outreach rule, not a forecasting rule
+        context=context,
     )
     pred = float(dec.predicted_interval_days) if dec.is_eligible and dec.predicted_interval_days else None
     return {
@@ -242,6 +246,7 @@ def run_backtest(
     """
     from refillcare.data.packing import is_insulin_product
     from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
+    from refillcare.features.context import PopulationStats, VisitIndex, build_context
 
     rng = np.random.default_rng(seed)
     pe = prepare_purchase_events(history_df)
@@ -249,9 +254,16 @@ def run_backtest(
     sel = build_evaluation_events(pe, eval_start, eval_end, min_prior_purchases, max_target_days, max_events, seed)
     events = sel["events"]
 
-    ref_engine = UnifiedRefillDecisionEngine(identity_guard=False)
+    # Point-in-time context, identical for every method: visit queries only see purchases up to
+    # each event's date; salt priors are built from purchases before the evaluation window.
+    visit_index = VisitIndex.from_events(pe)
+    salt_stats = PopulationStats.from_events(pe, as_of=eval_start - timedelta(days=1))
+    ref_engine = UnifiedRefillDecisionEngine(identity_guard=False, population_stats=salt_stats)
+    for eng in engine_variants.values():
+        eng.population_stats = salt_stats
     rows: List[Dict[str, Any]] = []
     for ev in events:
+        ctx = build_context(visit_index, salt_stats, ev["customer_id"], ev["item_id"], ev["dates"][-1], ev.get("salt"), ev["item_name"])
         row: Dict[str, Any] = {
             "actual": ev["actual_days"],
             "depth": _depth_bucket(ev["history_len"]),
@@ -260,7 +272,7 @@ def run_backtest(
             DOS_METHOD: predict_days_of_supply(ev, ref_engine),
         }
         for name, eng in engine_variants.items():
-            r = predict_engine(ev, eng)
+            r = predict_engine(ev, eng, ctx)
             row[name] = r["pred"]
             row[f"{name}::path"] = r["path"]
             row[f"{name}::stability"] = r["stability"]
@@ -318,6 +330,8 @@ def run_backtest(
         "evaluation_window": {"start": eval_start.isoformat(), "end": eval_end.isoformat()},
         "data_end": data_end.isoformat() if data_end else None,
         "params": {
+            "engine_rules": {name: getattr(getattr(eng, "rules", None), "describe", lambda: None)() for name, eng in engine_variants.items()},
+            "salt_priors": {"as_of": salt_stats.as_of, "salts": len(salt_stats.by_salt)},
             "min_prior_purchases": min_prior_purchases,
             "max_target_days": max_target_days,
             "max_events": max_events,

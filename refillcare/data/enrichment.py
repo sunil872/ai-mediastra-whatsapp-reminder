@@ -1,22 +1,63 @@
 """SALT Master enrichment module for RefillCare.
 
-Provides functionality to load the master catalog 'SALT WISE ITEMS.xlsx'
+Provides functionality to load the item master catalog ('SALT ITEMS LIST.csv')
 and enrich transaction records with active ingredient (SALT) composition
 and pharmaceutical categorization.
+
+Catalog columns used: Code, Item Name, PACK, SALT, CATEGORY, ITEMCAT (S.No is ignored).
+Tax (GST / HSN), stock (CLQTY) and manufacturer columns of the old export are not needed.
 """
 
+import os
 from pathlib import Path
-from typing import Union, Optional, Tuple
-import pandas as pd
+from typing import Optional, Tuple, Union
+
 import numpy as np
+import pandas as pd
+
+SALT_CATALOG_FILENAME = "SALT ITEMS LIST.csv"
+# Older exports, still read when the new file is absent (header after 5 metadata rows)
+LEGACY_SALT_CATALOG_FILENAMES = ("SALT WISE ITEMS.csv", "SALT WISE ITEMS.xlsx")
+SALT_CATALOG_REQUIRED_COLUMNS = ("Code", "Item Name", "SALT")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def load_salt_master(file_path: Union[str, Path]) -> pd.DataFrame:
-    """Load and normalize the SALT WISE ITEMS master catalog.
+def default_salt_catalog_path() -> Path:
+    """The item master: ``REFILLCARE_SALT_CATALOG`` if set, else data/refillcare/SALT ITEMS LIST.csv.
 
-    Excel details confirmed in Phase 1:
-    - Sheet name: 'Rate List'
-    - Header starts at Excel row 6 -> skiprows=5
+    Falls back to a legacy 'SALT WISE ITEMS' export only when the new file does not exist.
+    """
+    override = os.getenv("REFILLCARE_SALT_CATALOG")
+    if override:
+        return Path(override)
+    folder = _PROJECT_ROOT / "data" / "refillcare"
+    preferred = folder / SALT_CATALOG_FILENAME
+    if preferred.exists():
+        return preferred
+    for name in LEGACY_SALT_CATALOG_FILENAMES:
+        if (folder / name).exists():
+            return folder / name
+    return preferred
+
+
+def _read_catalog_file(path: Path) -> pd.DataFrame:
+    """CSV with the header on line 1 (current file) or after metadata rows (legacy export)."""
+    if path.suffix.lower() in (".xlsx", ".xls"):
+        return pd.read_excel(path, sheet_name="Rate List", skiprows=5, engine="openpyxl")
+    skip = 0
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for i, line in enumerate(f):
+            if line.startswith("S.No,"):
+                skip = i
+                break
+            if i > 20:
+                break
+    return pd.read_csv(path, skiprows=skip, dtype=str, encoding="utf-8", encoding_errors="ignore")
+
+
+def load_salt_master(file_path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
+    """Load and normalize the item master catalog (default: :func:`default_salt_catalog_path`).
+
     - Total master rows: ~36,963
     - Key mapping column: 'Code' (maps to itemCode/itemId)
 
@@ -26,29 +67,23 @@ def load_salt_master(file_path: Union[str, Path]) -> pd.DataFrame:
     2. Retain the first deterministic occurrence per 'Code'.
 
     Args:
-        file_path: Path to the 'SALT WISE ITEMS.xlsx' Excel file.
+        file_path: Path to the catalog (.csv, or a legacy .xlsx export).
 
     Returns:
         pd.DataFrame: Cleaned SALT master DataFrame indexed by normalized Code.
     """
-    path = Path(file_path)
+    path = Path(file_path) if file_path else default_salt_catalog_path()
     if not path.exists():
         raise FileNotFoundError(f"SALT master file not found at: {path}")
 
-    # Read Excel skipping 5 metadata header rows
-    raw_df = pd.read_excel(
-        path,
-        sheet_name="Rate List",
-        skiprows=5,
-        engine="openpyxl",
-    )
+    raw_df = _read_catalog_file(path)
 
     # Clean column names (strip whitespace)
     raw_df.columns = [str(c).strip() for c in raw_df.columns]
 
-    # Required Code column check
-    if "Code" not in raw_df.columns:
-        raise KeyError(f"Expected 'Code' column in SALT master. Found columns: {list(raw_df.columns)}")
+    missing = [c for c in SALT_CATALOG_REQUIRED_COLUMNS if c not in raw_df.columns]
+    if missing:
+        raise KeyError(f"SALT master is missing columns {missing}. Found columns: {list(raw_df.columns)}")
 
     df = raw_df.copy()
 

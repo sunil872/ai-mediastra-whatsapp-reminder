@@ -117,10 +117,83 @@ def data_freshness(db: Session, history_df: Optional[pd.DataFrame] = None) -> Di
     }
 
 
-def _engine_for(loaded: LoadedModel):
+def _engine_for(loaded: LoadedModel, rules: Any = None):
     from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
 
-    return UnifiedRefillDecisionEngine(model_provider=ModelProvider(loaded, None, resolved=True), identity_guard=False)
+    return UnifiedRefillDecisionEngine(model_provider=ModelProvider(loaded, None, resolved=True), identity_guard=False, rules=rules)
+
+
+def compare_rules(
+    db: Session,
+    version_id: Optional[str] = None,
+    eval_start: Optional[date] = None,
+    eval_end: Optional[date] = None,
+    max_events: Optional[int] = 3000,
+    history_df: Optional[pd.DataFrame] = None,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """A/B every prediction rule on the same unseen events (test window by default).
+
+    Variants: no rules, each rule alone, all rules. Read-only: nothing is stored or promoted.
+    Use the result to decide which ``REFILLCARE_RULE_*`` switches to turn on.
+    """
+    from refillcare.engine.prediction_rules import EngineRules
+
+    reg.ensure_bootstrap_versions(db)
+    v = reg.get_version(db, version_id) if version_id else reg.get_by_status(db, reg.FAMILY_PATH_A_INTERVAL, reg.STATUS_PRODUCTION)
+    if v is None:
+        raise ValueError(f"Model version '{version_id}' not found.")
+    loaded = load_version(v)
+    if loaded is None:
+        raise ValueError(f"Model version '{v.version_id}' has no usable artifact.")
+    hist = history_df if history_df is not None else load_history()
+    if eval_start is None or eval_end is None:
+        win = default_evaluation_window(hist)
+        eval_start, eval_end = eval_start or win["start"], eval_end or win["end"]
+
+    off = EngineRules.legacy()
+    variants = {
+        "rules:none": off,
+        "rules:high_stability_median": EngineRules(high_stability_median=True),
+        "rules:insulin_median": EngineRules(insulin_median=True),
+        "rules:dom_anchor": EngineRules(dom_anchor=True),
+        "rules:path_b_shrink": EngineRules(path_b_mode="shrink"),
+        "rules:path_b_blend": EngineRules(path_b_mode="blend"),
+        "rules:device_cap_observed": EngineRules(device_cap_mode="observed"),
+        "rules:blend+device_cap_observed": EngineRules(path_b_mode="blend", device_cap_mode="observed"),
+        "rules:all(blend)": EngineRules(high_stability_median=True, insulin_median=True, dom_anchor=True, path_b_mode="blend", device_cap_mode="observed"),
+    }
+    engines = {name: _engine_for(loaded, rules) for name, rules in variants.items()}
+    report = run_backtest(hist, engines, eval_start, eval_end, candidate_method="rules:none", max_events=max_events, seed=seed)
+    methods = (report.get("paired_comparison") or {}).get("methods") or {}
+    keys = ("within_7_days_pct", "mae_days", "early_pct", "late_pct")
+    out = {name: {k: (methods.get(name) or {}).get(k) for k in keys} for name in variants}
+    seg_mae = {
+        s: {val: {name: (g.get("methods", {}).get(name) or {}).get("mae_days") for name in variants} | {"n": g.get("n")}
+            for val, g in (report.get("segments") or {}).get(s, {}).items()}
+        for s in ("therapy",)
+    }
+    base = out["rules:none"].get("within_7_days_pct")
+    for name, m in out.items():
+        w = m.get("within_7_days_pct")
+        m["within_7_gain_pp_vs_none"] = round(w - base, 2) if (w is not None and base is not None) else None
+    seg = {
+        s: {val: {name: (g.get("methods", {}).get(name) or {}).get("within_7_days_pct") for name in variants} | {"n": g.get("n")}
+            for val, g in (report.get("segments") or {}).get(s, {}).items()}
+        for s in ("depth", "therapy", "stability")
+    }
+    return {
+        "model_version": v.version_id,
+        "window": report.get("evaluation_window"),
+        "n_paired_events": (report.get("paired_comparison") or {}).get("n_events"),
+        "coverage": {name: (report.get("coverage") or {}).get(name) for name in variants},
+        "variants": out,
+        "segments_within_7": seg,
+        "segments_mae": seg_mae,
+        "how_to_apply": "Set REFILLCARE_RULE_HIGH_STABILITY_MEDIAN / _INSULIN_MEDIAN / _DOM_ANCHOR=true, "
+                        "REFILLCARE_RULE_PATH_B_MODE=shrink|blend and REFILLCARE_RULE_DEVICE_CAP_MODE=observed "
+                        "for rules that gain; restart the app.",
+    }
 
 
 def run_evaluation(
@@ -341,6 +414,117 @@ def freshness_experiment(
         "fresh_minus_older_within_7_pp": gain,
         "fresher_data_helps": bool(gain is not None and gain > 0),
         "gate_for_fresh_model": gate_for_version(db, fresh.version_id, run.run_id),
+    }
+
+
+def rolling_folds(history_df: pd.DataFrame, n_folds: Optional[int] = None) -> List[Dict[str, date]]:
+    """Back-to-back test months ending at the planned test window (newest first).
+
+    Each fold keeps the same gap as :func:`plan_time_splits`: its model is trained only up to the day
+    before a validation-sized gap ahead of the fold, so no fold is ever scored by a model that saw it.
+    """
+    n_folds = n_folds or _env_int("ML_ROLLING_FOLDS", 3)
+    plan = plan_time_splits(history_df)
+    test_days = (plan["test"]["end"] - plan["test"]["start"]).days + 1
+    gap_days = (plan["validation"]["end"] - plan["validation"]["start"]).days + 1
+    folds: List[Dict[str, date]] = []
+    for k in range(n_folds):
+        end = plan["test"]["end"] - timedelta(days=k * test_days)
+        start = end - timedelta(days=test_days - 1)
+        train_end = start - timedelta(days=gap_days + 1)
+        if (train_end - plan["data_start"]).days < MIN_TRAIN_DAYS:
+            break
+        folds.append({"start": start, "end": end, "train_end": train_end})
+    if not folds:
+        raise ValueError("Not enough history for a rolling evaluation.")
+    return folds
+
+
+def rolling_evaluation(
+    db: Session,
+    history_df: Optional[pd.DataFrame] = None,
+    n_folds: Optional[int] = None,
+    created_by: str = "system",
+    max_eval_events: Optional[int] = 3000,
+    max_train_events: int = 150000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Is a gain real or one month's noise? Score the same recipe on several unseen months.
+
+    Per fold: the HGB model trained up to that fold's cutoff (reused if it exists), scored with the
+    current rules (``REFILLCARE_RULE_*``) and with no rules, against the baseline engine and the raw
+    personal median. Nothing is promoted; fold models are registered as candidates like any other
+    training run.
+    """
+    from refillcare.engine.prediction_rules import EngineRules
+    from refillcare.ml.evaluation import BASELINE_METHOD
+
+    hist = history_df if history_df is not None else load_history()
+    folds = rolling_folds(hist, n_folds)
+    reg.ensure_bootstrap_versions(db)
+    baseline_loaded = load_version(reg.get_version(db, reg.BASELINE_VERSION_ID))
+    rules_now = EngineRules.from_env()
+    methods = {
+        "raw_median": BASELINE_METHOD,
+        "baseline_engine": "engine[baseline]",
+        "model_no_rules": "engine[model:no_rules]",
+        "model_current_rules": "engine[model:current_rules]",
+    }
+    keys = ("within_7_days_pct", "within_7_days_ci95", "mae_days", "early_pct", "late_pct")
+
+    fold_results: List[Dict[str, Any]] = []
+    for f in folds:
+        model, trained_now = _model_for_cutoff(db, hist, f["train_end"], max_train_events, created_by)
+        loaded = load_version(model)
+        if loaded is None:
+            raise RuntimeError(f"Model {model.version_id} has no usable artifact.")
+        engines = {
+            methods["baseline_engine"]: _engine_for(baseline_loaded, rules_now),
+            methods["model_no_rules"]: _engine_for(loaded, EngineRules.legacy()),
+            methods["model_current_rules"]: _engine_for(loaded, rules_now),
+        }
+        report = run_backtest(hist, engines, f["start"], f["end"], candidate_method=methods["model_current_rules"],
+                              max_events=max_eval_events, seed=seed)
+        pc = report.get("paired_comparison") or {}
+        got = pc.get("methods") or {}
+        insulin = (((report.get("segments") or {}).get("therapy") or {}).get("insulin") or {}).get("methods") or {}
+        fold_results.append({
+            "window": {"start": f["start"], "end": f["end"]},
+            "model_version": model.version_id,
+            "model_train_cutoff": f["train_end"],
+            "model_trained_now": trained_now,
+            "n_paired_events": pc.get("n_events"),
+            "methods": {label: {k: (got.get(m) or {}).get(k) for k in keys} for label, m in methods.items()},
+            "insulin_mae": {label: (insulin.get(m) or {}).get("mae_days") for label, m in methods.items()},
+        })
+
+    def _pooled(label: str, key: str) -> Optional[float]:
+        pairs = [(r["methods"][label].get(key), r["n_paired_events"] or 0) for r in fold_results]
+        pairs = [(v, n) for v, n in pairs if v is not None and n]
+        total = sum(n for _, n in pairs)
+        return round(sum(v * n for v, n in pairs) / total, 2) if total else None
+
+    def _gains(a: str, b: str) -> List[Optional[float]]:
+        out: List[Optional[float]] = []
+        for r in fold_results:
+            wa, wb = r["methods"][a].get("within_7_days_pct"), r["methods"][b].get("within_7_days_pct")
+            out.append(round(wa - wb, 2) if wa is not None and wb is not None else None)
+        return out
+
+    pooled = {label: {k: _pooled(label, k) for k in ("within_7_days_pct", "mae_days", "early_pct", "late_pct")}
+              for label in methods}
+    model_vs_baseline = _gains("model_current_rules", "baseline_engine")
+    rules_vs_none = _gains("model_current_rules", "model_no_rules")
+    return {
+        "folds": fold_results,
+        "n_folds": len(fold_results),
+        "n_paired_events_total": sum(r["n_paired_events"] or 0 for r in fold_results),
+        "current_rules": rules_now.describe(),
+        "pooled": pooled,
+        "model_vs_baseline_within_7_pp_by_fold": model_vs_baseline,
+        "rules_vs_no_rules_within_7_pp_by_fold": rules_vs_none,
+        "model_beats_baseline_every_fold": all(g is not None and g > 0 for g in model_vs_baseline),
+        "rules_help_every_fold": all(g is not None and g >= 0 for g in rules_vs_none),
     }
 
 

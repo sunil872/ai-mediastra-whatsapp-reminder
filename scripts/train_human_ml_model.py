@@ -26,7 +26,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 
 from refillcare.data.medication_classifier import is_chronic_medication
 from refillcare.data.packing import parse_pack_units
-from refillcare.features.point_in_time import POINT_IN_TIME_FEATURE_COLS
+from refillcare.features.point_in_time import BASE_FEATURE_COLS as POINT_IN_TIME_FEATURE_COLS  # legacy 28-feature schema
 
 DATA_PATH = Path("data/refillcare/processed/clean_transactions.parquet")
 OUTPUT_MODEL_PATH = Path("data/refillcare/processed/models/human_ml_refill_model.joblib")

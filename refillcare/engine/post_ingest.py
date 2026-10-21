@@ -55,16 +55,32 @@ def mirror_import_batch(db: Session, result: Dict[str, Any], filename: str, chec
     db.commit()
 
 
-def _affected_rows(result: Dict[str, Any], updated_df: pd.DataFrame) -> pd.DataFrame:
+def _affected_keys(result: Dict[str, Any]) -> set:
     added = result.get("records_appended_df")
     if added is None or added.empty:
         added = result.get("valid_records_df")
     if added is None or added.empty:
-        return updated_df.iloc[0:0]
-    keys = set(zip(added["customerId"].astype(str).str.strip(), added["itemId"].astype(str).str.strip()))
-    cid = updated_df["customerId"].astype(str).str.strip()
-    iid = updated_df["itemId"].astype(str).str.strip()
-    return updated_df[[k in keys for k in zip(cid, iid)]]
+        return set()
+    return set(zip(added["customerId"].astype(str).str.strip(), added["itemId"].astype(str).str.strip()))
+
+
+def _keyed_history(updated_df: pd.DataFrame, raw_keys: set) -> tuple:
+    """Re-key the full history (patient = name + mobile, therapy = salt group, per env) and map the
+    upload's raw (name, item) keys onto the new keys."""
+    from refillcare.data.identity import BRAND_ITEM_COL, SOURCE_CUSTOMER_COL, normalise_trajectory_keys
+
+    keyed = normalise_trajectory_keys(updated_df)
+    src = list(zip(keyed[SOURCE_CUSTOMER_COL].astype(str).str.strip(), keyed[BRAND_ITEM_COL].astype(str).str.strip()))
+    mask = [k in raw_keys for k in src]
+    touched = keyed.loc[mask]
+    keys = set(zip(touched["customerId"].astype(str).str.strip(), touched["itemId"].astype(str).str.strip()))
+    return keyed, keys
+
+
+def _affected_patient_rows(updated_df: pd.DataFrame, keys: set) -> pd.DataFrame:
+    """All purchases (every medicine) of the patients touched by the upload - visit features need them."""
+    customers = {c for c, _ in keys}
+    return updated_df[updated_df["customerId"].astype(str).str.strip().isin(customers)]
 
 
 def sync_after_ingest(db: Session, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -81,9 +97,17 @@ def sync_after_ingest(db: Session, result: Dict[str, Any]) -> Dict[str, Any]:
     if updated_df is None or updated_df.empty or m.get("new_records_added", 0) <= 0:
         return {}
 
+    from refillcare.features.context import PopulationStats
+    from refillcare.ml.evaluation import prepare_purchase_events
+
+    updated_df, keys = _keyed_history(updated_df, _affected_keys(result))
     provider = ModelProvider.from_registry(db)
-    engine = UnifiedRefillDecisionEngine(model_provider=provider)
-    _, decisions = engine.evaluate_all_customer_items(_affected_rows(result, updated_df), as_of_date=eval_as_of)
+    # Salt priors from the whole store history (not just the touched patients)
+    salt_stats = PopulationStats.from_events(prepare_purchase_events(updated_df), as_of=latest)
+    engine = UnifiedRefillDecisionEngine(model_provider=provider, population_stats=salt_stats)
+    _, decisions = engine.evaluate_all_customer_items(
+        _affected_patient_rows(updated_df, keys), as_of_date=eval_as_of, only_keys=keys
+    )
 
     pm = RefillPersistenceManager()
     pm.save_refill_decisions(db, decisions)

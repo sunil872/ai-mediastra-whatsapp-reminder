@@ -354,17 +354,15 @@ def extract_salt_molecules(salt_str: Optional[str]) -> List[str]:
 
 
 def load_salt_catalog() -> Dict[str, Dict[str, str]]:
-    """Load item-to-salt catalog from SALT WISE ITEMS.csv (or .xlsx) with in-memory caching."""
+    """Load item-to-salt catalog from SALT ITEMS LIST.csv (legacy SALT WISE ITEMS.csv) with in-memory caching."""
     global _SALT_CATALOG, _SALT_CATALOG_LOADED
     if _SALT_CATALOG_LOADED:
         return _SALT_CATALOG
 
     import csv
-    base_dir = Path(__file__).resolve().parent.parent.parent
-    csv_candidates = [
-        base_dir / "data" / "refillcare" / "SALT WISE ITEMS.csv",
-        Path("data/refillcare/SALT WISE ITEMS.csv"),
-    ]
+    from refillcare.data.enrichment import default_salt_catalog_path
+
+    csv_candidates = [p for p in (default_salt_catalog_path(),) if p.suffix.lower() == ".csv"]
 
     for cpath in csv_candidates:
         if cpath.exists():
@@ -635,7 +633,7 @@ def classify_medication(
 
     Dual-Key Clinical Architecture:
     Evaluates both Item/Brand Name and Active Salt/Chemical Composition.
-    If salt_name is not provided, automatically resolves it from the SALT WISE catalog.
+    If salt_name is not provided, automatically resolves it from the SALT ITEMS LIST catalog.
 
     Args:
         item_name: Full medication / item name string from ERP/POS.

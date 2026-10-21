@@ -494,6 +494,10 @@ def predict_with_bundle(bundle: Optional[Dict[str, Any]], features: Dict[str, An
         vals = [np.nan if features[c] is None else float(features[c]) for c in feat_cols]
         X_in = pd.DataFrame([vals], columns=feat_cols)
         pred = float(bundle["model"].predict(X_in)[0])
+        transform = ((bundle.get("metadata") or {}).get("target_transform")) or "days"
+        if transform == "log_ratio_to_personal_median":
+            median = max(5.0, float(features.get("historical_median_interval") or 30.0))
+            pred = median * float(np.exp(np.clip(pred, -3.0, 3.0)))
     except Exception as e:  # pragma: no cover - defensive
         _record_fallback("predict_error", repr(e))
         return None

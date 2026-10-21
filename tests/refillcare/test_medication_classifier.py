@@ -284,7 +284,7 @@ def test_strict_syrup_and_drop_exclusions():
 
 def test_catalog_automatic_salt_lookup():
     """Verify that catalog fallback automatically resolves salt when salt_name is None."""
-    # OBORAVO 25 is in SALT WISE ITEMS.csv with salt EMPAGLIFLOZIN-25MG
+    # OBORAVO 25 is in SALT ITEMS LIST.csv with salt EMPAGLIFLOZIN-25MG
     res = classify_medication("OBORAVO 25", packing="1X10")
     assert res["is_chronic_eligible"] is True, f"Catalog fallback failed for OBORAVO 25: {res}"
 

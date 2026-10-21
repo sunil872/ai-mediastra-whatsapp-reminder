@@ -41,7 +41,7 @@ RefillCare solves these clinical and behavioral failure modes through:
 flowchart TD
     subgraph Data_Layer ["1. Ingestion, Cleansing & Wholesale Isolation Gate"]
         Raw["Raw ERP / POS Sales Files<br/>(CSV / Excel)"]
-        Salt["Master Chemical Salt Catalog<br/>(SALT WISE ITEMS.xlsx)"]
+        Salt["Master Chemical Salt Catalog<br/>(SALT ITEMS LIST.csv)"]
         Classifier{"Transaction Classifier<br/>(transaction_classifier.py)"}
         B2B["B2B / Inter-Store (SB/...)<br/>- 100% Upstream Isolation<br/>- Preserved for B2B Audit"]
         Clean["Retail Customer Sales (S0/...)<br/>- RefillCare Eligible"]

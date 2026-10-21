@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,12 @@ logger = logging.getLogger("refillcare.ml.training")
 
 PATH_A_MIN_HISTORY = 6  # Path A uses the model only for customer-items with >= 6 purchases
 
+# The model learns the patient's deviation from their own median, log(interval / median), instead
+# of raw days: one model then fits 30-day and 90-day patients alike. predict_with_bundle inverts it.
+TARGET_RAW = "days"
+TARGET_LOG_RATIO = "log_ratio_to_personal_median"
+TARGET_TRANSFORMS = (TARGET_RAW, TARGET_LOG_RATIO)
+
 
 def build_training_matrix(
     history_df: pd.DataFrame,
@@ -37,15 +44,28 @@ def build_training_matrix(
     min_history: int = PATH_A_MIN_HISTORY,
     max_events: Optional[int] = 150_000,
     seed: int = 42,
+    label_horizon_days: Optional[int] = None,
+    salt_stats: Optional[Any] = None,
 ) -> pd.DataFrame:
-    """Feature matrix for purchases dated in [train_start, train_end] whose next purchase is known.
+    """Feature matrix for purchases dated in [train_start, train_end - label_horizon] whose next
+    purchase is known by ``train_end``.
 
     Leakage guard: the *target* (next purchase) must also be on or before ``train_end``, so nothing
     after the cutoff is used.
+
+    Label-bias guard: purchases in the last ``label_horizon_days`` before the cutoff are not used
+    as training events. For them only *short* refills are already observed, which taught the model
+    that refills come sooner than they do (env ML_TRAIN_LABEL_HORIZON_DAYS, default 90).
     """
+    from refillcare.features.context import PopulationStats, VisitIndex, build_context
+
+    horizon = label_horizon_days if label_horizon_days is not None else int(os.getenv("ML_TRAIN_LABEL_HORIZON_DAYS", "90"))
     pe = prepare_purchase_events(history_df)
     pe = pe[pe["date"] <= pd.Timestamp(train_end)]  # hide post-cutoff purchases entirely
-    sel = build_evaluation_events(pe, train_start, train_end, min_prior_purchases=min_history - 1, max_events=max_events, seed=seed)
+    event_end = train_end - timedelta(days=max(0, horizon))
+    sel = build_evaluation_events(pe, train_start, event_end, min_prior_purchases=min_history - 1, max_events=max_events, seed=seed)
+    visit_index = VisitIndex.from_events(pe)
+    stats = salt_stats if salt_stats is not None else PopulationStats.from_events(pe, as_of=train_end)
     rows: List[Dict[str, Any]] = []
     for ev in sel["events"]:
         feats = compute_point_in_time_features_single(
@@ -53,6 +73,7 @@ def build_training_matrix(
             quantities=ev["quantities"],
             packings=ev["packings"],
             item_name=ev["item_name"],
+            context=build_context(visit_index, stats, ev["customer_id"], ev["item_id"], ev["dates"][-1], ev.get("salt"), ev["item_name"]),
         )
         row = {c: float(feats.get(c) or 0.0) if feats.get(c) is not None else np.nan for c in POINT_IN_TIME_FEATURE_COLS}
         row["target_days"] = ev["actual_days"]
@@ -76,25 +97,40 @@ def train_interval_model(
     hyperparameters: Optional[Dict[str, Any]] = None,
     created_by: str = "system",
     seed: int = 42,
+    target_transform: Optional[str] = None,
+    label_horizon_days: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Train a HistGradientBoosting interval model and register it as a candidate."""
+    """Train a HistGradientBoosting interval model and register it as a candidate.
+
+    ``target_transform``: ``log_ratio_to_personal_median`` (default, env ML_TARGET_TRANSFORM) or ``days``.
+    """
     from sklearn.ensemble import HistGradientBoostingRegressor
     import joblib
 
     train_start = train_start or date(2000, 1, 1)
     t0 = time.time()
-    mat = build_training_matrix(history_df, train_start, train_end, max_events=max_events, seed=seed)
+    transform = (target_transform or os.getenv("ML_TARGET_TRANSFORM", TARGET_LOG_RATIO)).strip()
+    if transform not in TARGET_TRANSFORMS:
+        raise ValueError(f"Unknown target_transform '{transform}'; use one of {TARGET_TRANSFORMS}.")
+    mat = build_training_matrix(history_df, train_start, train_end, max_events=max_events, seed=seed, label_horizon_days=label_horizon_days)
     if len(mat) < 500:
         raise ValueError(f"Only {len(mat)} training events before {train_end}; need >= 500.")
     mat = mat[(mat["target_days"] >= 5) & (mat["target_days"] <= 180)]
     X = mat[POINT_IN_TIME_FEATURE_COLS]
     y = mat["target_days"]
-    params = {"loss": "absolute_error", "max_iter": 300, "learning_rate": 0.05, "min_samples_leaf": 40, "random_state": seed}
+    personal_median = mat["historical_median_interval"].clip(lower=5.0)
+    y_fit = np.log(y / personal_median) if transform == TARGET_LOG_RATIO else y
+    params = {
+        "loss": "absolute_error", "max_iter": 600, "learning_rate": 0.05, "min_samples_leaf": 40,
+        "early_stopping": True, "validation_fraction": 0.1, "n_iter_no_change": 25, "random_state": seed,
+    }
     params.update(hyperparameters or {})
     model = HistGradientBoostingRegressor(**params)
-    model.fit(X, y)
-    train_pred = model.predict(X)
+    model.fit(X, y_fit)
+    raw = model.predict(X)
+    train_pred = personal_median.to_numpy() * np.exp(raw) if transform == TARGET_LOG_RATIO else raw
     train_metrics = {
+        "iterations_used": int(getattr(model, "n_iter_", params["max_iter"])),
         "train_events": int(len(mat)),
         "train_mae_days": round(float(np.abs(train_pred - y).mean()), 2),
         "train_within_7_days_pct": round(float((np.abs(train_pred - y) <= 7).mean() * 100), 2),
@@ -115,6 +151,8 @@ def train_interval_model(
             "train_cutoff": train_end.isoformat(),
             "train_samples": int(len(mat)),
             "postprocess": "safety_only",
+            "target_transform": transform,
+            "label_horizon_days": label_horizon_days if label_horizon_days is not None else int(os.getenv("ML_TRAIN_LABEL_HORIZON_DAYS", "90")),
             "feature_source": "refillcare.features.point_in_time.compute_point_in_time_features_single",
             "trained_at": datetime.utcnow().isoformat(),
             **{k: v for k, v in train_metrics.items() if k != "note"},

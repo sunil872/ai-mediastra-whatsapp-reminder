@@ -9,7 +9,8 @@ Rules (configurable per call, defaults from environment):
 - Non-inferiority vs the current production engine: within-7 may not drop by more than
   ``ML_GATE_MAX_PROD_REGRESSION_PP`` (1.0) (skipped when the candidate *is* production).
 - No segment with >= ``ML_GATE_SEGMENT_MIN_N`` (50) events may regress vs the baseline by more
-  than ``ML_GATE_MAX_SEGMENT_REGRESSION_PP`` (5.0) - insulin / device therapy always checked.
+  than ``ML_GATE_MAX_SEGMENT_REGRESSION_PP`` (5.0) on within-7, nor by more than
+  ``ML_GATE_MAX_SEGMENT_MAE_REGRESSION_DAYS`` (1.5) on MAE - insulin / device therapy always checked.
 - The early (spam) rate may not exceed the baseline's by more than 5 pp.
 - Baseline-type candidates only need enough events + non-inferiority vs production
   (they are the safe fallback policy).
@@ -37,6 +38,7 @@ def gate_config() -> Dict[str, float]:
         "max_prod_regression_pp": _env_float("ML_GATE_MAX_PROD_REGRESSION_PP", 1.0),
         "segment_min_n": _env_float("ML_GATE_SEGMENT_MIN_N", 50),
         "max_segment_regression_pp": _env_float("ML_GATE_MAX_SEGMENT_REGRESSION_PP", 5.0),
+        "max_segment_mae_regression_days": _env_float("ML_GATE_MAX_SEGMENT_MAE_REGRESSION_DAYS", 1.5),
         "max_early_increase_pp": _env_float("ML_GATE_MAX_EARLY_INCREASE_PP", 5.0),
     }
 
@@ -116,6 +118,14 @@ def evaluate_gate(
                     (c7 - b7) >= -cfg["max_segment_regression_pp"],
                     f"n={seg.get('n')}: {c7}% vs baseline {b7}%",
                 )
+                cm = (sm.get(candidate_method) or {}).get("mae_days")
+                bm = (sm.get(BASELINE_METHOD) or {}).get("mae_days")
+                if cm is not None and bm is not None:
+                    check(
+                        f"segment_mae:{seg_name}={val}",
+                        (cm - bm) <= cfg["max_segment_mae_regression_days"],
+                        f"n={seg.get('n')}: MAE {cm}d vs baseline {bm}d (max +{cfg['max_segment_mae_regression_days']})",
+                    )
 
     if production_method and production_method != candidate_method and production_method in methods:
         p7 = methods[production_method].get("within_7_days_pct")

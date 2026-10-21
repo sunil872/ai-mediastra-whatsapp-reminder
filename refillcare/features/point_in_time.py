@@ -51,12 +51,62 @@ POINT_IN_TIME_FEATURE_COLS = [
     "purchase_month",
 ]
 
+# Calendar: many patients buy on a fixed part of the month (salary / pension days).
+CALENDAR_FEATURE_COLS = [
+    "last_purchase_dom",
+    "last_purchase_weekday",
+    "usual_purchase_dom",
+    "dom_spread_days",
+    "dom_anchor_shift_days",
+    "dom_fit_gain_days",
+]
+# Visit level: the patient's other medicines (needs refillcare.features.context.VisitIndex).
+VISIT_FEATURE_COLS = [
+    "days_since_prev_visit_any_item",
+    "visits_last_180d",
+    "active_items_180d",
+    "other_item_next_due_days",
+    "other_items_due_within_30d",
+]
+# Salt level: store-wide priors per salt + strength, incl. a default dosage per day
+# (needs refillcare.features.context.PopulationStats built from the SALT ITEMS LIST enrichment).
+SALT_FEATURE_COLS = [
+    "salt_median_interval",
+    "salt_customer_items",
+    "salt_units_per_day",
+    "dose_supply_days",
+    "personal_vs_salt_interval_ratio",
+]
+BASE_FEATURE_COLS = list(POINT_IN_TIME_FEATURE_COLS)
+POINT_IN_TIME_FEATURE_COLS = BASE_FEATURE_COLS + CALENDAR_FEATURE_COLS + VISIT_FEATURE_COLS + SALT_FEATURE_COLS
+
+DOM_CYCLE_DAYS = 30.44
+
+
+def _circular_dom(days_of_month: List[int]) -> Tuple[Optional[float], Optional[float]]:
+    """Circular mean day-of-month (1..30) and spread in days for recent purchases."""
+    if not days_of_month:
+        return None, None
+    ang = 2 * np.pi * (np.asarray(days_of_month, dtype=float) - 1) / DOM_CYCLE_DAYS
+    c, s_ = float(np.mean(np.cos(ang))), float(np.mean(np.sin(ang)))
+    r = float(np.hypot(c, s_))
+    mean_dom = (np.arctan2(s_, c) % (2 * np.pi)) * DOM_CYCLE_DAYS / (2 * np.pi) + 1
+    spread = float(np.sqrt(max(0.0, -2.0 * np.log(max(r, 1e-9))))) * DOM_CYCLE_DAYS / (2 * np.pi)
+    return round(float(mean_dom), 2), round(spread, 2)
+
+
+def dom_shift(target_dom: float, current_dom: float) -> float:
+    """Signed shortest move (days) from ``current_dom`` to ``target_dom`` on a month cycle."""
+    d = (target_dom - current_dom + DOM_CYCLE_DAYS / 2) % DOM_CYCLE_DAYS - DOM_CYCLE_DAYS / 2
+    return round(float(d), 2)
+
 
 def compute_point_in_time_features_single(
     dates: List[date],
     quantities: Optional[List[float]] = None,
     packings: Optional[List[Optional[str]]] = None,
     item_name: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Compute point-in-time features for the latest purchase N from history 1...N.
 
@@ -65,6 +115,8 @@ def compute_point_in_time_features_single(
         quantities: List of quantities purchased for each transaction.
         packings: List of packing strings for each transaction.
         item_name: Optional fallback item name for packing parsing.
+        context: Optional cross-item context from ``refillcare.features.context.build_context``
+            (``visit`` and ``salt_stats``). Missing context gives None (NaN) for those features.
 
     Returns:
         Dict[str, Any] containing all POINT_IN_TIME_FEATURE_COLS and metadata.
@@ -217,5 +269,43 @@ def compute_point_in_time_features_single(
         "customer_tenure_days": float(tenure_days),
         "purchase_month": month_val,
     }
+
+    # 7. Calendar anchoring (last 6 purchases)
+    usual_dom, dom_spread = _circular_dom([d.day for d in dates[-6:]]) if N >= 3 else (None, None)
+    pred_by_median = last_date.toordinal() + int(round(hist_median))
+    pred_dom = date.fromordinal(pred_by_median).day
+    # Does "same day each month" explain recent purchases better than "same interval"?
+    # (> 0: calendar-anchored buyer; a strict 30-day buyer drifts across dates and scores <= 0)
+    dom_fit_gain = None
+    if usual_dom is not None and len(intervals) >= 3:
+        recent_iv = np.asarray(intervals[-5:], dtype=float)
+        interval_err = float(np.mean(np.abs(recent_iv - np.median(recent_iv))))
+        dom_err = float(np.mean([abs(dom_shift(usual_dom, d.day)) for d in dates[-6:]]))
+        dom_fit_gain = round(interval_err - dom_err, 2)
+    feature_dict.update({
+        "dom_fit_gain_days": dom_fit_gain,
+        "last_purchase_dom": float(last_date.day),
+        "last_purchase_weekday": float(last_date.weekday()),
+        "usual_purchase_dom": usual_dom,
+        "dom_spread_days": dom_spread,
+        "dom_anchor_shift_days": dom_shift(usual_dom, pred_dom) if usual_dom is not None else None,
+    })
+
+    # 8. Visit level (other medicines of the same patient)
+    visit = (context or {}).get("visit") or {}
+    for col in VISIT_FEATURE_COLS:
+        feature_dict[col] = visit.get(col)
+
+    # 9. Salt priors + default dosage per day
+    st = (context or {}).get("salt_stats") or {}
+    salt_med = st.get("median_interval")
+    salt_upd = st.get("units_per_day")
+    feature_dict.update({
+        "salt_median_interval": salt_med,
+        "salt_customer_items": st.get("n"),
+        "salt_units_per_day": salt_upd,
+        "dose_supply_days": round(est_effective_supply / salt_upd, 1) if salt_upd else None,
+        "personal_vs_salt_interval_ratio": round(hist_median / salt_med, 3) if salt_med else None,
+    })
 
     return feature_dict

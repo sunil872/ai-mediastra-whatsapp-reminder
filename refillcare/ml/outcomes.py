@@ -28,6 +28,9 @@ def _purchase_index(history_df: pd.DataFrame) -> Dict[str, List[date]]:
     df = history_df
     if "refillcare_eligible" in df.columns:
         df = df[df["refillcare_eligible"].fillna(True).astype(bool)]
+    from refillcare.data.identity import normalise_trajectory_keys
+
+    df = normalise_trajectory_keys(df)  # same patient / therapy keys as the decisions
     keys = df["customerId"].astype(str).str.strip() + "_" + df["itemId"].astype(str).str.strip()
     dts = pd.to_datetime(df["invoice_date"], errors="coerce").dt.date
     idx: Dict[str, List[date]] = {}

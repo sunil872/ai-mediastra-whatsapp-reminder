@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from refillcare.data.packing import parse_pack_units
-from refillcare.features.point_in_time import POINT_IN_TIME_FEATURE_COLS
+from refillcare.features.point_in_time import BASE_FEATURE_COLS as POINT_IN_TIME_FEATURE_COLS  # legacy 28-feature schema
 from refillcare.models.supply_hybrid import (
     calculate_estimated_residual_inventory,
     calculate_dimensionally_correct_supply_bounds,
