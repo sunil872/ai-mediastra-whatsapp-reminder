@@ -54,9 +54,10 @@ export const ApiClient = {
 
 
   // 2. Sales Ingestion
-  async previewSalesFile(file) {
+  async previewSalesFile(file, columnMapping = null) {
     const formData = new FormData();
     formData.append("file", file);
+    if (columnMapping) formData.append("column_mapping", JSON.stringify(columnMapping));
     const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/preview`, {
       method: "POST",
       body: formData,
@@ -68,9 +69,23 @@ export const ApiClient = {
     return await res.json();
   },
 
-  async ingestSalesFile(file) {
+  async saveColumnMapping(headers, mapping) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/column-mapping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ headers, mapping }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Could not save the column mapping");
+    }
+    return await res.json();
+  },
+
+  async ingestSalesFile(file, columnMapping = null) {
     const formData = new FormData();
     formData.append("file", file);
+    if (columnMapping) formData.append("column_mapping", JSON.stringify(columnMapping));
     const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/ingest`, {
       method: "POST",
       body: formData,
@@ -455,6 +470,52 @@ export const ApiClient = {
       body: JSON.stringify({ promote_best: promoteBest }),
     });
     return await jsonOrThrow(res, "Failed to start retrain cycle");
+  },
+
+  // 12. Prediction settings, rule A/B, rolling test, identity cut-over, column-mapping profiles
+  async getMlSettings() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ml/settings`);
+    return await jsonOrThrow(res, "Failed to load prediction settings");
+  },
+
+  async startMlJob(kind) {
+    const path = kind === "rolling" ? "rolling" : "rules-ab";
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ml/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    return await jsonOrThrow(res, `Failed to start ${path}`);
+  },
+
+  async getMlReport(kind) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ml/reports/${kind}`);
+    if (res.status === 404) return null;
+    return await jsonOrThrow(res, `Failed to load ${kind} report`);
+  },
+
+  async getRekeyDryRun() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ml/identity/rekey`);
+    return await jsonOrThrow(res, "Failed to run the re-key dry run");
+  },
+
+  async applyRekey() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ml/identity/rekey`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    return await jsonOrThrow(res, "Failed to apply the re-key");
+  },
+
+  async getColumnMappings() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/column-mapping/profiles`);
+    return await jsonOrThrow(res, "Failed to load saved column mappings");
+  },
+
+  async deleteColumnMapping(profileId) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/column-mapping/profiles/${encodeURIComponent(profileId)}`, { method: "DELETE" });
+    return await jsonOrThrow(res, "Failed to delete the column mapping");
   },
 };
 

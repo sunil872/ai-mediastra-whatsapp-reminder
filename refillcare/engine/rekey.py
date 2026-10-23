@@ -28,6 +28,19 @@ logger = logging.getLogger("refillcare.engine.rekey")
 REKEY_REASON = "IDENTITY_REKEY: patient / therapy key changed (name+mobile, salt group)"
 
 
+def backup_sqlite_db() -> Optional[str]:
+    """Copy enterprise.db next to itself before a re-key (SQLite only; returns the backup path)."""
+    import shutil
+
+    from database.connection import DATABASE_URL, DEFAULT_SQLITE_PATH
+
+    if not DATABASE_URL.startswith("sqlite") or not DEFAULT_SQLITE_PATH.is_file():
+        return None
+    backup = DEFAULT_SQLITE_PATH.with_name(f"enterprise_backup_rekey_{datetime.now():%Y%m%d_%H%M%S}.db")
+    shutil.copy2(DEFAULT_SQLITE_PATH, backup)
+    return str(backup)
+
+
 def _cycle_id(customer_id: str, item_id: str, d: date) -> str:
     return f"RC-{customer_id}-{item_id}-{d.strftime('%Y%m%d')}"
 

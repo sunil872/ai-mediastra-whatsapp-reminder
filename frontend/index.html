@@ -371,7 +371,27 @@
           <!-- Preview & Validation Card -->
           <div id="upload-preview-area" style="display: none; margin-top: 1.5rem;">
             <h4 style="margin-bottom: 0.75rem; color: var(--primary);">📋 Ingestion Pre-flight Diagnostics</h4>
-            
+
+            <!-- Column mapping: auto-detected / saved per store; editable, required before first import of a new layout -->
+            <div id="column-mapping-panel" style="margin-bottom: 1.25rem;">
+              <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                <strong>🧭 Column Mapping</strong>
+                <span id="mapping-status" class="badge badge-info">-</span>
+                <button class="btn btn-outline" id="btn-edit-mapping" style="margin-left: auto; padding: 0.25rem 0.75rem;">Edit mapping</button>
+              </div>
+              <div id="mapping-warnings" style="display: none; padding: 0.6rem; border-radius: 8px; margin-bottom: 0.5rem;" class="badge-warning"></div>
+              <div class="table-responsive" id="mapping-table-wrap" style="display: none; max-height: 340px; margin-bottom: 0.5rem;">
+                <table class="data-table" id="table-column-mapping">
+                  <thead><tr><th>RefillCare field</th><th>Needed</th><th>Column in your file</th><th>Sample values</th><th>Match</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div id="mapping-actions" style="display: none; gap: 0.75rem; margin-bottom: 0.5rem;">
+                <button class="btn btn-primary" id="btn-save-mapping">💾 Save mapping & validate</button>
+              </div>
+              <p id="mapping-ignored" style="color: var(--text-muted); font-size: 0.8rem; margin: 0;"></p>
+            </div>
+
             <div class="kpi-grid" style="margin-bottom: 1rem;">
               <div class="kpi-card"><div class="kpi-title">Detected Format</div><div class="kpi-value" id="diag-format" style="font-size: 1.2rem;">-</div></div>
               <div class="kpi-card"><div class="kpi-title">Date Range</div><div class="kpi-value" id="diag-range" style="font-size: 1.2rem;">-</div></div>
@@ -392,6 +412,20 @@
               <button class="btn btn-primary" id="btn-confirm-ingest">🚀 Process & Commit Sales Data</button>
               <button class="btn btn-outline" id="btn-cancel-ingest">Cancel</button>
             </div>
+          </div>
+        </div>
+
+        <!-- Saved column mappings (per store and file layout) -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">🧭 Saved Column Mappings</h3>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">A file with the same columns as a saved layout is mapped automatically. Delete a mapping to have that layout detected and confirmed again.</p>
+          <div class="table-responsive">
+            <table class="data-table" id="table-column-mappings">
+              <thead><tr><th>Mapped fields</th><th>Source</th><th>Uses</th><th>Last used</th><th>Action</th></tr></thead>
+              <tbody></tbody>
+            </table>
           </div>
         </div>
 
@@ -807,7 +841,7 @@
         </div>
 
         <!-- Recent evaluations -->
-        <div class="card">
+        <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
             <h3 class="card-title">📏 Recent Out-of-Time Evaluations</h3>
           </div>
@@ -819,6 +853,59 @@
               <tbody></tbody>
             </table>
           </div>
+        </div>
+
+        <!-- Prediction settings (read-only; set in .env) -->
+        <div class="card" style="margin-bottom: 1.25rem;">
+          <div class="card-header">
+            <h3 class="card-title">⚙️ Prediction Settings</h3>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Rules, patient identity and therapy grouping the engine runs with. Change them in <code>.env</code> and restart; measure a rule first with the A/B test below.</p>
+          <div class="table-responsive">
+            <table class="data-table" id="table-ml-settings">
+              <thead><tr><th>Setting</th><th>Current value</th><th>.env switch</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Rule A/B and rolling test -->
+        <div class="card" style="margin-bottom: 1.25rem;">
+          <div class="card-header">
+            <h3 class="card-title">🧪 Rule A/B and Multi-Month Test</h3>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-outline" id="btn-ml-rules-ab">🧪 Run Rule A/B</button>
+              <button class="btn btn-outline" id="btn-ml-rolling">📆 Run 3-Month Test</button>
+            </div>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Rule A/B scores every rule on the same unseen test month (~3 min). The multi-month test trains one model per month and checks the gain holds in every month (~20 min, needs RAM). Both run in the background; results appear here.</p>
+          <div id="ml-rules-ab-meta" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></div>
+          <div class="table-responsive" style="margin-bottom: 1rem;">
+            <table class="data-table" id="table-ml-rules-ab">
+              <thead><tr><th>Rule variant</th><th>Within ±7d</th><th>Gain vs no rules (pp)</th><th>MAE (days)</th><th>Early %</th><th>Late %</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="ml-rolling-meta" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></div>
+          <div class="table-responsive">
+            <table class="data-table" id="table-ml-rolling">
+              <thead><tr><th>Test month</th><th>Events</th><th>Raw median ±7d</th><th>Baseline engine ±7d</th><th>Model ±7d</th><th>Model + rules ±7d</th><th>Model + rules MAE</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Identity cut-over -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">🔑 Patient Identity Cut-over</h3>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-outline" id="btn-rekey-dry">🔍 Dry Run</button>
+              <button class="btn btn-primary" id="btn-rekey-apply">Apply Re-key</button>
+            </div>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Run once after switching <code>REFILLCARE_PATIENT_IDENTITY=name_mobile</code> or <code>REFILLCARE_ITEM_GROUPING=salt</code>. Old-key reminders are retired, every patient is re-scored, and stages already sent are never sent again. The database is backed up first.</p>
+          <div id="rekey-result" style="font-size: 0.85rem;"></div>
         </div>
       </section>
 

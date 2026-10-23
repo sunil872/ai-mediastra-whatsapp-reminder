@@ -55,6 +55,35 @@ def _read_catalog_file(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, skiprows=skip, dtype=str, encoding="utf-8", encoding_errors="ignore")
 
 
+# The item-code column may be headed 'Code' (billing export) or 'itemCode' (renamed by the store)
+_CATALOG_CODE_ALIASES = {"code", "itemcode", "itemid", "productcode"}
+
+
+def _normalise_catalog_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = [str(c).strip() for c in df.columns]
+    if "Code" not in df.columns:
+        for c in df.columns:
+            if "".join(ch for ch in c.lower() if ch.isalnum()) in _CATALOG_CODE_ALIASES:
+                df = df.rename(columns={c: "Code"})
+                break
+    return df
+
+
+_CATALOG_BY_CODE: Optional[dict] = None
+
+
+def catalog_by_code() -> dict:
+    """{item code: {'Item Name', 'PACK', 'SALT', ...}} from the default catalogue (cached; {} if absent)."""
+    global _CATALOG_BY_CODE
+    if _CATALOG_BY_CODE is None:
+        try:
+            m = load_salt_master()
+            _CATALOG_BY_CODE = {str(r["Code"]): r for r in m.to_dict(orient="records")}
+        except (FileNotFoundError, KeyError, ValueError):
+            _CATALOG_BY_CODE = {}
+    return _CATALOG_BY_CODE
+
+
 def load_salt_master(file_path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     """Load and normalize the item master catalog (default: :func:`default_salt_catalog_path`).
 
@@ -76,10 +105,7 @@ def load_salt_master(file_path: Optional[Union[str, Path]] = None) -> pd.DataFra
     if not path.exists():
         raise FileNotFoundError(f"SALT master file not found at: {path}")
 
-    raw_df = _read_catalog_file(path)
-
-    # Clean column names (strip whitespace)
-    raw_df.columns = [str(c).strip() for c in raw_df.columns]
+    raw_df = _normalise_catalog_columns(_read_catalog_file(path))
 
     missing = [c for c in SALT_CATALOG_REQUIRED_COLUMNS if c not in raw_df.columns]
     if missing:

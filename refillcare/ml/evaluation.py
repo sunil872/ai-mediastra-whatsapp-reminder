@@ -51,7 +51,13 @@ def prepare_purchase_events(history_df: pd.DataFrame) -> pd.DataFrame:
     df = normalise_trajectory_keys(df)
     df["customerId"] = df["customerId"].astype(str).str.strip()
     df["itemId"] = df["itemId"].astype(str).str.strip()
-    df["quantity"] = pd.to_numeric(df.get("quantity"), errors="coerce") if "quantity" in df.columns else np.nan
+    if "quantity" in df.columns:
+        from refillcare.data.schema import supply_quantity
+
+        # Same supply as serving: billed + free quantity
+        df["quantity"] = supply_quantity(df["quantity"], df["freeQuantity"]) if "freeQuantity" in df.columns else pd.to_numeric(df["quantity"], errors="coerce")
+    else:
+        df["quantity"] = np.nan
     df["_date"] = df["invoice_date"].dt.normalize()
     salt_col = next((c for c in ("salt_composition", "SALT") if c in df.columns), None)
     agg = {

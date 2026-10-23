@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -22,8 +20,8 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
-from database.connection import DATABASE_URL, DEFAULT_SQLITE_PATH, SessionLocal  # noqa: E402
-from refillcare.engine.rekey import rekey_reminder_cycles  # noqa: E402
+from database.connection import SessionLocal  # noqa: E402
+from refillcare.engine.rekey import backup_sqlite_db, rekey_reminder_cycles  # noqa: E402
 from refillcare.ml.service import load_history  # noqa: E402
 
 
@@ -32,12 +30,9 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="write the changes (default: dry run)")
     args = ap.parse_args()
 
-    if args.apply and DATABASE_URL.startswith("sqlite") and DEFAULT_SQLITE_PATH.is_file():
-        backup = DEFAULT_SQLITE_PATH.with_name(f"enterprise_backup_rekey_{datetime.now():%Y%m%d_%H%M%S}.db")
-        shutil.copy2(DEFAULT_SQLITE_PATH, backup)
-        print(f"Backup: {backup}")
-    elif args.apply:
-        print("Not SQLite: take a database backup before continuing.", file=sys.stderr)
+    if args.apply:
+        backup = backup_sqlite_db()
+        print(f"Backup: {backup}" if backup else "Not SQLite: take a database backup before continuing.", file=sys.stderr if not backup else sys.stdout)
 
     db = SessionLocal()
     try:

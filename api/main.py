@@ -6,6 +6,7 @@ database session dependency injection, and static frontend mounting.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
     File,
+    Form,
     Query,
     status,
     Response,
@@ -37,6 +39,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from database.connection import get_db, init_db
 from api.schemas import (
+    ColumnMappingSaveRequest,
     SalesPreviewResponse,
     SalesIngestionResponse,
     ImportBatchResponse,
@@ -192,18 +195,83 @@ def get_consensus_regimen_analytics(db: Session = Depends(get_db)):
 # ------------------------------------------------------------------------------
 # 2. SALES DATA INGESTION & BATCH APIS
 # ------------------------------------------------------------------------------
-@app.post("/api/v1/sales/preview", response_model=SalesPreviewResponse, tags=["Sales Ingestion"])
-async def preview_sales_file(
+def _mapping_form(column_mapping: Optional[str]) -> Optional[Dict[str, Optional[str]]]:
+    """``column_mapping`` form field: JSON {RefillCare field: store header or null}."""
+    if not column_mapping:
+        return None
+    try:
+        m = json.loads(column_mapping)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="column_mapping must be JSON: {field: header}")
+    if not isinstance(m, dict):
+        raise HTTPException(status_code=400, detail="column_mapping must be a JSON object")
+    return {str(k): (str(v) if v else None) for k, v in m.items()}
+
+
+@app.post("/api/v1/sales/column-mapping/detect", tags=["Sales Ingestion"])
+async def detect_column_mapping(
     file: UploadFile = File(...),
+    column_mapping: Optional[str] = Form(None),
     actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
-    """Validate and preview an uploaded sales file with strict DD-MM-YYYY date diagnostics."""
+    """How this file's headers map to RefillCare fields: saved store profile, else auto-detected.
+
+    ``needs_confirmation`` is true only when a required field is missing; ``fields`` carries the
+    chosen column, confidence, source and sample values for the confirm screen.
+    """
     srv = EnterpriseServices(db)
     contents = await _read_upload(file)
     try:
-        res = srv.preview_sales_file(contents, file.filename or "uploaded_sales.xlsx")
+        return srv.detect_column_mapping(contents, file.filename or "uploaded_sales.csv", _mapping_form(column_mapping))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/v1/sales/column-mapping", tags=["Sales Ingestion"])
+def save_column_mapping(req: ColumnMappingSaveRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Save the confirmed mapping for this store and header layout (used automatically next time)."""
+    srv = EnterpriseServices(db)
+    try:
+        return srv.save_column_mapping(req.headers, req.mapping, actor=actor)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/v1/sales/column-mapping/profiles", tags=["Sales Ingestion"])
+def list_column_mappings(db: Session = Depends(get_db)):
+    """Saved column-mapping profiles of this store."""
+    return EnterpriseServices(db).list_column_mappings()
+
+
+@app.delete("/api/v1/sales/column-mapping/profiles/{profile_id}", tags=["Sales Ingestion"])
+def delete_column_mapping(profile_id: int, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Forget a saved mapping (the next upload with that layout is auto-detected again)."""
+    if not EnterpriseServices(db).delete_column_mapping(profile_id):
+        raise HTTPException(status_code=404, detail="Mapping profile not found")
+    return {"deleted": profile_id}
+
+
+@app.post("/api/v1/sales/preview", response_model=SalesPreviewResponse, tags=["Sales Ingestion"])
+async def preview_sales_file(
+    file: UploadFile = File(...),
+    column_mapping: Optional[str] = Form(None),
+    actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Validate and preview an uploaded sales file with strict DD-MM-YYYY date diagnostics.
+
+    Optional ``column_mapping`` (JSON) overrides the saved / auto-detected column mapping.
+    """
+    srv = EnterpriseServices(db)
+    contents = await _read_upload(file)
+    try:
+        res = srv.preview_sales_file(contents, file.filename or "uploaded_sales.xlsx", _mapping_form(column_mapping))
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -212,6 +280,7 @@ async def preview_sales_file(
 async def ingest_sales_file(
     background: BackgroundTasks,
     file: UploadFile = File(...),
+    column_mapping: Optional[str] = Form(None),
     actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
@@ -224,7 +293,9 @@ async def ingest_sales_file(
     srv = EnterpriseServices(db)
     contents = await _read_upload(file)
     try:
-        res = srv.ingest_sales_file(contents, file.filename or "uploaded_sales.xlsx")
+        res = srv.ingest_sales_file(contents, file.filename or "uploaded_sales.xlsx", _mapping_form(column_mapping), actor=actor)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     fresh = res.get("ml_data_freshness") or {}

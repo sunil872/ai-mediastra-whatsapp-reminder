@@ -54,10 +54,15 @@ data/refillcare/*.csv
 data/refillcare/*.xlsx
 data/refillcare/*.xls
 data/refillcare/raw/
+data/refillcare/raw_backup/
 data/refillcare/backups/
 data/refillcare/processed/*.parquet
 data/refillcare/processed/*.db
 data/refillcare/processed/*.sqlite
+# Generated per run: rule A/B / rolling-test reports and newly trained registry candidates
+data/refillcare/processed/ml_reports/
+data/refillcare/processed/models/hgb-*.joblib
+!data/refillcare/processed/models/hgb-20260617-20261016062117.joblib
 data/*.csv
 data/*.xlsx
 data/*.parquet
@@ -90,6 +95,7 @@ converted_markdown/
 
 # AI Agent Workspace & IDE Local Rules
 .agents/
+.claude/settings.local.json
 .user_uploaded/
 scratch*.py
 test.md

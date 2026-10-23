@@ -971,19 +971,113 @@ def build_reminder_list_csv(df: pd.DataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def render_saved_column_mappings() -> None:
+    """Saved per-store column mappings (delete one to have its layout detected again)."""
+    from database.connection import SessionLocal
+    from refillcare.data.column_mapping import delete_profile, list_profiles
+    from refillcare.store import StoreConfig
+
+    with SessionLocal() as mdb:
+        profiles = list_profiles(mdb, StoreConfig.from_env().store_id)
+    with st.expander(f"🧭 Saved Column Mappings ({len(profiles)})", expanded=False):
+        if not profiles:
+            st.caption("No saved mappings yet - the first successful upload saves one.")
+            return
+        for prof in profiles:
+            mapped = ", ".join(f"{f} ← {c}" for f, c in (prof["mapping"] or {}).items() if c)
+            c1, c2 = st.columns([5, 1])
+            c1.caption(f"{mapped}  ·  {prof['source']} ({prof['confirmed_by']}) · used {prof['use_count']}x · last {prof['last_used_at'] or '-'}")
+            if c2.button("Delete", key=f"del_mapping_{prof['profile_id']}"):
+                with SessionLocal() as mdb:
+                    delete_profile(mdb, prof["profile_id"])
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.rerun()
+
+
+_MAPPING_SOURCE_LABEL = {
+    "saved": "saved for this store", "user": "chosen by you", "auto": "auto-matched",
+    "saved_hint": "auto-matched (known header)", "suggestion": "suggested - please confirm", "none": "not in file",
+}
+
+
+def render_column_mapping_panel(report: Dict[str, Any], map_key: str, force_open: bool = False) -> None:
+    """Column mapping of the uploaded file: summary, and an editor to confirm / change it.
+
+    The confirmed mapping is saved per store and header layout (enterprise.db), so the next upload
+    with the same columns is mapped automatically (same code path as the FastAPI confirm screen).
+    """
+    fields = report.get("fields", []) or []
+    headers = list(report.get("headers", []) or [])
+    needs = bool(report.get("needs_confirmation"))
+    if needs:
+        status = f"⚠️ needs confirmation ({len(report.get('missing_required', []))} required field(s) not found)"
+    elif any(f.get("source") == "saved" for f in fields):
+        status = "✅ saved mapping for this store applied"
+    else:
+        status = "✅ all required columns auto-matched"
+    with st.expander(f"🧭 Column Mapping - {status}", expanded=needs or force_open):
+        for w in report.get("warnings", []) or []:
+            st.warning(w)
+        ignored = report.get("ignored_columns", []) or []
+        if ignored:
+            st.caption("Not stored (not needed for reminders): " + ", ".join(map(str, ignored)))
+        none_opt = "- not in file -"
+        options = [none_opt] + headers
+        h1, h2, h3, h4 = st.columns([2.2, 1, 2.2, 3])
+        h1.markdown("**RefillCare field**")
+        h2.markdown("**Needed**")
+        h3.markdown("**Column in your file**")
+        h4.markdown("**Sample values / match**")
+        chosen: Dict[str, Optional[str]] = {}
+        for f in fields:
+            c1, c2, c3, c4 = st.columns([2.2, 1, 2.2, 3])
+            c1.markdown(f.get("label", f["field"]))
+            c2.caption(f.get("role", ""))
+            col = f.get("column")
+            sel = c3.selectbox(
+                f.get("label", f["field"]), options, index=options.index(col) if col in headers else 0,
+                key=f"{map_key}::{f['field']}", label_visibility="collapsed",
+            )
+            samples = " | ".join(map(str, f.get("samples") or [])) or "-"
+            match = _MAPPING_SOURCE_LABEL.get(f.get("source", "none"), f.get("source", "")) if col else "not in file"
+            c4.caption(f"{samples}  ({match})")
+            chosen[f["field"]] = None if sel == none_opt else sel
+        if st.button("💾 Save mapping & validate", key=f"{map_key}::save"):
+            from database.connection import SessionLocal
+            from refillcare.data.column_mapping import save_profile
+
+            try:
+                with SessionLocal() as mdb:
+                    save_profile(mdb, headers, chosen, source="user", confirmed_by="streamlit")
+                st.session_state[map_key] = chosen
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.rerun()
+            except ValueError as e:
+                st.error(f"❌ {e}")
+
+
 def parse_and_validate_uploaded_sales_file(
     uploaded_file: Any,
     existing_history_df: Optional[pd.DataFrame] = None,
+    column_mapping: Optional[Dict[str, Optional[str]]] = None,
+    db: Any = None,
 ) -> Tuple[Optional[pd.DataFrame], Dict[str, Any]]:
-    """Parse an uploaded monthly sales Excel/CSV file and extract business metrics."""
+    """Parse an uploaded monthly sales Excel/CSV file and extract business metrics.
+
+    Columns are mapped with the shared RefillCare mapping (the given one, the store's saved profile
+    when ``db`` is passed, else auto-detected) and only the RefillCare columns are kept.
+    """
+    from refillcare.data.schema import read_sales_file
+
     try:
         filename = getattr(uploaded_file, "name", "sales.csv").lower()
-        if filename.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        elif filename.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(uploaded_file)
-        else:
+        if not filename.endswith((".csv", ".xlsx", ".xls")):
             return None, {"error": "Unsupported file format. Please upload a .csv, .xlsx, or .xls file."}
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
+        df = read_sales_file(uploaded_file, filename)
     except Exception as e:
         return None, {"error": f"Failed to read file: {str(e)}"}
 
@@ -1003,32 +1097,15 @@ def parse_and_validate_uploaded_sales_file(
             "invalid_quantities": 0,
         }
 
-    # Normalize column names for flexible parsing using project mappings
-    col_map: Dict[str, str] = {}
-    for c in df.columns:
-        c_low = str(c).strip().lower().replace("_", "").replace(" ", "").replace("-", "").replace(".", "")
-        if c_low in ("invoicedate", "date", "billdate", "orderdate", "transactiondate", "salestime", "trndate"):
-            col_map[c] = "invoice_date"
-        elif c_low in ("trnno", "trnnbr", "transactionno", "invoicenumber", "invoiceno", "billnumber", "billno", "invoice"):
-            col_map[c] = "invoice_number"
-        elif c_low in ("partycode", "patientcode", "customerid", "customer", "patientid", "custid"):
-            col_map[c] = "customerId"
-        elif c_low in ("partyname", "customername", "patientname", "custname", "party", "patient"):
-            col_map[c] = "customerName"
-        elif c_low in ("itemcode", "itemid", "medicineid", "drugid", "productid", "item"):
-            col_map[c] = "itemId"
-        elif c_low in ("itemname", "medicinename", "drugname", "productname", "itemdescription", "medicine"):
-            col_map[c] = "itemName"
-        elif c_low in ("quantity", "qty", "units", "quantitysold", "qtyordered"):
-            col_map[c] = "quantity"
-        elif c_low in ("packing", "pack", "packsize", "packaging"):
-            col_map[c] = "packing"
-        elif c_low in ("mobileno", "mobile", "phone", "phonenumber", "contact", "cell", "contactno"):
-            col_map[c] = "MOBILE_NO"
-        elif c_low in ("saltcomposition", "salt", "composition", "genericname"):
-            col_map[c] = "salt_composition"
+    # Shared column mapping (same code as FastAPI): user mapping > saved store profile > auto-detect
+    from refillcare.data.column_mapping import resolve_mapping
+    from refillcare.data.schema import apply_column_mapping
 
-    renamed_df = df.rename(columns=col_map).copy()
+    mres = resolve_mapping(df, db=db, user_mapping=column_mapping)
+    mapping_report = mres.to_dict()
+    if mres.needs_confirmation:
+        return df, {"needs_column_mapping": True, "column_mapping": mapping_report, "records_received": len(df)}
+    renamed_df = apply_column_mapping(df, mres.mapping)
 
     # Total records received
     records_received = len(renamed_df)
@@ -1168,6 +1245,8 @@ def parse_and_validate_uploaded_sales_file(
         "duplicate_records": duplicate_records,
         "invalid_quantities": invalid_quantities,
         "date_diagnostics": date_diagnostics,
+        "column_mapping": mapping_report,
+        "column_mapping_result": mres,
     }
 
     return renamed_df, metrics
@@ -2019,17 +2098,29 @@ def render_app():
             "Select Sales Data File (.csv, .xlsx, .xls)",
             type=["csv", "xlsx", "xls"],
             key="sales_data_uploader",
-            help="Supported file types: CSV, Excel (.xlsx, .xls). Mappings support standard pharmacy transaction headers.",
+            help="Supported file types: CSV, Excel (.xlsx, .xls). Any column names: they are mapped to the RefillCare fields and only those are stored.",
         )
+        render_saved_column_mappings()
 
         if uploaded_file is not None:
+            map_key = f"column_mapping::{uploaded_file.name}::{getattr(uploaded_file, 'size', 0)}"
             with st.spinner("Analyzing uploaded sales data..."):
-                parsed_sales_df, upload_metrics = parse_and_validate_uploaded_sales_file(
-                    uploaded_file,
-                    existing_history_df=history_data,
-                )
+                from database.connection import SessionLocal
 
-            if "error" in upload_metrics:
+                with SessionLocal() as map_db:
+                    parsed_sales_df, upload_metrics = parse_and_validate_uploaded_sales_file(
+                        uploaded_file,
+                        existing_history_df=history_data,
+                        column_mapping=st.session_state.get(map_key),
+                        db=map_db,
+                    )
+
+            if upload_metrics.get("column_mapping"):
+                render_column_mapping_panel(upload_metrics["column_mapping"], map_key)
+
+            if upload_metrics.get("needs_column_mapping"):
+                st.info("ℹ️ Confirm the column mapping above (pick the matching column for each required field) to validate this file. Only the RefillCare columns are stored.")
+            elif "error" in upload_metrics:
                 st.error(f"❌ {upload_metrics['error']}")
             else:
                 st.success(f"📁 **File Uploaded:** `{uploaded_file.name}`")
@@ -2174,6 +2265,11 @@ def render_app():
                                 )
 
                                 with SessionLocal() as db:
+                                    if upload_metrics.get("column_mapping_result") is not None:
+                                        from refillcare.data.column_mapping import mark_profile_used
+
+                                        # Remember this layout for the store: next upload is mapped instantly
+                                        mark_profile_used(db, upload_metrics["column_mapping_result"], confirmed_by="streamlit")
                                     mirror_import_batch(
                                         db, process_result, uploaded_file.name,
                                         checksum=hashlib.sha256(uploaded_file.getvalue()).hexdigest(),
@@ -4227,6 +4323,128 @@ def render_app():
                 st.dataframe(pd.DataFrame(ev_rows), use_container_width=True, hide_index=True)
             else:
                 st.info("No evaluations yet. Use **Retrain & Evaluate** above.")
+
+        render_ml_settings_and_tests()
+
+
+def render_ml_settings_and_tests() -> None:
+    """Prediction settings, rule A/B, multi-month test and identity cut-over (same services as FastAPI)."""
+    from database.connection import SessionLocal
+    from refillcare.ml.service import compare_rules, latest_report, prediction_settings, rolling_evaluation, save_report
+
+    st.markdown("#### ⚙️ Prediction Settings")
+    st.caption("Set in `.env` and restart the app. Measure a rule with the A/B test below before switching it on.")
+    cfg = prediction_settings()
+    sw = cfg["env_switches"]
+    r = cfg["rules"]
+    st.dataframe(pd.DataFrame([
+        {"Setting": "Short-history mode (Path B)", "Value": r["path_b_mode"], ".env switch": sw["path_b_mode"]},
+        {"Setting": "Device cap (insulin / inhaler)", "Value": r["device_cap_mode"], ".env switch": sw["device_cap_mode"]},
+        {"Setting": "High-stability -> personal median", "Value": "on" if r["high_stability_median"] else "off", ".env switch": sw["high_stability_median"]},
+        {"Setting": "Insulin -> personal median", "Value": "on" if r["insulin_median"] else "off", ".env switch": sw["insulin_median"]},
+        {"Setting": "Day-of-month anchor", "Value": "on" if r["dom_anchor"] else "off", ".env switch": sw["dom_anchor"]},
+        {"Setting": "Patient identity", "Value": cfg["patient_identity"], ".env switch": sw["patient_identity"]},
+        {"Setting": "Therapy grouping", "Value": cfg["item_grouping"], ".env switch": sw["item_grouping"]},
+        {"Setting": "Item / salt catalogue", "Value": f"{cfg['salt_catalog']['file']} ({'found' if cfg['salt_catalog']['exists'] else 'MISSING'})", ".env switch": "REFILLCARE_SALT_CATALOG"},
+        {"Setting": "Store ID (mapping profiles)", "Value": cfg["store_id"], ".env switch": "REFILLCARE_STORE_ID"},
+        {"Setting": "Sales columns stored", "Value": ", ".join(cfg["stored_sales_columns"]), ".env switch": "-"},
+    ]), use_container_width=True, hide_index=True)
+
+    st.markdown("#### 🧪 Rule A/B and Multi-Month Test")
+    st.caption(
+        "Rule A/B scores every rule on the same unseen test month (~3 min). The multi-month test trains one "
+        "model per month and checks the gain holds every month (~20 min, needs free RAM). Nothing is promoted."
+    )
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("🧪 Run Rule A/B", key="btn_ml_rules_ab", use_container_width=True):
+            with st.spinner("Scoring every rule on the test month..."):
+                try:
+                    with SessionLocal() as db:
+                        save_report("rules_ab", compare_rules(db))
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                except Exception as e:
+                    st.error(f"Rule A/B failed: {e}")
+    with b2:
+        if st.button("📆 Run 3-Month Test", key="btn_ml_rolling", use_container_width=True):
+            with st.spinner("Training one model per test month and scoring it (several minutes)..."):
+                try:
+                    with SessionLocal() as db:
+                        save_report("rolling", rolling_evaluation(db, created_by="streamlit"))
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                except Exception as e:
+                    st.error(f"Multi-month test failed: {e}")
+
+    ab = latest_report("rules_ab")
+    if ab:
+        rep_ab = ab["report"]
+        st.markdown(
+            f"**Rule A/B** of `{rep_ab.get('model_version')}` on {rep_ab.get('window', {}).get('start')} → "
+            f"{rep_ab.get('window', {}).get('end')} ({rep_ab.get('n_paired_events')} refills) · run {ab['created_at'][:16]}"
+        )
+        st.dataframe(pd.DataFrame([
+            {"Rule variant": k.replace("rules:", ""), "Within ±7d %": v.get("within_7_days_pct"),
+             "Gain vs no rules (pp)": v.get("within_7_gain_pp_vs_none"), "MAE (days)": v.get("mae_days"),
+             "Early %": v.get("early_pct"), "Late %": v.get("late_pct")}
+            for k, v in (rep_ab.get("variants") or {}).items()
+        ]), use_container_width=True, hide_index=True)
+    ro = latest_report("rolling")
+    if ro:
+        rep_ro = ro["report"]
+        st.markdown(
+            f"**Multi-month test:** {rep_ro.get('n_folds')} months, {rep_ro.get('n_paired_events_total')} refills · "
+            f"model beats baseline every month: {'✅' if rep_ro.get('model_beats_baseline_every_fold') else '❌'} · "
+            f"rules help every month: {'✅' if rep_ro.get('rules_help_every_fold') else '❌'} · run {ro['created_at'][:16]}"
+        )
+        rows = []
+        for f in rep_ro.get("folds", []):
+            m = f.get("methods", {})
+            rows.append({"Test month": f"{f['window']['start']} → {f['window']['end']}", "Refills": f.get("n_paired_events"),
+                         "Raw median ±7d": m.get("raw_median", {}).get("within_7_days_pct"),
+                         "Baseline engine ±7d": m.get("baseline_engine", {}).get("within_7_days_pct"),
+                         "Model ±7d": m.get("model_no_rules", {}).get("within_7_days_pct"),
+                         "Model + rules ±7d": m.get("model_current_rules", {}).get("within_7_days_pct"),
+                         "Model + rules MAE": m.get("model_current_rules", {}).get("mae_days")})
+        pooled = rep_ro.get("pooled", {})
+        rows.append({"Test month": "Pooled", "Refills": rep_ro.get("n_paired_events_total"),
+                     "Raw median ±7d": pooled.get("raw_median", {}).get("within_7_days_pct"),
+                     "Baseline engine ±7d": pooled.get("baseline_engine", {}).get("within_7_days_pct"),
+                     "Model ±7d": pooled.get("model_no_rules", {}).get("within_7_days_pct"),
+                     "Model + rules ±7d": pooled.get("model_current_rules", {}).get("within_7_days_pct"),
+                     "Model + rules MAE": pooled.get("model_current_rules", {}).get("mae_days")})
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.markdown("#### 🔑 Patient Identity Cut-over")
+    st.caption(
+        "Run once after switching `REFILLCARE_PATIENT_IDENTITY=name_mobile` or `REFILLCARE_ITEM_GROUPING=salt`. "
+        "Old-key reminders are retired, every patient is re-scored, stages already sent are never re-sent, "
+        "and the database is backed up first."
+    )
+    k1, k2 = st.columns(2)
+    with k1:
+        btn_dry = st.button("🔍 Dry Run", key="btn_rekey_dry", use_container_width=True)
+    with k2:
+        confirm_rekey = st.checkbox("I want to apply the re-key now", key="chk_rekey_confirm")
+        btn_apply = st.button("Apply Re-key", key="btn_rekey_apply", use_container_width=True, disabled=not confirm_rekey)
+    if btn_dry or btn_apply:
+        from refillcare.engine.rekey import backup_sqlite_db, rekey_reminder_cycles
+        from refillcare.ml.service import load_history
+
+        with st.spinner("Re-keying..." if btn_apply else "Running dry run..."):
+            try:
+                backup = backup_sqlite_db() if btn_apply else None
+                with SessionLocal() as db:
+                    res = rekey_reminder_cycles(db, load_history(), apply=bool(btn_apply))
+                if btn_apply:
+                    res["database_backup"] = backup
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    st.success("✅ Re-key applied.")
+                st.json(res)
+            except Exception as e:
+                st.error(f"Re-key failed: {e}")
 
 
 if __name__ == "__main__":

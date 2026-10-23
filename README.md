@@ -1,182 +1,235 @@
-# RefillCare Enterprise — AI Refill Prediction & Med-Sync Platform
+# RefillCare — Refill Prediction & WhatsApp Reminders for Pharmacies
 
-RefillCare Enterprise is an end-to-end clinical AI and patient engagement system built for retail pharmacy chains. It forecasts chronic medication refill dates, bundles multiple prescriptions into synchronized monthly appointments, and delivers personalized WhatsApp refill reminders.
+RefillCare predicts when each chronic-medicine patient will run out, and sends a WhatsApp refill reminder
+before they do. v1 runs for one store (NGOs Colony; sales data Dec 2020 – Sep 2026). Multi-store (v2)
+comes through the Mediastra web application — see [implementation_plan.md](implementation_plan.md).
 
----
+What it does, end to end:
 
-## 1. What RefillCare Solves
-
-- **No More Fixed 30-Day Guesses:** Patients take medicines at different daily frequencies (OD, BD, TID) and buy different pack sizes (10s, 30s, 60s). RefillCare computes personalized consumption intervals and Days-of-Supply (DOS).
-- **No More Message Spam:** Instead of sending 3 separate WhatsApp messages on 3 different days for 3 medicines, Med-Sync groups them into **one unified appointment reminder**.
-- **No More Obsolete Reminders:** If a patient buys their medicine early or on their due date, previous reminders are instantly marked `STATUS_SUPERSEDED`.
-- **Clean Clinical Isolation:** Wholesale/inter-store transfers (`SB/...`) and acute products (syrups, drops, painkillers) are filtered out upstream so only valid chronic patients receive refill outreach.
-
----
-
-## 2. Core Features
-
-### 🔄 Dynamic Continuous-Observation Pipeline
-- **Arbitrary Sales Uploads:** Ingest 1-day, 7-day, 13-day, or monthly POS sales files.
-- **Dynamic As-Of Date ($T_{\text{eval}} = T_{\max} + 1\text{d}$):** Forecasting automatically begins the day after the latest transaction date.
-- **Rolling 30-Day Outreach Horizon:** View all upcoming reminders for the active 30-day window ($T_{\text{eval}} \to T_{\text{eval}} + 29\text{d}$) or select a complete calendar month.
-- **Safety Pre-Image Backups:** Automatically creates a backup snapshot before appending new records to `data/refillcare/customer_data_fields.csv`, with 1-click rollback support.
-
-### 🧠 Dual-Path AI Engine & 5 Behavioral Archetypes
-- **Path A ($\ge 6$ buys):** Evaluates longitudinal cadence using Median Absolute Deviation (MAD) stability filtering and 3-Head Quantile XGBoost Regressors ($P_{10}, P_{50}, P_{90}$).
-- **Path B ($< 6$ buys):** Governed by verified Days-of-Supply (DOS) with daily consumption bounds.
-- **5 Archetypes:** Multi-pack scaling (60/90 units), early carryover ($R_{inv}$), partial 10-strip clamping, post-lapse reset, and physical consensus bounding ($[0.65, 1.50] \times \text{DOS}$).
-
-### 📦 Med-Sync: Multi-Prescription Synchronization
-- Groups active chronic medications for each patient (matched by Name + Mobile) into a single delivery or pickup appointment.
-- Configurable sync window (0–14 days, default 0d exact date or 8d range).
-- 3-tier lifecycle isolation: **Due/Advance** (-7d to 0d), **Follow-up** (+2d, +5d), and **Lapsed Re-engagement** (+45d).
-
-### 💬 WhatsApp & Xinno Messaging Gateway
-- 6-variable dynamic template (`refillcare_medicine_reminder`) with custom pharmacy store name, contact number, and medicine list.
-- Live high-contrast preview card, single test dispatches, and batch outreach with missing-mobile safety guards.
+1. **Upload sales** in any column layout (CSV / Excel). Columns are mapped automatically to the RefillCare
+   fields; only the 11 fields needed for reminders are stored.
+2. **Clean** — B2B transfers (`SB/…`) and acute / OTC items (painkillers, syrups, creams) are excluded.
+3. **Predict** each patient-medicine's next refill date (ML model or personal history, see below).
+4. **Remind** — 7 WhatsApp stages per refill cycle (-7, -3, -1, 0, +2, +5, +45 days), several medicines of one
+   patient bundled into one message (Med-Sync); a repurchase cancels pending reminders.
+5. **Learn** — every month the train / validation / test windows move forward; a new model is promoted only
+   when it beats the current one on unseen data.
 
 ---
 
-## 3. Project Structure
+## 1. Quick start
 
-```text
-ai-mediastra-whatsapp-reminder/
-├── refillcare/             # Core Clinical AI Engine & Domain Logic
-│   ├── engine/             # Decision routing, Med-Sync bundler, persistence manager
-│   │   ├── persistence.py      # Database cycle sync & date-range review queues
-│   │   ├── unified_engine.py   # Stability evaluation & dual-path decision engine
-│   │   ├── med_sync.py         # Multi-prescription patient bundling
-│   │   └── decision_types.py   # Data structures & lifecycle constants
-│   ├── data/               # Ingestion, date parsing, chronic classifier
-│   │   ├── sales_ingestion.py  # Master append with backup, deduplication, rollback
-│   │   ├── medication_classifier.py # Supabase rules & chronic safety gate
-│   │   └── dates.py            # Pharmacy date normalizer
-│   └── models/             # 3-Head Quantile Regressors & feature extractors
-│
-├── database/               # SQLite Persistence (enterprise.db)
-│   ├── models.py           # RefillDecisionModel, ReminderCycleModel, ReminderStageModel
-│   └── connection.py       # SQLAlchemy SessionLocal
-│
-├── api/                    # FastAPI Enterprise Backend
-│   ├── main.py             # REST API routes (/api/v1/reminders/daily, etc.)
-│   ├── services.py         # Business logic layer with online inference sync
-│   └── schemas.py          # Pydantic request/response schemas
-│
-├── frontend/               # Web Application Interface
-│   ├── index.html          # Web SPA with Date, Rolling 30d, and Month views
-│   └── js/app.js           # Frontend logic & API client
-│
-├── data/refillcare/        # Master Data & Storage
-│   ├── customer_data_fields.csv   # Master POS transaction dataset (909k+ rows)
-│   ├── backups/                   # Timestamped pre-image safety backups
-│   └── processed/                 # Parquet tables & enterprise.db
-│
-├── app_refillcare.py       # Main Operations Dashboard (Streamlit)
-├── scripts/                # Execution & Validation Scripts
-│   └── run_sales_pipeline.py # End-to-end sales ingestion & decision pipeline
-└── tests/                  # Automated Test Suite (pytest)
-```
-
----
-
-## 4. Quickstart: How to Run
-
-### Step 1: Install Dependencies
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+copy .env.example .env            # fill in your own keys (never commit .env)
 ```
 
-### Step 2: Launch Streamlit Dashboard
-```bash
-streamlit run app_refillcare.py
-```
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-- **Tab 1: Dashboard Overview** — View live KPIs, retail vs B2B transaction breakdowns, and channel audit metrics.
-- **Tab 2: Data Update** — Upload new weekly or monthly sales files; automatically appends to master CSV with backup and syncs decision cycles.
-- **Tab 4: Reminder List** — Filter reminders by **Specific Date**, **Rolling 30 Days (Active Horizon)**, or **Complete Month**.
-- **Tab 5: Med-Sync Bundles** — Inspect consolidated patient appointments and messages saved.
-- **Tab 6: WhatsApp Gateway** — Preview templates and test or batch-dispatch messages.
+| Interface | Command | Open |
+|---|---|---|
+| Streamlit operations app | `streamlit run app_refillcare.py` | http://localhost:8501 |
+| FastAPI + web app | `uvicorn api.main:app --host 127.0.0.1 --port 8000` | http://127.0.0.1:8000 (API docs: `/docs`) |
+| Standalone WhatsApp campaigns | `streamlit run whatsapp_campaigns/app.py` (text) · `whatsapp_campaigns/app_image_campaign.py` (image) | ad-hoc broadcasts from a customer CSV, dry-run by default |
 
-### Step 3: Launch FastAPI Backend & Web UI
-```bash
-uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
-```
-- Web Application: [http://127.0.0.1:8000](http://127.0.0.1:8000)
-- Interactive API Documentation (Swagger): [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+Streamlit and the web app use the same services, so every number and action is the same in both.
 
-### Step 4: Run CLI Ingestion Pipeline
-To ingest new sales from the command line and update decisions:
+| Streamlit tab | Web app tab | What it is for |
+|---|---|---|
+| 📊 Operations Dashboard | Pharmacy Dashboard | KPIs, customer sales vs B2B, data freshness |
+| 📁 Data Update | Sales Ingestion & Batches | Upload sales, column mapping, saved mappings, batch rollback |
+| 🎯 Prediction Results | Prediction & Accuracy | Eligible / review patients and predicted refill dates |
+| 📅 Reminder List | Reminder List | Reminders by date, rolling 30 days or month |
+| 📦 Med-Sync Bundles | Med-Sync Bundles | One message per patient for several medicines |
+| ⚠️ Customers Needing Review | Clinical Review Queue | Patients the engine will not remind automatically |
+| 💬 WhatsApp | WhatsApp Gateway | Preview, test send, batch send, opt-outs |
+| 🧠 ML Models | Model Registry | Train/val/test windows, registry, gate, retrain, prediction settings, rule A/B, 3-month test, identity cut-over |
+| – | Medication Classifier | Chronic / acute rules (Supabase, cached locally) |
+
+---
+
+## 2. Uploading sales data
+
+**Any store's file works.** Headers are matched to the RefillCare fields by name (≈200 aliases in
+[config/column_aliases.json](config/column_aliases.json) — add a store's names there, no code change) **and** by
+what the values look like (dates, 10-digit mobiles, `S0/` invoices, `1X15` packs, numbers).
+
+- Known headers → mapped automatically. Unclear headers → a confirm screen with the best guess pre-selected.
+- The confirmed mapping is saved **per store and file layout**; next month's file with the same columns is
+  mapped instantly. Saved mappings can be listed and deleted in the upload tab.
+- **Only these 11 fields are stored** — every other column (price, tax, batch, expiry, cost) is dropped at upload:
+
+| Field | Why it is needed | Required |
+|---|---|---|
+| `invoice_date` | refill intervals | yes |
+| `quantity` | days of supply | yes |
+| `MOBILE_NO` | WhatsApp, opt-out, patient identity | yes |
+| `customerName` (or a party code) | patient identity, greeting | yes |
+| `itemName` (or `itemCode`) | chronic classification, message text | yes |
+| `invoice_number` | customer sale (S0/) vs B2B (SB/) | expected — without it every row counts as a customer sale |
+| `itemCode` | catalogue lookup (salt, pack) | expected — item name used if absent |
+| `packing` | units per pack | expected — taken from the catalogue if absent |
+| `freeQuantity` | free strips extend days of supply | optional |
+| `customerId`, `itemId` | patient / item keys | derived (party code or name; item code) |
+
+Each upload: pre-upload backup of the master CSV → append the new rows (duplicates skipped) → re-score only
+the patients in the upload → sync reminder cycles → re-plan the ML windows. Any batch can be rolled back.
+
+**Files** (all git-ignored — they contain patient data):
+
+| Path | Content |
+|---|---|
+| `data/refillcare/customer_data_fields.csv` | master sales history, 11 columns |
+| `data/refillcare/raw_backup/` | the original full export, kept for re-training |
+| `data/refillcare/backups/` | automatic pre-upload backups (newest 5) |
+| `data/refillcare/processed/` | purchase history & clean transactions (parquet), `enterprise.db`, models |
+| `data/refillcare/SALT ITEMS LIST.csv` | item master: Code / itemCode, Item Name, PACK, SALT, CATEGORY, ITEMCAT |
+
+A one-time `python scripts/slim_sales_data.py --apply` converts an old 23-column master to the 11 columns
+(dry run without `--apply`; the raw file is copied to `raw_backup/` first).
+
+---
+
+## 3. How a refill date is predicted
+
+| Patient history | Method |
+|---|---|
+| **≥ 6 purchases, stable** (Path A) | Registry model (HistGradientBoosting, learns the deviation from the patient's own median) or the personal median, with safety caps (insulin pen / inhaler in-use ceiling, 120-day max) |
+| **3–5 purchases** (Path B) | Days of supply from units bought and the patient's own pace (`dos`), optionally blended with the median shrunk toward the salt's typical interval (`blend`) |
+| Unstable / too little history / bulk or odd purchase | Pharmacist review — no automatic reminder |
+
+Features (identical in training, backtest and serving; point-in-time, no future data):
+purchase intervals and their stability, quantity vs usual, partial / multi-pack / top-up flags,
+**calendar** (usual day of month and how well it explains the history), **visits** (other medicines, days
+since the last visit), and **salt priors** from the item catalogue (store-wide typical interval and units per day).
+
+**Patient and therapy keys** (switches in `.env`, off by default):
+- `REFILLCARE_PATIENT_IDENTITY=name_mobile` — same name + different mobile = different patient
+  (the store data has 14,071 names but 30,730 mobiles).
+- `REFILLCARE_ITEM_GROUPING=salt` — brand or strength switches of the same molecule continue one refill cycle
+  (only when bought one after the other; combinations stay separate).
+- After switching either one, run the **identity cut-over** once (ML tab, or `python scripts/rekey_reminders.py --apply`):
+  it backs up the database, retires old-key reminders, re-scores everyone and never re-sends a stage already sent.
+
+**Prediction rules** (`REFILLCARE_RULE_*`, all off by default) are measured before use with the **rule A/B**
+(ML tab, `ml_cli.py rules-ab`). Current measurements on 1,740 unseen refills (18 Jul – 16 Aug 2026):
+
+| Setting | Within ±7 days | Avg error |
+|---|---|---|
+| Baseline engine (personal median) | 59.5% | 8.7 d |
+| New model, no rules | 62.2% | 8.15 d |
+| New model + `PATH_B_MODE=blend` | 62.6% | 7.87 d |
+
+Over 3 back-to-back test months (5,065 refills) the model beats the baseline engine every month
+(58.7% vs 55.6% pooled); `blend` lowers the average error every month but is ±1 pp on within-±7 depending on the month.
+
+---
+
+## 4. Model lifecycle
+
+- **Windows move with the data:** test = last 30 days before (last sale − 45 days), validation = the 30 days
+  before that, train = everything earlier. A new month of sales shifts all three.
+- **Promotion gate:** a candidate is promoted only if, on the untouched test window, it beats production and the
+  baseline overall **and** does not regress in any reported segment (e.g. therapy such as insulin, history depth) on within-±7 and MAE.
+- **Models are versioned** in `enterprise.db` (production / shadow / candidate / retired) with their train
+  window, metrics and evaluation reports.
+
 ```bash
-python scripts/run_sales_pipeline.py --new-sales path/to/sales.xlsx
+python scripts/ml_cli.py plan                 # current windows, is a retrain due?
+python scripts/ml_cli.py retrain [--promote]  # train → pick on validation → gate on test
+python scripts/ml_cli.py rules-ab             # which prediction rules help? (read-only)
+python scripts/ml_cli.py rolling --folds 3    # is the gain real across several months?
+python scripts/ml_cli.py list | gate --version <id> | promote --version <id>
 ```
 
 ---
 
-## 5. Key REST API Endpoints
+## 5. API (FastAPI)
 
-### Core Operations & Outreach
-| Endpoint | Method | Write Key? | Purpose |
-| :--- | :---: | :---: | :--- |
-| `/api/v1/reminders/daily` | `GET` | No | Retrieve scheduled reminders by `target_date`, `target_month`, or `start_date` + `end_date` (rolling horizon). |
-| `/api/v2/med-sync/bundles` | `GET` | No | Retrieve patient-grouped Med-Sync bundles and message-reduction metrics. |
-| `/api/v1/analytics/kpi` | `GET` | No | Live pharmacy operations KPIs, total monitored patients, and forecast metrics. |
-| `/api/v1/whatsapp/candidates` | `GET` | No | Clustered WhatsApp outreach candidates ready for review or dispatch. |
-| `/api/v1/whatsapp/preview` | `POST` | No | Render dynamic 6-variable WhatsApp reminder template preview. |
-| `/api/v1/whatsapp/dispatch` | `POST` | **Yes** | Dispatch scheduled WhatsApp outreach batch via Xinno gateway. |
-| `/api/v1/sales/preview` | `POST` | **Yes** | Diagnostic date pre-flight preview for newly uploaded sales file. |
-| `/api/v1/sales/ingest` | `POST` | **Yes** | Ingest validated sales records into storage with immutable batch ID. |
-| `/api/v1/sales/batches` | `GET` | No | List all historical sales upload batches with checksums and status. |
-| `/api/v1/sales/batches/{id}/rollback` | `POST` | **Yes** | Safely roll back an uploaded batch and restore previous master data. |
-| `/api/v1/medications/rules` | `GET` | No | List active medication classification rules from Supabase / cache. |
-| `/api/v1/medications/rules` | `POST` | **Yes** | Add or update a medication classification rule. |
-| `/api/v1/whatsapp/send-single` | `POST` | **Yes** | Send one test reminder (dry-run by default; refused for opted-out phones). |
+Write endpoints need header `X-API-Key` = `REFILLCARE_API_KEY`; when it is unset they only work from the server
+machine. Full, interactive list: `/docs`.
 
-### Patient WhatsApp Consent
-| Endpoint | Method | Write Key? | Purpose |
-| :--- | :---: | :---: | :--- |
-| `/api/v1/whatsapp/webhook` | `POST` | No* | Inbound replies from the WhatsApp provider. Standalone `STOP` / `UNSUBSCRIBE` opts out; only an exact `START` opts back in. |
-| `/api/customers/opt-outs` | `GET` | No | Patients currently opted out. |
-| `/api/customers/{id}/opt-out` | `POST` | **Yes** | Pharmacist opts a patient out. |
-| `/api/customers/{id}/opt-in` | `POST` | **Yes** | Pharmacist re-enables reminders. |
+| Area | Endpoints |
+|---|---|
+| Sales upload | `POST /api/v1/sales/column-mapping/detect` · `POST /api/v1/sales/column-mapping` · `GET/DELETE /api/v1/sales/column-mapping/profiles` · `POST /api/v1/sales/preview` · `POST /api/v1/sales/ingest` (both accept an optional `column_mapping` JSON form field) · `GET /api/v1/sales/batches` · `POST /api/v1/sales/batches/{id}/rollback` |
+| Reminders | `GET /api/v1/reminders/daily` · `GET /api/v1/reminders/months` · `GET /api/v1/reminders/export-csv\|export-json` · `POST /api/reminders/{id}/approve\|reject\|dispatch` · `GET /api/v2/med-sync/bundles` |
+| Review & decisions | `GET /api/v1/review/queue\|summary` · `GET /api/refill-decisions` · `GET /api/customers/{id}/refill-history` |
+| WhatsApp | `GET /api/v1/whatsapp/candidates` · `POST /api/v1/whatsapp/preview\|send-single\|dispatch` · `POST /api/v1/whatsapp/webhook` (STOP / START) · `GET /api/customers/opt-outs` · `POST /api/customers/{id}/opt-out\|opt-in` |
+| ML lifecycle | `GET /api/v1/ml/plan\|models\|evaluations\|health\|settings` · `POST /api/v1/ml/retrain\|train\|evaluations\|rules-ab\|rolling` · `GET /api/v1/ml/reports/{rules_ab\|rolling}` · `GET/POST /api/v1/ml/identity/rekey` · `POST /api/v1/ml/models/{id}/promote\|status` |
+| Medication rules | `GET/POST /api/v1/medications/rules` · `DELETE /api/v1/medications/rules/{id}` · `POST /api/v1/medications/classify` |
+| Analytics | `GET /health` · `GET /api/v1/analytics/kpi\|transaction-types\|consensus-regimen` |
 
-\* The webhook must be reachable by the provider, so it has no write key yet. Add a provider secret / signature check before exposing the server publicly.
-Every send path (batch, Med-Sync, single stage, test send) skips opted-out patients.
-
-### ML Lifecycle & Model Registry (`/api/v1/ml`)
-Train / validation / test windows are derived from the latest sale on every run, so they move
-automatically when a new month of sales is uploaded.
-
-| Endpoint | Method | Write Key? | Purpose |
-| :--- | :---: | :---: | :--- |
-| `/api/v1/ml/plan` | `GET` | No | Current train / validation / test windows and whether a retrain is due. |
-| `/api/v1/ml/models` | `GET` | No | Registered versions (production, shadow, candidates, retired). |
-| `/api/v1/ml/models/{id}/gate` | `GET` | No | Promotion-gate verdict for a version on its latest evaluation. |
-| `/api/v1/ml/evaluations` | `GET` / `POST` | POST: **Yes** | List evaluation runs / start an out-of-time backtest (background). |
-| `/api/v1/ml/evaluations/{run_id}` | `GET` | No | Full evaluation report. |
-| `/api/v1/ml/retrain` | `POST` | **Yes** | Train on the train window, select on validation, gate on test; `promote_best` promotes only if the gate approves. |
-| `/api/v1/ml/train` | `POST` | **Yes** | Train one candidate (cutoff defaults to the planned train window). |
-| `/api/v1/ml/models/{id}/promote` | `POST` | **Yes** | Promote a version - refused (409) unless the gate approves. |
-| `/api/v1/ml/models/{id}/status` | `POST` | **Yes** | Move a version to candidate / shadow / retired. |
-| `/api/v1/ml/outcomes/summary` | `GET` | No | Live outcomes of past reminders (on time / late / open). |
-| `/api/v1/ml/health` | `GET` | No | Serving model, prediction sources, fallback-rate alarm, data freshness. |
-
-CLI equivalents: `python scripts/ml_cli.py plan | retrain [--promote] | freshness | list | gate --version <id>`.
-
-### API Security & Write Protection
-- **Read Endpoints:** Publicly accessible across the local pharmacy network.
-- **Write Endpoints:** Protected by `require_api_key`. Pass header `X-API-Key: <your_key>` matching `REFILLCARE_API_KEY` from `.env`. When unset, write actions are restricted to `127.0.0.1` (local machine only).
+Every send path skips opted-out patients. The webhook has no write key (the provider must reach it): add the
+provider's signature check before exposing the server publicly.
 
 ---
 
-## 6. Running Tests
+## 6. Configuration (`.env`)
+
+See [.env.example](.env.example) for every switch. The main ones:
+
+| Variable | Purpose |
+|---|---|
+| `XINNO_*`, `WHATSAPP_*_TEMPLATE_*` | WhatsApp provider and approved templates |
+| `MEDICAL_STORE_NAME`, `MEDICAL_STORE_CONTACT` | store name / phone in messages |
+| `REFILLCARE_DATA_DIR`, `REFILLCARE_STORE_ID`, `REFILLCARE_SALT_CATALOG` | store data folder, store id (mapping profiles), item catalogue |
+| `REFILLCARE_API_KEY` | write protection for the API |
+| `REFILLCARE_RULE_*`, `REFILLCARE_PATIENT_IDENTITY`, `REFILLCARE_ITEM_GROUPING` | prediction rules and keys (shown read-only in the ML tab) |
+| `ML_*` | window sizes, gate tolerances, training target, auto-retrain |
+| `SUPABASE_*` | medication-rule tables (optional; local cache otherwise) |
+
+---
+
+## 7. Project layout
+
+```text
+app_refillcare.py           Streamlit operations app
+api/                        FastAPI app (main.py routes, ml_routes.py, services.py, schemas.py, security.py)
+frontend/                   Web app served by FastAPI (index.html, js/app.js, js/api.js, css/)
+refillcare/
+  data/                     schema.py (11 stored fields), column_mapping.py, sales_ingestion.py, identity.py,
+                            enrichment.py (item catalogue), medication_classifier.py, cleaning, dates, packing
+  engine/                   unified_engine.py (Path A/B), prediction_rules.py, persistence.py (cycles & stages),
+                            post_ingest.py, rekey.py, med_sync.py
+  features/                 point_in_time.py, context.py (visits, salt priors)
+  ml/                       training.py, evaluation.py (backtests), promotion.py (gate), registry.py, service.py
+  models/                   supply_hybrid.py (consensus & safety caps)
+  whatsapp/                 client, dispatcher, consent (opt-out), template formatter
+reminder/                   scheduler, dispatch, storage used by ingestion and the pilot tools
+database/                   SQLAlchemy models, connection, additive migrations (enterprise.db)
+services/, utils/           Xinno / Cloudinary clients, phone validation, bulk-send helpers
+whatsapp_campaigns/         standalone text / image broadcast apps
+config/                     config.py, column_aliases.json
+scripts/                    see below
+tests/                      pytest suite
+docs/                       DEPLOYMENT_OPTIONS_LOCAL_VS_CLOUD.md (client), WHATSAPP_TEMPLATE_REFILLCARE.md
+```
+
+| Script | Purpose |
+|---|---|
+| `ml_cli.py` | model lifecycle: plan, train, evaluate, retrain, gate, promote, rules-ab, rolling, outcomes |
+| `run_sales_pipeline.py` | ingest a sales file and regenerate predictions from the command line |
+| `slim_sales_data.py` | one-time: keep only the 11 fields (raw backup first) |
+| `rekey_reminders.py` | identity / salt-grouping cut-over (dry run by default) |
+| `train_chronic_specialized_model.py` | offline quantile benchmark shown in the review tab |
+| `seed_supabase_rules.py` | seed medication rules into Supabase |
+| `purge_and_sync_reminders.py` | re-apply the medication classifier to `enterprise.db` (supersedes reminders for non-chronic / OTC items) |
+| `verify_system_health.py`, `verify_column_aliases.py`, `verify_image_bulk_dry_run.py` | checks |
+| `execute_single_live_test.py`, `execute_bulk_live_test.py` | controlled WhatsApp sends (dry run unless told otherwise) |
+
+---
+
+## 8. Tests
 
 ```bash
-# Run unit tests for chronic medication classifier
-pytest tests/refillcare/test_medication_classifier.py -v
-
-# Run the dynamic continuous-observation integration test
-python scratch/test_rolling_pipeline.py
+pytest -q                                  # full suite
+pytest tests/test_column_mapping.py -q     # column mapping & 11-field storage
+pytest tests/test_prediction_features.py tests/test_patient_identity.py -q
 ```
-*Current test suite status: 100% passing.*
+
+Tests never touch live data: they use temporary folders and databases, and never send real WhatsApp messages.
+
+## 9. Data protection
+
+Patient data (sales files, backups, parquets, `enterprise.db`, exports, logs) and `.env` are git-ignored.
+Do not commit them. Phone numbers are masked in logs and in identity-conflict messages.

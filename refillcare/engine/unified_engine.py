@@ -874,7 +874,13 @@ class UnifiedRefillDecisionEngine:
         inames = df_clean["itemName"].values if "itemName" in df_clean.columns else [None] * len(df_clean)
         mobiles = df_clean["MOBILE_NO"].values if "MOBILE_NO" in df_clean.columns else [None] * len(df_clean)
         inv_dates = df_clean["invoice_date"].values
-        qtys = df_clean["quantity"].values if "quantity" in df_clean.columns else [None] * len(df_clean)
+        if "quantity" in df_clean.columns:
+            # Free strips go home with the patient: billed + free quantity is the supply (customer sales only here)
+            from refillcare.data.schema import supply_quantity
+
+            qtys = supply_quantity(df_clean["quantity"], df_clean["freeQuantity"]).values if "freeQuantity" in df_clean.columns else df_clean["quantity"].values
+        else:
+            qtys = [None] * len(df_clean)
         packings = df_clean["packing"].values if "packing" in df_clean.columns else [None] * len(df_clean)
         salt_col = next((c for c in ("salt_composition", "SALT") if c in df_clean.columns), None)
         salts = df_clean[salt_col].values if salt_col else [None] * len(df_clean)

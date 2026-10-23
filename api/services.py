@@ -129,18 +129,62 @@ class EnterpriseServices:
     # --------------------------------------------------------------------------
     # 1. SALES INGESTION & BATCH SERVICES
     # --------------------------------------------------------------------------
-    def preview_sales_file(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
-        """Validate and preview an uploaded sales Excel/CSV file with date diagnostics."""
+    # Column mapping (any store's headers -> RefillCare fields; shared with Streamlit)
+    def _read_sales_upload(self, file_bytes: bytes, filename: str) -> pd.DataFrame:
+        from refillcare.data.schema import read_sales_file
+
         try:
-            if filename.lower().endswith(".csv"):
-                df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
-            else:
-                df = pd.read_excel(io.BytesIO(file_bytes), dtype=object)
+            return read_sales_file(file_bytes, filename)
         except Exception as e:
             raise ValueError(f"Failed to read file: {e}")
 
+    def detect_column_mapping(self, file_bytes: bytes, filename: str,
+                              column_mapping: Optional[Dict[str, Optional[str]]] = None) -> Dict[str, Any]:
+        """User mapping > saved store profile for this header layout > auto-detect."""
+        from refillcare.data.column_mapping import resolve_mapping
+
+        df = self._read_sales_upload(file_bytes, filename)
+        return resolve_mapping(df, db=self.db, store_id=self.paths.store_id, user_mapping=column_mapping).to_dict()
+
+    def save_column_mapping(self, headers: List[str], mapping: Dict[str, Optional[str]], actor: str = "api") -> Dict[str, Any]:
+        from refillcare.data.column_mapping import save_profile
+
+        p = save_profile(self.db, headers, mapping, store_id=self.paths.store_id, source="user", confirmed_by=actor)
+        return {"profile_id": p.profile_id, "store_id": p.store_id, "header_fingerprint": p.header_fingerprint, "mapping": p.mapping}
+
+    def list_column_mappings(self) -> List[Dict[str, Any]]:
+        from refillcare.data.column_mapping import list_profiles
+
+        return list_profiles(self.db, self.paths.store_id)
+
+    def delete_column_mapping(self, profile_id: int) -> bool:
+        from refillcare.data.column_mapping import delete_profile
+
+        return delete_profile(self.db, profile_id)
+
+    def preview_sales_file(self, file_bytes: bytes, filename: str,
+                           column_mapping: Optional[Dict[str, Optional[str]]] = None) -> Dict[str, Any]:
+        """Validate and preview an uploaded sales Excel/CSV file with date diagnostics."""
+        from refillcare.data.column_mapping import resolve_mapping
+
+        df = self._read_sales_upload(file_bytes, filename)
+        mres = resolve_mapping(df, db=self.db, store_id=self.paths.store_id, user_mapping=column_mapping)
+        mapping_report = mres.to_dict()
+        if mres.needs_confirmation:
+            return {
+                "source_filename": filename, "file_date_range": "-", "records_received": len(df), "valid_records": 0,
+                "records_requiring_review": 0, "new_customers": 0, "existing_customers": 0, "unique_customers": 0,
+                "medicines_count": 0, "missing_customer_info": 0, "missing_mobile_numbers": 0, "duplicate_records": 0,
+                "invalid_quantities": 0,
+                "date_diagnostics": {"source_format": "-", "date_range_formatted": "-", "min_date_formatted": "-",
+                                     "max_date_formatted": "-", "sample_dates_formatted": [], "valid_count": 0,
+                                     "invalid_count": 0, "is_ambiguous": False,
+                                     "warning": "Confirm the column mapping to validate this file."},
+                "preview_records": [], "can_process": False, "column_mapping": mapping_report,
+            }
+
         history_df = self.get_active_purchase_history()
-        validated_df, review_df, metrics = validate_monthly_sales_data(df, existing_history_df=history_df)
+        validated_df, review_df, metrics = validate_monthly_sales_data(df, existing_history_df=history_df, column_mapping=mres.mapping)
 
         date_diag = metrics["date_diagnostics"]
         can_process = not date_diag.get("is_ambiguous", False) and metrics["valid_records"] > 0
@@ -186,18 +230,21 @@ class EnterpriseServices:
             "date_diagnostics": date_diag,
             "preview_records": preview_records,
             "can_process": can_process,
+            "column_mapping": mapping_report,
         }
 
-    def ingest_sales_file(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
-        """Ingest sales records with immutable batch ID and update purchase history."""
-        if filename.lower().endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes), dtype=object)
+    def ingest_sales_file(self, file_bytes: bytes, filename: str,
+                          column_mapping: Optional[Dict[str, Optional[str]]] = None, actor: str = "api") -> Dict[str, Any]:
+        """Ingest sales records with immutable batch ID and update purchase history.
 
-        # Normalize quantity to float/int if present
-        if "quantity" in df.columns:
-            df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+        Only the RefillCare columns of the file are stored (see refillcare/data/schema.py).
+        """
+        from refillcare.data.column_mapping import mark_profile_used, resolve_mapping
+
+        df = self._read_sales_upload(file_bytes, filename)
+        mres = resolve_mapping(df, db=self.db, store_id=self.paths.store_id, user_mapping=column_mapping)
+        if mres.needs_confirmation:
+            raise ValueError("Column mapping needs confirmation - required fields not found: " + ", ".join(mres.missing_required))
 
         history_df = self.get_active_purchase_history()
         res = process_monthly_sales_data(
@@ -206,10 +253,13 @@ class EnterpriseServices:
             storage=self.storage,
             source_filename=filename,
             data_dir=self.paths.data_dir,
+            column_mapping=mres.mapping,
         )
 
         if res["status"] != "success":
             raise ValueError(res.get("message", "Processing failed"))
+        # Remember this layout for the store (auto-detected mappings too): next upload is instant
+        mark_profile_used(self.db, mres, confirmed_by=actor)
 
         # process_monthly_sales_data persisted the purchase history parquet
         updated_df = res.get("updated_history_df")
@@ -241,6 +291,8 @@ class EnterpriseServices:
             "records_requiring_review": m["records_requiring_review"],
             "online_sync": online_metrics,
             "ml_data_freshness": self._ml_freshness(updated_df),
+            "column_mapping": mres.to_dict(),
+            "ignored_columns": mres.ignored_columns,
             "message": "Sales data successfully ingested and reminder decisions synchronized.",
         }
 

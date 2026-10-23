@@ -125,7 +125,7 @@ function setupNavigation() {
 
       // Lazy load tab data
       if (tabId === "tab-medrules" && window.loadMedRules) window.loadMedRules();
-      if (tabId === "tab-upload") loadBatches();
+      if (tabId === "tab-upload") { loadBatches(); loadColumnMappings(); }
       if (tabId === "tab-predictions") loadPredictionSnapshots();
       if (tabId === "tab-reminders") loadReminders();
       if (tabId === "tab-medsync") loadMedSyncBundles();
@@ -686,7 +686,7 @@ const STATUS_BADGE = {
 };
 
 async function loadModels() {
-  await Promise.all([loadMlPlan(), loadModelRegistry(), loadMlEvaluations()]);
+  await Promise.all([loadMlPlan(), loadModelRegistry(), loadMlEvaluations(), loadMlSettings(), loadMlReports()]);
 }
 
 async function loadMlPlan() {
@@ -856,6 +856,143 @@ function setupMlActions() {
   };
   document.getElementById("btn-ml-retrain")?.addEventListener("click", () => start(false));
   document.getElementById("btn-ml-retrain-promote")?.addEventListener("click", () => start(true));
+
+  const startJob = async (kind) => {
+    const msg = kind === "rolling"
+      ? "Run the 3-month test? It trains one model per test month (~20 min, needs free RAM). Nothing is promoted."
+      : "Run the rule A/B on the current test month (~3 min)? Read-only: nothing is promoted.";
+    if (!confirm(msg)) return;
+    try {
+      await ApiClient.startMlJob(kind);
+      showToast("Started in the background - reopen this tab later to see the result.", "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+  document.getElementById("btn-ml-rules-ab")?.addEventListener("click", () => startJob("rules_ab"));
+  document.getElementById("btn-ml-rolling")?.addEventListener("click", () => startJob("rolling"));
+
+  const showRekey = (r, applied) => {
+    const box = document.getElementById("rekey-result");
+    if (!box) return;
+    const rows = [
+      ["Patient identity", r.modes?.patient_identity], ["Therapy grouping", r.modes?.item_grouping],
+      ["Patients (before → after)", `${r.patients_before ?? "-"} → ${r.patients_after ?? "-"}`],
+      ["Active reminders on old keys", r.active_cycles_with_old_keys],
+      ["New reminders with stages already sent (never re-sent)", r.new_cycles_with_already_sent_stages],
+    ];
+    if (applied) rows.push(["Re-scored decisions", r.decisions_rescored], ["Cycles created", r.cycles_created],
+      ["Stages cancelled (already sent)", r.new_stages_cancelled_already_sent], ["Database backup", r.database_backup || "not SQLite"]);
+    box.innerHTML = `<table class="data-table"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>`;
+  };
+  document.getElementById("btn-rekey-dry")?.addEventListener("click", async () => {
+    try {
+      showToast("Running re-key dry run...", "info");
+      showRekey(await ApiClient.getRekeyDryRun(), false);
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  });
+  document.getElementById("btn-rekey-apply")?.addEventListener("click", async () => {
+    if (!confirm("Apply the patient-identity / salt-grouping re-key now?\n\nThe database is backed up first. Old-key reminders are retired and every patient is re-scored.")) return;
+    try {
+      showToast("Applying re-key (re-scores every patient)...", "info");
+      showRekey(await ApiClient.applyRekey(), true);
+      showToast("✅ Re-key applied.", "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  });
+}
+
+async function loadMlSettings() {
+  const tbody = document.querySelector("#table-ml-settings tbody");
+  if (!tbody) return;
+  try {
+    const s = await ApiClient.getMlSettings();
+    const sw = s.env_switches || {};
+    const rows = [
+      ["Short-history mode (Path B)", s.rules?.path_b_mode, sw.path_b_mode],
+      ["Device cap (insulin / inhaler)", s.rules?.device_cap_mode, sw.device_cap_mode],
+      ["High-stability → personal median", s.rules?.high_stability_median ? "on" : "off", sw.high_stability_median],
+      ["Insulin → personal median", s.rules?.insulin_median ? "on" : "off", sw.insulin_median],
+      ["Day-of-month anchor", s.rules?.dom_anchor ? "on" : "off", sw.dom_anchor],
+      ["Patient identity", s.patient_identity, sw.patient_identity],
+      ["Therapy grouping", s.item_grouping, sw.item_grouping],
+      ["Item / salt catalogue", `${s.salt_catalog?.file} (${s.salt_catalog?.exists ? "found" : "MISSING"})`, "REFILLCARE_SALT_CATALOG"],
+      ["Store ID (mapping profiles)", s.store_id, "REFILLCARE_STORE_ID"],
+      ["Sales columns stored", (s.stored_sales_columns || []).join(", "), "-"],
+    ];
+    tbody.innerHTML = rows.map(([k, v, e]) => `<tr><td>${esc(k)}</td><td><strong>${esc(v)}</strong></td><td><code>${esc(e)}</code></td></tr>`).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="3">${esc(err.message)}</td></tr>`;
+  }
+}
+
+
+async function loadMlReports() {
+  const abBody = document.querySelector("#table-ml-rules-ab tbody");
+  const rollBody = document.querySelector("#table-ml-rolling tbody");
+  if (!abBody || !rollBody) return;
+  try {
+    const ab = await ApiClient.getMlReport("rules_ab");
+    const abMeta = document.getElementById("ml-rules-ab-meta");
+    if (!ab) {
+      abMeta.textContent = "No rule A/B yet.";
+      abBody.innerHTML = "";
+    } else {
+      const r = ab.report;
+      abMeta.textContent = `Rule A/B of ${r.model_version} on ${r.window?.start} → ${r.window?.end} (${r.n_paired_events} refills) · run ${ab.created_at}`;
+      abBody.innerHTML = Object.entries(r.variants || {}).map(([name, m]) =>
+        `<tr><td>${esc(name.replace("rules:", ""))}</td><td>${fmtPct(m.within_7_days_pct)}</td><td>${esc(m.within_7_gain_pp_vs_none ?? "-")}</td><td>${esc(m.mae_days ?? "-")}</td><td>${fmtPct(m.early_pct)}</td><td>${fmtPct(m.late_pct)}</td></tr>`).join("");
+    }
+    const ro = await ApiClient.getMlReport("rolling");
+    const roMeta = document.getElementById("ml-rolling-meta");
+    if (!ro) {
+      roMeta.textContent = "No multi-month test yet.";
+      rollBody.innerHTML = "";
+    } else {
+      const r = ro.report;
+      roMeta.textContent = `${r.n_folds} test months, ${r.n_paired_events_total} refills · model beats baseline every month: ${r.model_beats_baseline_every_fold ? "yes" : "no"} · rules help every month: ${r.rules_help_every_fold ? "yes" : "no"} · run ${ro.created_at}`;
+      const rows = (r.folds || []).map(f => {
+        const m = f.methods || {};
+        return `<tr><td>${esc(f.window?.start)} → ${esc(f.window?.end)}</td><td>${esc(f.n_paired_events)}</td><td>${fmtPct(m.raw_median?.within_7_days_pct)}</td><td>${fmtPct(m.baseline_engine?.within_7_days_pct)}</td><td>${fmtPct(m.model_no_rules?.within_7_days_pct)}</td><td>${fmtPct(m.model_current_rules?.within_7_days_pct)}</td><td>${esc(m.model_current_rules?.mae_days ?? "-")}</td></tr>`;
+      });
+      const pl = r.pooled || {};
+      rows.push(`<tr><td><strong>Pooled</strong></td><td>${esc(r.n_paired_events_total)}</td><td>${fmtPct(pl.raw_median?.within_7_days_pct)}</td><td>${fmtPct(pl.baseline_engine?.within_7_days_pct)}</td><td>${fmtPct(pl.model_no_rules?.within_7_days_pct)}</td><td>${fmtPct(pl.model_current_rules?.within_7_days_pct)}</td><td>${esc(pl.model_current_rules?.mae_days ?? "-")}</td></tr>`);
+      rollBody.innerHTML = rows.join("");
+    }
+  } catch (err) {
+    abBody.innerHTML = `<tr><td colspan="6">${esc(err.message)}</td></tr>`;
+  }
+}
+
+async function loadColumnMappings() {
+  const tbody = document.querySelector("#table-column-mappings tbody");
+  if (!tbody) return;
+  try {
+    const rows = await ApiClient.getColumnMappings();
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="5" style="color: var(--text-secondary);">No saved mappings yet - the first successful upload saves one.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(p => {
+      const mapped = Object.entries(p.mapping || {}).filter(([, v]) => v).map(([f, c]) => `${f} ← ${c}`).join(", ");
+      return `<tr><td style="font-size: 0.8rem;">${esc(mapped)}</td><td>${esc(p.source)} (${esc(p.confirmed_by)})</td><td>${esc(p.use_count)}</td><td>${esc(p.last_used_at || "-")}</td><td><button class="btn btn-outline" data-mapping-id="${esc(p.profile_id)}" style="padding: 0.2rem 0.6rem;">Delete</button></td></tr>`;
+    }).join("");
+    tbody.querySelectorAll("button[data-mapping-id]").forEach(btn => btn.addEventListener("click", async () => {
+      if (!confirm("Delete this saved mapping? The next upload with this layout will be auto-detected again.")) return;
+      try {
+        await ApiClient.deleteColumnMapping(btn.dataset.mappingId);
+        showToast("Mapping deleted.", "success");
+        await loadColumnMappings();
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    }));
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5">${esc(err.message)}</td></tr>`;
+  }
 }
 
 // ------------------------------------------------------------------------------
@@ -967,14 +1104,105 @@ function setupUploadDropzone() {
   });
 }
 
+// Column mapping of the active file: {RefillCare field: store header or null}; null = server decides
+let activeColumnMapping = null;
+let activeMappingReport = null;
+
+const MAPPING_SOURCE_LABEL = {
+  saved: "saved for this store",
+  user: "chosen by you",
+  auto: "auto-matched",
+  saved_hint: "auto-matched (known header)",
+  suggestion: "suggested - please confirm",
+  none: "not in file",
+};
+
+function renderColumnMapping(report, forceEdit = false) {
+  activeMappingReport = report;
+  const status = document.getElementById("mapping-status");
+  const warnBox = document.getElementById("mapping-warnings");
+  const wrap = document.getElementById("mapping-table-wrap");
+  const actions = document.getElementById("mapping-actions");
+  const ignored = document.getElementById("mapping-ignored");
+  if (!report || !status) return;
+
+  const needs = report.needs_confirmation;
+  const fromSaved = (report.fields || []).some(f => f.source === "saved");
+  status.className = `badge ${needs ? "badge-danger" : "badge-success"}`;
+  status.textContent = needs
+    ? `Needs confirmation: ${(report.missing_required || []).length} required field(s) not found`
+    : (fromSaved ? "Saved mapping for this store applied" : "All required columns auto-matched");
+
+  const warnings = report.warnings || [];
+  warnBox.style.display = warnings.length ? "block" : "none";
+  warnBox.textContent = warnings.map(w => `⚠️ ${w}`).join("  ");
+
+  const editing = needs || forceEdit;
+  wrap.style.display = editing ? "block" : "none";
+  actions.style.display = editing ? "flex" : "none";
+  ignored.textContent = (report.ignored_columns || []).length
+    ? `Not stored (not needed for reminders): ${report.ignored_columns.join(", ")}`
+    : "";
+
+  const tbody = document.querySelector("#table-column-mapping tbody");
+  tbody.innerHTML = "";
+  (report.fields || []).forEach(f => {
+    const tr = document.createElement("tr");
+    const tdLabel = document.createElement("td");
+    tdLabel.textContent = f.label;
+    const tdRole = document.createElement("td");
+    const role = document.createElement("span");
+    role.className = `badge ${f.role === "required" ? "badge-danger" : (f.role === "expected" ? "badge-warning" : "badge-info")}`;
+    role.textContent = f.role;
+    tdRole.appendChild(role);
+    const tdSel = document.createElement("td");
+    const sel = document.createElement("select");
+    sel.dataset.field = f.field;
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "- not in file -";
+    sel.appendChild(none);
+    (report.headers || []).forEach(h => {
+      const o = document.createElement("option");
+      o.value = h;
+      o.textContent = h;
+      if (f.column === h) o.selected = true;
+      sel.appendChild(o);
+    });
+    tdSel.appendChild(sel);
+    const tdSamples = document.createElement("td");
+    tdSamples.textContent = (f.samples || []).join(" | ") || "-";
+    const tdMatch = document.createElement("td");
+    tdMatch.textContent = f.column ? `${MAPPING_SOURCE_LABEL[f.source] || f.source} (${Math.round((f.confidence || 0) * 100)}%)` : MAPPING_SOURCE_LABEL.none;
+    [tdLabel, tdRole, tdSel, tdSamples, tdMatch].forEach(td => tr.appendChild(td));
+    tbody.appendChild(tr);
+  });
+}
+
+function collectColumnMapping() {
+  const mapping = {};
+  document.querySelectorAll("#table-column-mapping select").forEach(sel => {
+    mapping[sel.dataset.field] = sel.value || null;
+  });
+  return mapping;
+}
+
 async function handleFileSelected(file) {
   activeFile = file;
+  activeColumnMapping = null;
+  await runSalesPreview();
+}
+
+async function runSalesPreview() {
+  const file = activeFile;
+  if (!file) return;
   showToast(`Validating ${esc(file.name)}...`, "info");
 
   try {
-    const preview = await ApiClient.previewSalesFile(file);
+    const preview = await ApiClient.previewSalesFile(file, activeColumnMapping);
     const area = document.getElementById("upload-preview-area");
     area.style.display = "block";
+    renderColumnMapping(preview.column_mapping);
 
     document.getElementById("diag-format").innerText = preview.date_diagnostics.source_format;
     document.getElementById("diag-range").innerText = preview.file_date_range;
@@ -1215,8 +1443,8 @@ function setupActionListeners() {
     if (!activeFile) return;
     try {
       showToast("Ingesting sales records...", "info");
-      const res = await ApiClient.ingestSalesFile(activeFile);
-      showToast(`✅ Successfully ingested batch ${esc(res.import_batch_id)}`, "success");
+      const res = await ApiClient.ingestSalesFile(activeFile, activeColumnMapping);
+      showToast(`✅ Successfully ingested batch ${esc(res.import_batch_id)} (only the RefillCare columns were stored)`, "success");
       const fresh = res.ml_data_freshness;
       if (res.ml_retrain_queued) {
         showToast("🔁 New sales data: model retrain cycle queued in the background.", "info");
@@ -1225,6 +1453,7 @@ function setupActionListeners() {
       }
       document.getElementById("upload-preview-area").style.display = "none";
       await loadBatches();
+      await loadColumnMappings();
       await loadInitialData();
     } catch (err) {
       showToast(err.message, "error");
@@ -1235,6 +1464,24 @@ function setupActionListeners() {
   document.getElementById("btn-cancel-ingest")?.addEventListener("click", () => {
     document.getElementById("upload-preview-area").style.display = "none";
     activeFile = null;
+    activeColumnMapping = null;
+  });
+
+  // Column mapping: show the editor / save the confirmed mapping for this store and re-validate
+  document.getElementById("btn-edit-mapping")?.addEventListener("click", () => {
+    if (activeMappingReport) renderColumnMapping(activeMappingReport, true);
+  });
+  document.getElementById("btn-save-mapping")?.addEventListener("click", async () => {
+    if (!activeFile || !activeMappingReport) return;
+    const mapping = collectColumnMapping();
+    try {
+      await ApiClient.saveColumnMapping(activeMappingReport.headers, mapping);
+      activeColumnMapping = mapping;
+      showToast("✅ Column mapping saved for this store; next upload with these columns is mapped automatically.", "success");
+      await runSalesPreview();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
   });
 
   // Run Predictions

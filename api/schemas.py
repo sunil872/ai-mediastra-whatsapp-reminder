@@ -39,6 +39,7 @@ class SalesPreviewResponse(BaseModel):
     date_diagnostics: DateDiagnosticsSchema
     preview_records: List[Dict[str, Any]]
     can_process: bool
+    column_mapping: Optional[Dict[str, Any]] = None  # how the file's headers were mapped (and what was ignored)
 
 
 class SalesIngestionResponse(BaseModel):
@@ -56,7 +57,15 @@ class SalesIngestionResponse(BaseModel):
     online_sync: Dict[str, Any] = Field(default_factory=dict)
     ml_data_freshness: Optional[Dict[str, Any]] = None
     ml_retrain_queued: bool = False
+    column_mapping: Optional[Dict[str, Any]] = None
+    ignored_columns: List[str] = Field(default_factory=list)  # store columns not stored (price, tax, batch, ...)
     message: str
+
+
+class ColumnMappingSaveRequest(BaseModel):
+    """Confirmed mapping for one header layout: {RefillCare field: store header or null}."""
+    headers: List[str]
+    mapping: Dict[str, Optional[str]]
 
 
 class ImportBatchResponse(BaseModel):

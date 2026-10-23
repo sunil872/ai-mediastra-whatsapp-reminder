@@ -21,6 +21,7 @@ class StoreConfig:
     data_dir: Path
     store_name: str
     store_contact: str
+    store_id: str = "store-1"
 
     @classmethod
     def from_env(cls) -> "StoreConfig":
@@ -31,7 +32,12 @@ class StoreConfig:
             data_dir=data_dir,
             store_name=(os.getenv("MEDICAL_STORE_NAME", "") or "Pharmacy").strip(),
             store_contact=os.getenv("MEDICAL_STORE_CONTACT", "").strip(),
+            store_id=(os.getenv("REFILLCARE_STORE_ID", "") or "store-1").strip(),
         )
+
+    @property
+    def raw_backup_dir(self) -> Path:
+        return self.data_dir / "raw_backup"
 
     @property
     def processed_dir(self) -> Path:

@@ -427,3 +427,25 @@ class RefillDecisionOutcomeModel(Base):
     outcome_category: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # ON_TIME, EARLY, LATE, NO_REFILL, OPEN
     reminder_sent_live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ColumnMappingProfileModel(Base):
+    """A store's confirmed sales-file column mapping (store header -> RefillCare field).
+
+    Keyed by store and a fingerprint of the file's headers: the same file layout next month is
+    mapped automatically; a changed layout is detected and shown for confirmation again.
+    """
+    __tablename__ = "column_mapping_profiles"
+    __table_args__ = (UniqueConstraint("store_id", "header_fingerprint", name="uq_mapping_store_fingerprint"),)
+
+    profile_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    header_fingerprint: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    headers: Mapped[List[str]] = mapped_column(JSON, nullable=False)
+    mapping: Mapped[Dict[str, Optional[str]]] = mapped_column(JSON, nullable=False)  # field -> store header (None = not in file)
+    source: Mapped[str] = mapped_column(String(16), default="user", nullable=False)  # user | auto
+    confirmed_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

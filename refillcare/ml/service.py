@@ -621,3 +621,66 @@ def ml_health(db: Session, since_days: int = 30) -> Dict[str, Any]:
         "alert": bool(path_a_total and fallback / path_a_total > 0.05),
         "data_freshness": data_freshness(db),
     }
+
+
+# ----------------------------------------------------------------------------- settings & saved reports
+REPORT_KINDS = ("rules_ab", "rolling")
+
+
+def prediction_settings() -> Dict[str, Any]:
+    """What the engine is running with right now (all switches come from .env; read-only here)."""
+    from refillcare.data.enrichment import default_salt_catalog_path
+    from refillcare.data.identity import grouping_mode, identity_mode
+    from refillcare.data.schema import CANONICAL_COLUMNS
+    from refillcare.engine.prediction_rules import EngineRules
+    from refillcare.store import StoreConfig
+
+    store = StoreConfig.from_env()
+    catalog = default_salt_catalog_path()
+    rules = EngineRules.from_env().describe()
+    return {
+        "store_id": store.store_id,
+        "rules": rules,
+        "patient_identity": identity_mode(),
+        "item_grouping": grouping_mode(),
+        "salt_catalog": {"file": catalog.name, "exists": catalog.exists()},
+        "stored_sales_columns": list(CANONICAL_COLUMNS),
+        "env_switches": {
+            "path_b_mode": "REFILLCARE_RULE_PATH_B_MODE (dos | shrink | blend)",
+            "device_cap_mode": "REFILLCARE_RULE_DEVICE_CAP_MODE (strict | observed)",
+            "high_stability_median": "REFILLCARE_RULE_HIGH_STABILITY_MEDIAN",
+            "insulin_median": "REFILLCARE_RULE_INSULIN_MEDIAN",
+            "dom_anchor": "REFILLCARE_RULE_DOM_ANCHOR",
+            "patient_identity": "REFILLCARE_PATIENT_IDENTITY (name | name_mobile) - run the re-key cut-over after changing",
+            "item_grouping": "REFILLCARE_ITEM_GROUPING (item | salt) - run the re-key cut-over after changing",
+        },
+    }
+
+
+def _reports_dir() -> Path:
+    from refillcare.store import StoreConfig
+
+    return StoreConfig.from_env().processed_dir / "ml_reports"
+
+
+def save_report(kind: str, report: Dict[str, Any]) -> Path:
+    """Persist a rules A/B or rolling evaluation result so every UI can show the latest one."""
+    import json
+
+    if kind not in REPORT_KINDS:
+        raise ValueError(f"Unknown report kind '{kind}'")
+    d = _reports_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    payload = {"kind": kind, "created_at": datetime.utcnow().isoformat(), "report": report}
+    p = d / f"{kind}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.json"
+    p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    return p
+
+
+def latest_report(kind: str) -> Optional[Dict[str, Any]]:
+    import json
+
+    if kind not in REPORT_KINDS:
+        raise ValueError(f"Unknown report kind '{kind}'")
+    files = sorted(_reports_dir().glob(f"{kind}_*.json")) if _reports_dir().exists() else []
+    return json.loads(files[-1].read_text(encoding="utf-8")) if files else None

@@ -33,47 +33,56 @@ from reminder.scheduler import evaluate_refill_eligibility, RefillReminderSchedu
 from reminder.storage import RefillCareStorage
 
 
-def normalize_sales_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize arbitrary CSV/Excel column names into RefillCare canonical schema."""
+_CORE_CANONICAL = ("invoice_date", "customerName", "itemName", "quantity", "MOBILE_NO")
+
+
+def _identity_mapping(df: pd.DataFrame) -> Optional[Dict[str, Optional[str]]]:
+    """Frames already in RefillCare names (internal history, re-processed uploads) map 1:1."""
+    from refillcare.data.schema import MAPPABLE_FIELDS
+
+    if not set(_CORE_CANONICAL) <= set(df.columns):
+        return None
+    m: Dict[str, Optional[str]] = {f: f for f in MAPPABLE_FIELDS if f in df.columns}
+    if "itemCode" not in m and "itemId" in df.columns:
+        m["itemCode"] = "itemId"
+    return m
+
+
+def resolve_sales_columns(df: pd.DataFrame, column_mapping: Optional[Dict[str, Optional[str]]] = None):
+    """The mapping for ``df``: the given one, 1:1 for canonical frames, else auto-detected (no DB).
+
+    Returns (mapping, MappingResult or None). Callers with a DB session (FastAPI / Streamlit) use
+    ``refillcare.data.column_mapping.resolve_mapping`` to also apply the store's saved profiles.
+    """
+    if column_mapping:
+        return dict(column_mapping), None
+    ident = _identity_mapping(df)
+    if ident is not None:
+        return ident, None
+    from refillcare.data.column_mapping import resolve_mapping
+
+    res = resolve_mapping(df)
+    return res.mapping, res
+
+
+def normalize_sales_dataframe(df: pd.DataFrame, column_mapping: Optional[Dict[str, Optional[str]]] = None) -> pd.DataFrame:
+    """Map any store's columns onto the RefillCare schema and keep only those columns.
+
+    Every other column of the store's file (price, tax, batch, expiry, ...) is dropped here, so it
+    is never stored. Mapping: ``column_mapping`` if given, else saved/auto (see column_mapping.py).
+    """
     if df.empty:
         return df.copy()
+    from refillcare.data.schema import apply_column_mapping
 
-    col_map: Dict[str, str] = {}
-    for c in df.columns:
-        c_low = str(c).strip().lower().replace("_", "").replace(" ", "").replace("-", "").replace(".", "")
-        if c_low in ("invoicedate", "date", "billdate", "orderdate", "transactiondate", "salestime", "trndate"):
-            col_map[c] = "invoice_date"
-        elif c_low in ("trnno", "trnnbr", "transactionno", "invoicenumber", "invoiceno", "billnumber", "billno", "invoice"):
-            col_map[c] = "invoice_number"
-        elif c_low in ("partycode", "patientcode", "customerid", "customer", "patientid", "custid"):
-            col_map[c] = "customerId"
-        elif c_low in ("partyname", "customername", "patientname", "custname", "party", "patient"):
-            col_map[c] = "customerName"
-        elif c_low in ("itemcode", "itemid", "medicineid", "drugid", "productid", "item"):
-            col_map[c] = "itemId"
-        elif c_low in ("itemname", "medicinename", "drugname", "productname", "itemdescription", "medicine"):
-            col_map[c] = "itemName"
-        elif c_low in ("quantity", "qty", "units", "quantitysold", "qtyordered"):
-            col_map[c] = "quantity"
-        elif c_low in ("packing", "pack", "packsize", "packaging"):
-            col_map[c] = "packing"
-        elif c_low in ("mobileno", "mobile", "phone", "phonenumber", "contact", "cell", "contactno"):
-            col_map[c] = "MOBILE_NO"
-        elif c_low in ("saltcomposition", "salt", "composition", "genericname"):
-            col_map[c] = "salt_composition"
-
-    renamed = df.rename(columns=col_map).copy()
-
-    # If invoice_number is missing, synthesize a deterministic fallback
-    if "invoice_number" not in renamed.columns:
-        renamed["invoice_number"] = [f"INV_{i+1:06d}" for i in range(len(renamed))]
-
-    return renamed
+    mapping, _ = resolve_sales_columns(df, column_mapping)
+    return apply_column_mapping(df, mapping)
 
 
 def validate_monthly_sales_data(
     sales_input: Union[pd.DataFrame, Any],
     existing_history_df: Optional[pd.DataFrame] = None,
+    column_mapping: Optional[Dict[str, Optional[str]]] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
     """Validate incoming sales transactions and extract business metrics.
 
@@ -91,11 +100,9 @@ def validate_monthly_sales_data(
         df = sales_input.copy()
     else:
         try:
-            filename = getattr(sales_input, "name", "sales.csv").lower()
-            if filename.endswith((".xlsx", ".xls")):
-                df = pd.read_excel(sales_input)
-            else:
-                df = pd.read_csv(sales_input)
+            from refillcare.data.schema import read_sales_file
+
+            df = read_sales_file(sales_input)
         except Exception as e:
             return pd.DataFrame(), pd.DataFrame(), {"error": f"Failed to read sales input: {str(e)}"}
 
@@ -110,7 +117,26 @@ def validate_monthly_sales_data(
             "unique_customers": 0,
         }
 
-    renamed = normalize_sales_dataframe(df)
+    from refillcare.data.schema import FIELD_LABELS, apply_column_mapping, missing_required
+
+    mapping, mapping_result = resolve_sales_columns(df, column_mapping)
+    missing = missing_required(mapping)
+    if missing:
+        report = mapping_result.to_dict() if mapping_result is not None else {"mapping": mapping, "missing_required": missing}
+        return pd.DataFrame(), df, {
+            "error": "Column mapping needs confirmation - required fields not found: "
+                     + ", ".join(FIELD_LABELS.get(m, m) for m in missing),
+            "needs_column_mapping": True,
+            "column_mapping": report,
+            "file_date_range": "-",
+            "records_received": len(df),
+            "valid_records": 0,
+            "records_requiring_review": len(df),
+            "new_customers": 0,
+            "existing_customers": 0,
+            "unique_customers": 0,
+        }
+    renamed = apply_column_mapping(df, mapping)
     total_received = len(renamed)
 
     # Classify transaction channels (S0/ -> CUSTOMER_SALE, SB/ -> B2B_INTER_STORE, other -> UNKNOWN)
@@ -225,6 +251,8 @@ def validate_monthly_sales_data(
         "existing_customers": existing_customers,
         "unique_customers": unique_customers,
         "date_diagnostics": date_diagnostics,
+        "column_mapping": mapping_result.to_dict() if mapping_result is not None else {"mapping": mapping},
+        "ignored_columns": [c for c in df.columns if c not in set(v for v in mapping.values() if v)],
     }
 
     return valid_df, review_df, metrics
@@ -334,7 +362,8 @@ def append_sales_records_to_master_csv(
     """Safely append validated, deduplicated sales records to master customer_data_fields.csv.
 
     1. Creates a safety backup snapshot in data/refillcare/backups/
-    2. Aligns incoming columns to the canonical 23 master columns
+    2. Aligns incoming columns to the master header (the 11 RefillCare columns; a not yet slimmed
+       legacy master keeps its header and gets blanks for the dropped columns)
     3. Appends records without overwriting
     4. Returns count of appended records
     """
@@ -350,9 +379,13 @@ def append_sales_records_to_master_csv(
         logger.debug("Pytest test mode detected: skipping live master CSV mutation.")
         return len(records_df)
 
+    from refillcare.data.schema import CANONICAL_COLUMNS
+
     if not master_csv_path.exists():
-        logger.warning(f"Master CSV does not exist at {master_csv_path}, skipping append.")
-        return 0
+        # A store's first upload (e.g. 3 years of history): the master holds only the RefillCare columns
+        master_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=list(CANONICAL_COLUMNS)).to_csv(master_csv_path, index=False)
+        logger.info(f"Created master sales CSV with the {len(CANONICAL_COLUMNS)} RefillCare columns at {master_csv_path}")
 
     # 1. Create pre-image safety backup
     try:
@@ -372,12 +405,7 @@ def append_sales_records_to_master_csv(
         df_head = pd.read_csv(master_csv_path, nrows=1)
         target_cols = list(df_head.columns)
     except Exception:
-        target_cols = [
-            "invoice_date", "invoice_number", "customerName", "itemCode", "itemName",
-            "packing", "batchNo", "mfgDate", "expiryDate", "quantity", "freeQuantity",
-            "rate", "saleRate", "mrp", "invoice_total", "discountPercent", "item_discount",
-            "gstAmount", "netAmount", "costPrice", "MOBILE_NO", "customerId", "itemId"
-        ]
+        target_cols = list(CANONICAL_COLUMNS)
 
     to_write = records_df.copy()
 
@@ -419,6 +447,7 @@ def process_monthly_sales_data(
     storage: Optional[RefillCareStorage] = None,
     source_filename: str = "uploaded_sales.xlsx",
     data_dir: Optional[Union[str, Path]] = None,
+    column_mapping: Optional[Dict[str, Optional[str]]] = None,
 ) -> Dict[str, Any]:
     """Process incoming monthly sales data with batch traceability without mutating unselected history.
 
@@ -441,8 +470,20 @@ def process_monthly_sales_data(
     Returns:
         Dict[str, Any] containing processing metrics, import_batch_id, and updated_history_df.
     """
-    valid_new_df, review_df, val_metrics = validate_monthly_sales_data(sales_input, existing_history_df)
+    valid_new_df, review_df, val_metrics = validate_monthly_sales_data(sales_input, existing_history_df, column_mapping)
     records_requiring_review = len(review_df)
+
+    if val_metrics.get("needs_column_mapping"):
+        return {
+            "status": "error",
+            "message": val_metrics.get("error", "Column mapping needs confirmation."),
+            "import_batch_id": None,
+            "updated_history_df": existing_history_df if existing_history_df is not None else pd.DataFrame(),
+            "metrics": {"import_batch_id": None, "new_records_added": 0, "records_requiring_review": records_requiring_review},
+            "column_mapping": val_metrics.get("column_mapping"),
+            "valid_records_df": valid_new_df,
+            "review_records_df": review_df,
+        }
 
     if valid_new_df.empty:
         latest_date_str = "N/A"
@@ -522,6 +563,8 @@ def process_monthly_sales_data(
 
     # Tag records with import_batch_id
     records_to_append["import_batch_id"] = import_batch_id
+    # Salt / category from the item catalogue (derived, kept in the processed history only)
+    records_to_append = _enrich_with_catalog_salt(records_to_append)
 
     # Compute customer and medicine changes
     if existing_history_df is not None and not existing_history_df.empty:
@@ -545,8 +588,12 @@ def process_monthly_sales_data(
     import gc
     gc.collect()
 
-    # Append valid new records to existing history (NEVER overwrite existing records)
+    # Append valid new records to existing history (NEVER overwrite existing records).
+    # Unused legacy columns (price / tax / batch) are dropped so the stored history stays slim.
     if existing_history_df is not None and not existing_history_df.empty:
+        from refillcare.data.schema import drop_legacy_columns
+
+        existing_history_df = drop_legacy_columns(existing_history_df)
         if "import_batch_id" not in existing_history_df.columns:
             existing_history_df["import_batch_id"] = "LEGACY_HISTORY"
         combined_raw = pd.concat([existing_history_df, records_to_append], ignore_index=True)
@@ -591,7 +638,9 @@ def process_monthly_sales_data(
                 from refillcare.data.cleaning import clean_transactions
                 new_clean = clean_transactions(records_to_append)
                 new_clean = classify_transactions_df(new_clean, invoice_col="invoice_number")
-                existing_clean = pd.read_parquet(clean_tx_path)
+                from refillcare.data.schema import drop_legacy_columns
+
+                existing_clean = drop_legacy_columns(pd.read_parquet(clean_tx_path))
                 combined_clean = pd.concat([existing_clean, new_clean], ignore_index=True)
                 subset_cols = [c for c in ["customerId", "itemId", "invoice_date", "invoice_number"] if c in combined_clean.columns]
                 if subset_cols:
@@ -617,6 +666,7 @@ def process_monthly_sales_data(
         "latest_sales_date": latest_sales_date_str,
         "records_requiring_review": records_requiring_review,
         "detected_date_range": val_metrics.get("file_date_range", "-"),
+        "ignored_columns": val_metrics.get("ignored_columns", []),
     }
 
     # Save import batch metadata in storage if available
@@ -641,9 +691,23 @@ def process_monthly_sales_data(
         "import_batch_id": import_batch_id,
         "updated_history_df": updated_history_df,
         "metrics": batch_metrics,
+        "column_mapping": val_metrics.get("column_mapping"),
         "valid_records_df": valid_new_df,
         "review_records_df": review_df,
     }
+
+
+def _enrich_with_catalog_salt(records: pd.DataFrame) -> pd.DataFrame:
+    """Add salt_composition / salt_category / ... from the item catalogue by item code (best effort)."""
+    if records.empty or "salt_composition" in records.columns:
+        return records
+    try:
+        from refillcare.data.enrichment import enrich_with_salt, load_salt_master
+
+        return enrich_with_salt(records, load_salt_master(), item_code_col="itemCode" if "itemCode" in records.columns else "itemId")
+    except Exception as e:  # catalogue missing / unreadable: engine falls back to the name lookup
+        logger.info(f"Salt enrichment skipped for new records: {e}")
+        return records
 
 
 def rollback_monthly_sales_import(

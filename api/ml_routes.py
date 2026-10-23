@@ -196,3 +196,107 @@ def ml_health_status(window_days: int = Query(30, ge=1, le=365), db: Session = D
     from refillcare.ml.service import ml_health
 
     return ml_health(db, since_days=window_days)
+
+
+# ----------------------------------------------------------------------------- settings, rule A/B, rolling test, identity cut-over
+class RulesAbRequest(BaseModel):
+    version_id: Optional[str] = Field(None, description="Model version (default: production)")
+    max_events: int = Field(3000, ge=200, le=50000)
+
+
+class RollingRequest(BaseModel):
+    n_folds: Optional[int] = Field(None, ge=1, le=12, description="Back-to-back test months (default ML_ROLLING_FOLDS or 3)")
+    max_eval_events: int = Field(3000, ge=200, le=50000)
+    max_train_events: int = Field(150000, ge=1000, le=1000000)
+
+
+class RekeyRequest(BaseModel):
+    confirm: bool = Field(False, description="Must be true: supersedes old-key reminder cycles and re-scores every patient")
+
+
+def _run_rules_ab_background(req: RulesAbRequest, user: str) -> None:
+    from refillcare.ml.service import compare_rules, save_report
+
+    db = SessionLocal()
+    try:
+        save_report("rules_ab", compare_rules(db, version_id=req.version_id, max_events=req.max_events))
+    except Exception:
+        logger.exception("Rules A/B failed")
+    finally:
+        db.close()
+
+
+def _run_rolling_background(req: RollingRequest, user: str) -> None:
+    from refillcare.ml.service import rolling_evaluation, save_report
+
+    db = SessionLocal()
+    try:
+        save_report("rolling", rolling_evaluation(db, n_folds=req.n_folds, created_by=user,
+                                                  max_eval_events=req.max_eval_events, max_train_events=req.max_train_events))
+    except Exception:
+        logger.exception("Rolling evaluation failed")
+    finally:
+        db.close()
+
+
+@router.get("/settings")
+def prediction_settings_view():
+    """Prediction rules, patient identity and therapy grouping the engine is running with (from .env)."""
+    from refillcare.ml.service import prediction_settings
+
+    return prediction_settings()
+
+
+@router.post("/rules-ab", status_code=status.HTTP_202_ACCEPTED)
+def start_rules_ab(req: RulesAbRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
+    """Compare every prediction rule on the same unseen events (read-only; result via /reports/rules_ab)."""
+    background.add_task(_run_rules_ab_background, req, actor)
+    return {"status": "queued", "result": "/api/v1/ml/reports/rules_ab"}
+
+
+@router.post("/rolling", status_code=status.HTTP_202_ACCEPTED)
+def start_rolling(req: RollingRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
+    """Score model + current rules on several back-to-back unseen months (trains one model per month)."""
+    background.add_task(_run_rolling_background, req, actor)
+    return {"status": "queued", "result": "/api/v1/ml/reports/rolling"}
+
+
+@router.get("/reports/{kind}")
+def latest_ml_report(kind: str):
+    """Latest saved rules A/B (``rules_ab``) or rolling evaluation (``rolling``) result."""
+    from refillcare.ml.service import latest_report
+
+    try:
+        rep = latest_report(kind)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if rep is None:
+        raise HTTPException(status_code=404, detail=f"No {kind} report yet.")
+    return rep
+
+
+@router.get("/identity/rekey")
+def rekey_dry_run(db: Session = Depends(get_db)):
+    """Dry run of the patient-identity / salt-grouping cut-over: what would change (nothing is written)."""
+    from refillcare.engine.rekey import rekey_reminder_cycles
+    from refillcare.ml.service import load_history
+
+    return rekey_reminder_cycles(db, load_history(), apply=False)
+
+
+@router.post("/identity/rekey")
+def rekey_apply(req: RekeyRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Apply the cut-over after switching REFILLCARE_PATIENT_IDENTITY / REFILLCARE_ITEM_GROUPING.
+
+    Backs up the SQLite database first; reminder stages already sent under the old key are never re-sent.
+    """
+    if not req.confirm:
+        raise HTTPException(status_code=400, detail="Set confirm=true to apply the re-key.")
+    from refillcare.engine.rekey import backup_sqlite_db, rekey_reminder_cycles
+    from refillcare.ml.service import load_history
+
+    backup = backup_sqlite_db()
+    res = rekey_reminder_cycles(db, load_history(), apply=True)
+    res["database_backup"] = backup
+    logger.info("Identity re-key applied by %s: %s", actor, res)
+    return res
