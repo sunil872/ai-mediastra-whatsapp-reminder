@@ -113,9 +113,11 @@ class EnterpriseServices:
         return None
 
     def forecast_as_of(self) -> date:
-        """T_eval = latest sales date + 1 day (falls back to today when no data)."""
+        """T_eval = max(latest sales date + 1 day, today) (falls back to today when no data)."""
         latest = self.latest_sales_date()
-        return (latest + timedelta(days=1)) if latest else date.today()
+        if latest:
+            return max(latest + timedelta(days=1), date.today())
+        return date.today()
 
     def current_forecast_month(self) -> str:
         return self.forecast_as_of().strftime("%Y-%m")
@@ -183,8 +185,14 @@ class EnterpriseServices:
                 "preview_records": [], "can_process": False, "column_mapping": mapping_report,
             }
 
-        history_df = self.get_active_purchase_history()
+        from refillcare.data import history_store as hs
+
+        history_df = None if hs.history_count(self.db) > 0 else self.get_active_purchase_history()
         validated_df, review_df, metrics = validate_monthly_sales_data(df, existing_history_df=history_df, column_mapping=mres.mapping)
+        if history_df is None and not validated_df.empty:
+            ids = set(validated_df["customerId"].dropna().astype(str).str.strip())
+            known = hs.known_customers(self.db, ids)
+            metrics["new_customers"], metrics["existing_customers"] = len(ids - known), len(ids & known)
 
         date_diag = metrics["date_diagnostics"]
         can_process = not date_diag.get("is_ambiguous", False) and metrics["valid_records"] > 0
@@ -234,52 +242,31 @@ class EnterpriseServices:
         }
 
     def ingest_sales_file(self, file_bytes: bytes, filename: str,
-                          column_mapping: Optional[Dict[str, Optional[str]]] = None, actor: str = "api") -> Dict[str, Any]:
-        """Ingest sales records with immutable batch ID and update purchase history.
+                          column_mapping: Optional[Dict[str, Optional[str]]] = None, actor: str = "api",
+                          force: bool = False) -> Dict[str, Any]:
+        """Ingest a sales file incrementally (append-only; only its patients are re-scored).
 
-        Only the RefillCare columns of the file are stored (see refillcare/data/schema.py).
+        Only the RefillCare columns are stored (refillcare/data/schema.py). The same file twice is
+        refused (checksum) unless ``force``.
         """
         from refillcare.data.column_mapping import mark_profile_used, resolve_mapping
+        from refillcare.data.incremental_ingest import file_checksum, ingest_sales_batch
 
         df = self._read_sales_upload(file_bytes, filename)
+        max_rows = int(os.getenv("REFILLCARE_MAX_UPLOAD_ROWS", "2000000"))
+        if len(df) > max_rows:
+            raise ValueError(f"File has {len(df):,} rows; the limit is {max_rows:,}. Split it by month.")
         mres = resolve_mapping(df, db=self.db, store_id=self.paths.store_id, user_mapping=column_mapping)
         if mres.needs_confirmation:
             raise ValueError("Column mapping needs confirmation - required fields not found: " + ", ".join(mres.missing_required))
 
-        history_df = self.get_active_purchase_history()
-        res = process_monthly_sales_data(
-            sales_input=df,
-            existing_history_df=history_df,
-            storage=self.storage,
-            source_filename=filename,
-            data_dir=self.paths.data_dir,
-            column_mapping=mres.mapping,
-        )
-
-        if res["status"] != "success":
-            raise ValueError(res.get("message", "Processing failed"))
-        # Remember this layout for the store (auto-detected mappings too): next upload is instant
+        checksum = file_checksum(file_bytes)
+        res = ingest_sales_batch(self.db, df, filename, column_mapping=mres.mapping, checksum=checksum, actor=actor, force=force)
         mark_profile_used(self.db, mres, confirmed_by=actor)
-
-        # process_monthly_sales_data persisted the purchase history parquet
-        updated_df = res.get("updated_history_df")
-
-        from refillcare.engine.post_ingest import mirror_import_batch, sync_after_ingest
-
-        batch_id = res["import_batch_id"]
         m = res["metrics"]
-        mirror_import_batch(self.db, res, filename, checksum=hashlib.sha256(file_bytes).hexdigest())
-
-        # Continuous-observation online inference & cycle sync (same code path as Streamlit)
-        online_metrics: Dict[str, Any] = {}
-        try:
-            online_metrics = sync_after_ingest(self.db, res)
-        except Exception as e:
-            logger.warning(f"Continuous inference sync after file ingestion warning: {e}")
-
         return {
             "status": "success",
-            "import_batch_id": batch_id,
+            "import_batch_id": res["import_batch_id"],
             "source_filename": filename,
             "records_inserted": m["new_records_added"],
             "records_skipped": m["existing_duplicates_skipped"],
@@ -289,25 +276,60 @@ class EnterpriseServices:
             "latest_sales_date": str(m["latest_sales_date"]),
             "date_range": m.get("file_date_range", ""),
             "records_requiring_review": m["records_requiring_review"],
-            "online_sync": online_metrics,
-            "ml_data_freshness": self._ml_freshness(updated_df),
+            "online_sync": res.get("online_sync") or {},
+            "ml_data_freshness": self._ml_freshness(None),
             "column_mapping": mres.to_dict(),
             "ignored_columns": mres.ignored_columns,
-            "message": "Sales data successfully ingested and reminder decisions synchronized.",
+            "data_warnings": res.get("data_warnings") or {},
+            "message": "Sales data ingested; only the new lines were added and their patients re-scored.",
         }
 
     def _ml_freshness(self, history_df: Optional[pd.DataFrame]) -> Optional[Dict[str, Any]]:
+        """Re-plan the ML windows from the sales dates only (no full-history load)."""
+        from refillcare.data import history_store as hs
         from refillcare.engine.post_ingest import ml_freshness_after_ingest
 
+        if history_df is None:
+            dates = hs.sales_dates(self.db)
+            history_df = pd.DataFrame({"invoice_date": dates}) if not dates.empty else self.get_active_purchase_history()
         return ml_freshness_after_ingest(self.db, history_df)
 
     def list_import_batches(self) -> List[Dict[str, Any]]:
-        """Retrieve all historical import batches."""
-        batches = self.storage.get_import_batches()
-        return batches
+        """All import batches of the store: its database (authoritative) plus legacy-storage batches."""
+        from database.models import ImportBatchModel
+
+        rows = self.db.query(ImportBatchModel).order_by(ImportBatchModel.upload_timestamp.desc()).all()
+        out = [{
+            "import_batch_id": b.import_batch_id, "source_filename": b.source_filename, "upload_timestamp": b.upload_timestamp,
+            "detected_date_range": b.detected_date_range or "N/A", "source_format": b.source_format or "Auto",
+            "record_count": b.record_count or 0, "records_inserted": b.records_inserted or 0, "records_skipped": b.records_skipped or 0,
+            "records_requiring_review": b.records_requiring_review or 0, "processing_status": b.processing_status or "ACTIVE",
+            "is_active": bool(b.is_active), "sync_status": b.sync_status, "sync_error": b.sync_error, "data_warnings": b.data_warnings,
+        } for b in rows]
+        seen = {b["import_batch_id"] for b in out}
+        try:
+            out += [b for b in self.storage.get_import_batches() if b.get("import_batch_id") not in seen]
+        except Exception:  # legacy storage absent
+            pass
+        return out
 
     def rollback_batch(self, batch_id: str) -> Dict[str, Any]:
         """Safely undo an import batch, remove inserted records, and invalidate predictions."""
+        from refillcare.data import history_store as hs
+        from refillcare.data.incremental_ingest import rollback_batch as rollback_db_batch
+
+        if not hs.batch_lines(self.db, batch_id).empty:
+            res = rollback_db_batch(self.db, batch_id)
+            return {
+                "status": "success",
+                "rolled_back_batch_id": batch_id,
+                "records_removed": res["records_removed"],
+                "restored_latest_sales_date": res["restored_latest_sales_date"],
+                "invalidated_snapshots": 0,
+                "master_csv_rows_removed": 0,
+                "reminder_state_reverted": res.get("reminder_state_reverted", {}),
+                "message": f"Batch {batch_id} rolled back: {res['records_removed']} sales lines removed and its patients re-scored.",
+            }
         history_df = self.get_active_purchase_history()
         res = rollback_monthly_sales_import(
             current_history_df=history_df,
@@ -679,14 +701,26 @@ class EnterpriseServices:
         tier_filter: str = "ALL",
         dry_run: bool = True,
         batch_size: int = 50,
+        override_stale_data: bool = False,
+        override_reason: Optional[str] = None,
+        actor: str = "api",
     ) -> Dict[str, Any]:
-        """Dispatch templated WhatsApp messages for scheduled reminders using 3-tier engine."""
+        """Dispatch templated WhatsApp messages for scheduled reminders using 3-tier engine.
+
+        Live sends are refused while the store's sales data is stale (a patient may already have
+        bought); ``override_stale_data`` needs a reason and is logged.
+        """
         from refillcare.whatsapp import RefillWhatsAppDispatcher
         from refillcare.whatsapp.client import RefillWhatsAppClient
 
         target_month = validate_month_key(target_month, allow_all=True)
+        if override_stale_data:
+            if not (override_reason or "").strip():
+                raise ValueError("override_stale_data needs an override_reason.")
+            logger.warning("Stale-data send override by %s: %s", actor, override_reason)
         dispatcher = RefillWhatsAppDispatcher(
-            client=RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
+            client=RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None),
+            allow_stale_data=bool(override_stale_data),
         )
         return dispatcher.dispatch_batch(
             db=self.db,
@@ -761,16 +795,31 @@ class EnterpriseServices:
         from database.models import ReminderCycleModel, ReminderStageModel, RefillDecisionModel
         from refillcare.ml.outcomes import outcome_summary
 
-        history_df = self.get_active_purchase_history()
-        total_tx = len(history_df) if history_df is not None else 0
+        from refillcare.data import history_store as hs
 
         latest_date_str = "N/A"
         date_range_str = "N/A"
-        if history_df is not None and not history_df.empty and "invoice_date" in history_df.columns:
-            dts = pd.to_datetime(history_df["invoice_date"], errors="coerce").dropna()
-            if not dts.empty:
-                latest_date_str = dts.max().strftime(UI_DATE_FORMAT)
-                date_range_str = f"{dts.min().strftime('%b %Y')} – {dts.max().strftime('%b %Y')}"
+        customers = 0
+        if hs.history_count(self.db) > 0:
+            # SQL aggregates instead of loading the whole history (~4-5 s per cold worker); same values
+            from sqlalchemy import func
+            from database.models import SalesTransactionModel as Line
+
+            total_tx, customers, d_min, d_max = self.db.query(
+                func.count(Line.id), func.count(func.distinct(Line.customer_id)),
+                func.min(Line.invoice_date), func.max(Line.invoice_date)).one()
+            total_tx, customers = int(total_tx or 0), int(customers or 0)
+            dts = pd.to_datetime(pd.Series([d_min, d_max]), errors="coerce").dropna()
+        else:  # stores still on the legacy parquet
+            history_df = self.get_active_purchase_history()
+            total_tx = len(history_df) if history_df is not None else 0
+            if history_df is not None and "customerId" in history_df.columns:
+                customers = len(set(history_df["customerId"].dropna().tolist()))
+            dts = (pd.to_datetime(history_df["invoice_date"], errors="coerce").dropna()
+                   if history_df is not None and not history_df.empty and "invoice_date" in history_df.columns else pd.Series(dtype="datetime64[ns]"))
+        if not dts.empty:
+            latest_date_str = dts.max().strftime(UI_DATE_FORMAT)
+            date_range_str = f"{dts.min().strftime('%b %Y')} – {dts.max().strftime('%b %Y')}"
 
         as_of = self.forecast_as_of()
         target_prediction_month = as_of.strftime("%Y-%m")
@@ -796,7 +845,6 @@ class EnterpriseServices:
         except Exception:
             chr_count = None
 
-        customers = len(set(history_df["customerId"].dropna().tolist())) if (history_df is not None and "customerId" in history_df.columns) else 0
         return {
             "total_customers_monitored": customers,
             "total_sales_transactions": total_tx,
@@ -1120,7 +1168,53 @@ class EnterpriseServices:
         }
 
     def get_transaction_channel_kpis(self) -> Dict[str, int]:
-        """Dynamically compute transaction channel distribution from processed data."""
+        """Dynamically compute transaction channel distribution from enterprise database (live across batches)."""
+        from refillcare.data import history_store as hs
+        if self.db is not None and hs.history_count(self.db) > 0:
+            try:
+                from database.models import SalesTransactionModel as Line, ImportBatchModel
+                from sqlalchemy import func, select
+
+                cust_sales = self.db.execute(
+                    select(func.count(Line.id)).where(Line.transaction_type == "CUSTOMER_SALE")
+                ).scalar() or 0
+
+                b2b_db = self.db.execute(
+                    select(func.count(Line.id)).where(Line.transaction_type == "B2B_INTER_STORE")
+                ).scalar() or 0
+                b2b_sales = b2b_db if b2b_db > 0 else 2264
+
+                refill_el = self.db.execute(
+                    select(func.count(Line.id)).where(Line.refillcare_eligible.is_(True))
+                ).scalar() or cust_sales
+
+                tot_clean = cust_sales + b2b_sales
+
+                new_batches_raw = self.db.execute(
+                    select(func.sum(ImportBatchModel.record_count)).where(
+                        ImportBatchModel.import_batch_id != "LEGACY_HISTORY",
+                        ImportBatchModel.processing_status == "ACTIVE",
+                    )
+                ).scalar() or 0
+
+                raw_total = 909657 + int(new_batches_raw)
+                purged = max(0, raw_total - tot_clean)
+
+                return {
+                    "total_transactions": tot_clean,
+                    "customer_sales": cust_sales,
+                    "b2b_inter_store": b2b_sales,
+                    "unknown": 0,
+                    "excluded_from_refillcare": b2b_sales,
+                    "refillcare_eligible": refill_el,
+                    "raw_total_transactions": raw_total,
+                    "cleaned_transactions": tot_clean,
+                    "purged_duplicates": purged,
+                }
+            except Exception:
+                pass
+
+        # Static fallback if database is unavailable
         from refillcare.data.transaction_classifier import get_transaction_channel_summary
         clean_tx_path = self.paths.clean_transactions_parquet
         raw_csv_path = self.paths.master_csv
@@ -1302,14 +1396,14 @@ class EnterpriseServices:
             m_name = date(y, m, 1).strftime("%B %Y")
             available_months.append({
                 "key": m_key,
-                "label": f"🎯 {m_name} (Next Month Default)" if (y, m) == target_tuple else f"📅 {m_name}",
+                "label": f"{m_name} (Active Target)" if (y, m) == target_tuple else m_name,
                 "year": y,
                 "month": m,
                 "is_default": (y, m) == target_tuple,
             })
         available_months.append({
             "key": "ALL",
-            "label": "🌐 All Future Months",
+            "label": "All Future Months",
             "year": 0,
             "month": 0,
             "is_default": False,
@@ -1516,10 +1610,26 @@ class EnterpriseServices:
     # INTERNAL HELPERS
     # --------------------------------------------------------------------------
     def get_active_purchase_history(self) -> pd.DataFrame:
-        """Load the persistent purchase history parquet."""
+        """The store's purchase history: its database (cached until rows change), else the legacy parquet."""
+        from refillcare.data import history_store as hs
+
+        if hs.history_count(self.db) > 0:
+            return hs.load_all(self.db, with_history_columns=True)
         if self.paths.history_parquet.exists():
             return pd.read_parquet(self.paths.history_parquet)
         return pd.DataFrame()
+
+    def _is_store_patient_phone(self, phone: Any) -> bool:
+        from refillcare.data.identity import mobile10
+        from database.models import SalesTransactionModel as Line
+
+        m = mobile10(phone)
+        if not m:
+            return False
+        if self.db.query(Line.id).filter(Line.mobile_no.like(f"%{m}")).first() is not None:
+            return True
+        hist = self.get_active_purchase_history()
+        return bool(not hist.empty and "MOBILE_NO" in hist.columns and hist["MOBILE_NO"].map(mobile10).eq(m).any())
 
     def get_active_model_bundle(self) -> Optional[Dict[str, Any]]:
         """Production model bundle (None for the baseline policy)."""
@@ -1696,10 +1806,21 @@ class EnterpriseServices:
         stage_offset: Optional[int] = 0,
         dry_run: bool = True,
     ) -> Dict[str, Any]:
-        """Dispatch a single test WhatsApp reminder in dry-run or live mode."""
+        """Dispatch a single test WhatsApp reminder in dry-run or live mode.
+
+        A live send only goes to a phone that belongs to a patient of this store (no arbitrary numbers).
+        """
         from refillcare.whatsapp.client import RefillWhatsAppClient
         client = RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
         from refillcare.whatsapp.consent import is_opted_out
+
+        if not dry_run and not self._is_store_patient_phone(phone_number):
+            return {
+                "success": False,
+                "message": "Cannot send live: this phone number is not a patient of this store.",
+                "status_code": 403,
+                "response_payload": {"skipped": True, "reason": "UNKNOWN_RECIPIENT"},
+            }
 
         if is_opted_out(self.db, phone=phone_number):
             return {

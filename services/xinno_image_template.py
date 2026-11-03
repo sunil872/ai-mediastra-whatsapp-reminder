@@ -326,7 +326,7 @@ def send_image_template_message(
 
     # 8. DRY RUN
     if dry_run:
-        logger.info(f"[DRY RUN] Image template message created for {normalized_phone}")
+        logger.info(f"[DRY RUN] Image template message created for ******{str(normalized_phone)[-4:]}")
         return {
             "success": True,
             "status_code": None,

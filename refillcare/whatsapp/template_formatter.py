@@ -182,12 +182,12 @@ def format_full_message_preview(
     tier_msg = REFILL_FUNCTION_MESSAGES.get(func, REFILL_FUNCTION_MESSAGES[REFILL_FUNCTION_DUE])
 
     tier_badge = (
-        "🟢 DUE_REFILL" if func == REFILL_FUNCTION_DUE
-        else ("🟡 REFILL_FOLLOW_UP" if func == REFILL_FUNCTION_FOLLOWUP else "🔴 LAPSED_REENGAGEMENT")
+        "DUE_REFILL" if func == REFILL_FUNCTION_DUE
+        else ("REFILL_FOLLOW_UP" if func == REFILL_FUNCTION_FOLLOWUP else "LAPSED_REENGAGEMENT")
     )
 
     return (
-        f"📱 [WhatsApp Template: refillcare_medicine_reminder — {tier_badge}]\n"
+        f"[WhatsApp Template: refillcare_medicine_reminder — {tier_badge}]\n"
         f"────────────────────────────────────────────────────────────\n"
         f"Dear *{clean_cust}*,\n\n"
         f"This is a friendly reminder from *{clean_store}* regarding your regular medicine refill.\n\n"

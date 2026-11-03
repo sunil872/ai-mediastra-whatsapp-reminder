@@ -5,8 +5,8 @@
 const API_BASE_URL = window.location.origin;
 
 /**
- * v1 write protection: write actions send `X-API-Key` (value stored once in localStorage under
- * `refillcare_api_key`, e.g. `localStorage.setItem("refillcare_api_key", "<key>")`).
+ * Every /api call sends `X-API-Key` (localStorage `refillcare_api_key`) and the store it works on,
+ * `X-Store-Id` (localStorage `refillcare_store_id`; empty = the server's default store).
  * Not needed when the browser runs on the server machine and REFILLCARE_API_KEY is unset.
  */
 export function authHeaders() {
@@ -14,6 +14,8 @@ export function authHeaders() {
   try {
     const key = localStorage.getItem("refillcare_api_key");
     if (key) h["X-API-Key"] = key;
+    const store = localStorage.getItem("refillcare_store_id");
+    if (store) h["X-Store-Id"] = store;
   } catch (e) { /* ignore */ }
   return h;
 }
@@ -82,17 +84,20 @@ export const ApiClient = {
     return await res.json();
   },
 
-  async ingestSalesFile(file, columnMapping = null) {
+  async ingestSalesFile(file, columnMapping = null, force = false) {
     const formData = new FormData();
     formData.append("file", file);
     if (columnMapping) formData.append("column_mapping", JSON.stringify(columnMapping));
+    if (force) formData.append("force", "true");
     const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/ingest`, {
       method: "POST",
       body: formData,
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Ingestion failed");
+      const e = new Error(err.detail || "Ingestion failed");
+      e.status = res.status;  // 409 = this exact file was already uploaded
+      throw e;
     }
     return await res.json();
   },
@@ -506,6 +511,21 @@ export const ApiClient = {
       body: JSON.stringify({ confirm: true }),
     });
     return await jsonOrThrow(res, "Failed to apply the re-key");
+  },
+
+  async getDataStatus() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/data-status`);
+    return await jsonOrThrow(res, "Failed to load sales data status");
+  },
+
+  async retryBatchSync(batchId) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/batches/${encodeURIComponent(batchId)}/retry-sync`, { method: "POST" });
+    return await jsonOrThrow(res, "Retry failed");
+  },
+
+  async rollbackModel() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ml/models/rollback`, { method: "POST" });
+    return await jsonOrThrow(res, "Model rollback failed");
   },
 
   async getColumnMappings() {

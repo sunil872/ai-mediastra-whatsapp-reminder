@@ -20,8 +20,9 @@ def append_message_audit_log(
     """Log individual message dispatch event to persistent audit log."""
     entry = {
         "timestamp": datetime.utcnow().isoformat(),
-        "phone_number": phone_number,
-        "customer_name": customer_name,
+        # Patient identity is never written to the audit file in clear (last 4 digits / initial only)
+        "phone_number": f"******{str(phone_number or '')[-4:]}",
+        "customer_name": (str(customer_name or "").strip()[:1] + "***") if customer_name else None,
         "medication_name": medication_name,
         "status": status,
         "message_id": message_id or "DRY_RUN_ID",

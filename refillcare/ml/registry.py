@@ -219,6 +219,24 @@ def promote_version(db: Session, version_id: str, promoted_by: str, decision: Di
     return v
 
 
+def rollback_production(db: Session, rolled_back_by: str, family: str = FAMILY_PATH_A_INTERVAL) -> MLModelVersionModel:
+    """Put the previous validated production model back (one step; the current one is retired)."""
+    current = get_by_status(db, family, STATUS_PRODUCTION)
+    q = (db.query(MLModelVersionModel)
+         .filter(MLModelVersionModel.model_family == family, MLModelVersionModel.status == STATUS_RETIRED,
+                 MLModelVersionModel.promoted_at.isnot(None), MLModelVersionModel.is_validated.is_(True)))
+    if current is not None:
+        q = q.filter(MLModelVersionModel.version_id != current.version_id)
+    previous = q.order_by(MLModelVersionModel.promoted_at.desc()).first()
+    if previous is None:
+        previous = db.get(MLModelVersionModel, BASELINE_VERSION_ID)
+        if previous is None:
+            raise ValueError("No previous validated model to roll back to.")
+    decision = {"approved": True, "rollback": True, "from_version": current.version_id if current else None,
+                "by": rolled_back_by, "at": datetime.utcnow().isoformat()}
+    return promote_version(db, previous.version_id, promoted_by=rolled_back_by, decision=decision | {"forced": False})
+
+
 def ensure_bootstrap_versions(db: Session) -> None:
     """Make the registry truthful on first use (idempotent).
 

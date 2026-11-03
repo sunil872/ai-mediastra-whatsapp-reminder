@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mediastra Refillcare — Enterprise Clinical Operations</title>
   <link rel="stylesheet" href="/static/css/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏥</text></svg>">
+  <link rel="icon" type="image/png" href="/static/assets/images/MediAstra_Icon.png">
+  <link rel="shortcut icon" href="/static/favicon.ico">
+  <link rel="apple-touch-icon" href="/static/assets/images/MediAstra_Icon.png">
 </head>
 <body>
 
@@ -14,7 +16,7 @@
        ============================================================================== -->
   <aside class="app-sidebar">
     <div class="sidebar-brand">
-      <div class="brand-icon-box">🏥</div>
+      <div class="brand-icon-box"><img src="/static/assets/images/MediAstra_Icon.png" alt="Mediastra" class="brand-logo-img"></div>
       <div class="brand-text">
         <h1>Mediastra</h1>
         <p>Refillcare</p>
@@ -24,42 +26,42 @@
     <nav class="sidebar-nav">
       <div class="nav-section-label">Core Clinical Operations</div>
       <a class="nav-item active" data-tab="tab-dashboard">
-        <span class="nav-icon">📊</span>
-        <span>Pharmacy Dashboard</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></span>
+        <strong>Pharmacy Overview</strong>
       </a>
       <a class="nav-item" data-tab="tab-medrules">
-        <span class="nav-icon">💊</span>
-        <span>Medication Classifier (Supabase)</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"></path><path d="m8.5 8.5 7 7"></path></svg></span>
+        <strong>Medication Classifier</strong>
       </a>
       <a class="nav-item" data-tab="tab-upload">
-        <span class="nav-icon">📁</span>
-        <span>Sales Ingestion & Batches</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></span>
+        <strong>Upload Sales Data</strong>
       </a>
       <a class="nav-item" data-tab="tab-predictions">
-        <span class="nav-icon">🎯</span>
-        <span>Prediction & Accuracy</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg></span>
+        <strong>Upcoming Refills</strong>
       </a>
       <a class="nav-item" data-tab="tab-reminders">
-        <span class="nav-icon">📅</span>
-        <span>Reminder List</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></span>
+        <strong>Patient Reminders</strong>
       </a>
       <a class="nav-item" data-tab="tab-medsync">
-        <span class="nav-icon">📦</span>
-        <span>Med-Sync Bundles</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></span>
+        <strong>Combined Prescriptions (Med-Sync)</strong>
       </a>
       <a class="nav-item" data-tab="tab-review">
-        <span class="nav-icon">⚠️</span>
-        <span>Clinical Review Queue</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span>
+        <strong>Patients Needing Review</strong>
       </a>
       
       <div class="nav-section-label" style="margin-top: 0.5rem;">Infrastructure & Gateway</div>
       <a class="nav-item" data-tab="tab-models">
-        <span class="nav-icon">🤖</span>
-        <span>Model Registry</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg></span>
+        <strong>AI Accuracy & Settings</strong>
       </a>
       <a class="nav-item" data-tab="tab-whatsapp">
-        <span class="nav-icon">💬</span>
-        <span>WhatsApp Gateway</span>
+        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>
+        <strong>WhatsApp Messages</strong>
       </a>
     </nav>
 
@@ -70,7 +72,7 @@
       </div>
       <div>Active Model: <strong id="sidebar-active-model">loading…</strong></div>
       <div style="margin-top: 0.4rem;">
-        <button class="btn btn-outline btn-sm" id="btn-set-api-key" title="Write actions send this key as X-API-Key">🔑 <span id="api-key-label">Set write key</span></button>
+        <button class="btn btn-outline btn-sm" id="btn-set-api-key" title="Write actions send this key as X-API-Key"> <span id="api-key-label">Set write key</span></button>
       </div>
       <div>Mediastra Refillcare v2.0.0</div>
     </div>
@@ -95,7 +97,7 @@
 
       <!-- Global Hospital Search -->
       <div class="navbar-search">
-        <span class="search-icon">🔍</span>
+        <span class="search-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
         <input type="text" id="global-search-input" placeholder="Search patient, medication, RX, or phone number...">
       </div>
 
@@ -103,13 +105,13 @@
       <div class="navbar-right">
         <!-- Notification Bell -->
         <button class="header-btn" id="btn-notifications" title="Clinical Notifications">
-          <span>🔔</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
           <span class="notification-badge" id="notification-badge" style="display:none;"></span>
         </button>
 
         <!-- Dark/Light Theme Toggle -->
         <button class="theme-toggle-btn" id="btn-theme-toggle" title="Toggle Light / Dark Mode">
-          <span id="theme-btn-icon">🌙</span>
+          <span id="theme-btn-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg></span>
           <span id="theme-btn-label">Dark Mode</span>
         </button>
       </div>
@@ -128,7 +130,7 @@
           <!-- Card 1: Patients Monitored -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-blue">👥</div>
+              <div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
               <span class="kpi-trend-pill trend-up">Unique patients</span>
             </div>
             <div class="kpi-title">Monitored Patients</div>
@@ -148,7 +150,7 @@
           <!-- Card 2: Upcoming Refills -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-green">💊</div>
+              <div class="kpi-icon-pill kpi-icon-green"><svg viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"></path><path d="m8.5 8.5 7 7"></path></svg></div>
               <span class="kpi-trend-pill trend-up">Forecast month</span>
             </div>
             <div class="kpi-title">Scheduled Refills</div>
@@ -168,7 +170,7 @@
           <!-- Card 3: Due Today -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-amber">⏰</div>
+              <div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></div>
               <span class="kpi-trend-pill trend-warning">● Urgent Today</span>
             </div>
             <div class="kpi-title">Refills Due Today</div>
@@ -188,7 +190,7 @@
           <!-- Card 4: Chronic Portfolio -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-purple">🏥</div>
+              <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
               <span class="kpi-trend-pill trend-info">Supabase rules</span>
             </div>
             <div class="kpi-title">Chronic Therapy Portfolio</div>
@@ -210,7 +212,7 @@
         <div class="card table-card">
           <div class="card-header">
             <div class="card-title-group">
-              <h3>📋 Active Refill Schedule & Purchase List</h3>
+              <h3>Active Clinical Refill Schedule</h3>
               <p>Longitudinal prescriptions scheduled for automated pharmacist outreach</p>
             </div>
             <button class="btn btn-primary" id="btn-view-all-reminders">View All Reminders</button>
@@ -219,7 +221,7 @@
           <div class="table-toolbar">
             <input type="text" class="table-search-input" id="dash-schedule-search" placeholder="Search Patient, Medication, Invoice #...">
             <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-outline" id="btn-export-quick-csv">📥 Export CSV</button>
+              <button class="btn btn-outline" id="btn-export-quick-csv">Export CSV</button>
             </div>
           </div>
 
@@ -246,24 +248,24 @@
         <!-- Quick Operational Actions Card -->
         <div class="card" style="margin-top: 1.5rem;">
           <div class="card-header">
-            <h4 style="font-size: 0.95rem; font-weight: 700;">⚡ Quick Operational Actions</h4>
+            <h4 style="font-size: 0.95rem; font-weight: 700;">Quick Operational Actions</h4>
             <span class="badge badge-info">Pharmacist Toolkit</span>
           </div>
           <div class="quick-actions-panel">
             <button class="btn-quick-action btn-quick-primary" id="qa-add-med-rule">
-              <span>➕</span>
+              
               <span>Add Medication Rule</span>
             </button>
             <button class="btn-quick-action btn-quick-accent" id="qa-upload-sales">
-              <span>📤</span>
+              
               <span>Upload Sales Data</span>
             </button>
             <button class="btn-quick-action" id="qa-run-predictions">
-              <span>🔮</span>
+              
               <span>Generate Predictions</span>
             </button>
             <button class="btn-quick-action" id="qa-batch-whatsapp">
-              <span>💬</span>
+              
               <span>Dispatch WhatsApp</span>
             </button>
           </div>
@@ -281,22 +283,22 @@
         <div class="card" style="margin-bottom: 1.5rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">💊 Medication Classifier & Dynamic Rules (Supabase Cloud)</h3>
+              <h3 class="card-title"> Medication Classifier & Dynamic Rules (Supabase Cloud)</h3>
               <p style="color: var(--text-secondary); margin-top: 0.25rem;">
                 Easily classify medications as Chronic Maintenance Therapies vs Non-Chronic/OTC/FMCG/Surgical.
                 Rules sync live to Supabase PostgreSQL without redeploying code.
               </p>
             </div>
             <div style="display: flex; gap: 0.75rem;">
-              <button class="btn btn-primary" id="btn-open-add-rule-modal">➕ Add New Medication Rule</button>
-              <button class="btn btn-outline" id="btn-refresh-rules">🔄 Refresh Rules</button>
+              <button class="btn btn-primary" id="btn-open-add-rule-modal"> Add New Medication Rule</button>
+              <button class="btn btn-outline" id="btn-refresh-rules">Refresh Rules</button>
             </div>
           </div>
 
           <!-- Live Diagnostic Classifier Test Widget -->
           <div style="background: var(--bg-card-subtle); border: 1px solid var(--border-main); border-radius: var(--radius-md); padding: 1.25rem; margin-bottom: 1.25rem;">
             <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.5rem;">
-              🧪 Live Pharmacist Medication Test Simulator
+              Clinical Medication Classification Simulator
             </h4>
             <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">
               Type any medication or OTC product name below to test real-time classification against active Supabase rules and clinical parsing logic.
@@ -304,7 +306,7 @@
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
               <input type="text" id="test-med-name-input" placeholder="e.g. TELMA 40, COOL-GEL, DOLO 650, AMARYL 2..." style="flex: 1; min-width: 280px; padding: 0.6rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
               <input type="text" id="test-med-packing-input" placeholder="Packing (e.g. 1X10 TAB)" style="width: 180px; padding: 0.6rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-              <button class="btn btn-accent" id="btn-run-med-test">⚡ Run Clinical Test</button>
+              <button class="btn btn-accent" id="btn-run-med-test">Run Simulation</button>
             </div>
 
             <!-- Test Result Banner -->
@@ -326,7 +328,7 @@
                 <option value="EXCLUDE">Exclusion Only (OTC/FMCG/Surgical)</option>
               </select>
               <input type="text" id="rule-search-input" placeholder="Search keyword, brand, or salt..." class="table-search-input">
-              <button class="btn btn-danger-search" id="btn-search-rules">🔍 Search</button>
+              <button class="btn btn-danger-search" id="btn-search-rules">Search</button>
             </div>
             <span class="badge badge-info" id="rules-count-badge">Loading rules...</span>
           </div>
@@ -355,11 +357,12 @@
       <section id="tab-upload" class="tab-pane">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">📁 Upload Monthly Pharmacy Sales Data</h3>
+            <h3 class="card-title">Upload Sales Data</h3>
           </div>
           
+          <div id="data-status-banner" style="margin-bottom: 1rem; font-size: 0.9rem;"></div>
           <div class="upload-dropzone" id="sales-dropzone">
-            <div class="upload-icon">📤</div>
+            <div class="upload-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></div>
             <h3>Drag & Drop Excel (.xlsx) or CSV file here</h3>
             <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">
               Strict DD-MM-YYYY validation will automatically verify dates prior to ingestion.
@@ -370,12 +373,12 @@
 
           <!-- Preview & Validation Card -->
           <div id="upload-preview-area" style="display: none; margin-top: 1.5rem;">
-            <h4 style="margin-bottom: 0.75rem; color: var(--primary);">📋 Ingestion Pre-flight Diagnostics</h4>
+            <h4 style="margin-bottom: 0.75rem; color: var(--primary);"> Ingestion Pre-flight Diagnostics</h4>
 
             <!-- Column mapping: auto-detected / saved per store; editable, required before first import of a new layout -->
             <div id="column-mapping-panel" style="margin-bottom: 1.25rem;">
               <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
-                <strong>🧭 Column Mapping</strong>
+                <strong>Column Mapping</strong>
                 <span id="mapping-status" class="badge badge-info">-</span>
                 <button class="btn btn-outline" id="btn-edit-mapping" style="margin-left: auto; padding: 0.25rem 0.75rem;">Edit mapping</button>
               </div>
@@ -387,7 +390,7 @@
                 </table>
               </div>
               <div id="mapping-actions" style="display: none; gap: 0.75rem; margin-bottom: 0.5rem;">
-                <button class="btn btn-primary" id="btn-save-mapping">💾 Save mapping & validate</button>
+                <button class="btn btn-primary" id="btn-save-mapping"> Save mapping & validate</button>
               </div>
               <p id="mapping-ignored" style="color: var(--text-muted); font-size: 0.8rem; margin: 0;"></p>
             </div>
@@ -409,7 +412,7 @@
             </div>
 
             <div style="display: flex; gap: 1rem;">
-              <button class="btn btn-primary" id="btn-confirm-ingest">🚀 Process & Commit Sales Data</button>
+              <button class="btn btn-primary" id="btn-confirm-ingest"> Process & Commit Sales Data</button>
               <button class="btn btn-outline" id="btn-cancel-ingest">Cancel</button>
             </div>
           </div>
@@ -418,7 +421,7 @@
         <!-- Saved column mappings (per store and file layout) -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">🧭 Saved Column Mappings</h3>
+            <h3 class="card-title">Saved Column Mappings</h3>
           </div>
           <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">A file with the same columns as a saved layout is mapped automatically. Delete a mapping to have that layout detected and confirmed again.</p>
           <div class="table-responsive">
@@ -432,7 +435,7 @@
         <!-- Historical Import Batches -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">📜 Historical Import Batches & Rollback Audit</h3>
+            <h3 class="card-title">Historical Import Batches & Rollback Audit</h3>
           </div>
           <div class="table-responsive">
             <table class="data-table" id="table-import-batches">
@@ -442,6 +445,7 @@
                   <th>Source File</th>
                   <th>Upload Time</th>
                   <th>Date Range</th>
+                  <th>Re-scoring</th>
                   <th>Records Added</th>
                   <th>Status</th>
                   <th>Action</th>
@@ -457,8 +461,8 @@
       <section id="tab-predictions" class="tab-pane">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">🎯 Refill Prediction Engine</h3>
-            <button class="btn btn-accent" id="btn-run-predictions">🔮 Generate Updated Predictions</button>
+            <h3 class="card-title">Refill Prediction Engine</h3>
+            <button class="btn btn-accent" id="btn-run-predictions"> Generate Updated Predictions</button>
           </div>
           <p style="color: var(--text-secondary); margin-bottom: 1rem;">
             Generates immutable prediction snapshots combining Path A (LightGBM) and Path B (Days-of-Supply).
@@ -486,8 +490,8 @@
         <!-- Outcome Evaluation -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">📊 Realized Outcome Evaluation (Predictions vs. Actuals)</h3>
-            <button class="btn btn-outline" id="btn-run-evaluation">📈 Calculate Outcome Accuracy</button>
+            <h3 class="card-title"> Realized Outcome Evaluation (Predictions vs. Actuals)</h3>
+            <button class="btn btn-outline" id="btn-run-evaluation"> Calculate Outcome Accuracy</button>
           </div>
           <div class="kpi-grid">
             <div class="kpi-card"><div class="kpi-title">Predictions Evaluated</div><div class="kpi-value" id="eval-count">-</div></div>
@@ -503,7 +507,7 @@
         <div class="card">
           <div class="card-header">
             <div style="display: flex; align-items: center; gap: 0.6rem;">
-              <h3 class="card-title">📅 Reminder List</h3>
+              <h3 class="card-title">Clinical Reminder Queue</h3>
               <span class="badge badge-info" id="reminder-count-badge">Loading...</span>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
@@ -542,9 +546,9 @@
                 <option value="UNKNOWN">Unknown Channels</option>
               </select>
               <input type="text" id="reminder-search-input" placeholder="Search Customer / Phone / Med..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); width: 210px;">
-              <button class="btn btn-danger-search" id="btn-search-reminders">🔍 Search</button>
-              <button class="btn btn-primary" id="btn-download-reminder-csv">📥 Download CSV</button>
-              <button class="btn btn-outline" id="btn-download-reminder-json">📥 Download JSON</button>
+              <button class="btn btn-danger-search" id="btn-search-reminders">Search</button>
+              <button class="btn btn-primary" id="btn-download-reminder-csv"> Download CSV</button>
+              <button class="btn btn-outline" id="btn-download-reminder-json">Export JSON</button>
             </div>
           </div>
           <div class="table-responsive" style="max-height: 450px;">
@@ -574,7 +578,7 @@
         <div class="card" style="margin-bottom: 1.5rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">📦 Med-Sync: Multi-Prescription Synchronization</h3>
+              <h3 class="card-title">Med-Sync: Multi-Prescription Synchronization</h3>
               <p style="color: var(--text-secondary); margin-top: 0.25rem;">
                 Automatically groups active chronic prescriptions due on the exact same date into a single coordinated refill appointment, cutting customer friction by 50%+.
               </p>
@@ -599,8 +603,8 @@
                 <input type="range" id="sync-window-slider" min="0" max="14" value="0" style="cursor: pointer; vertical-align: middle;">
               </div>
               <div style="padding-top: 1rem; display: flex; gap: 0.5rem;">
-                <button class="btn btn-danger-search" id="btn-search-medsync">🔍 Search</button>
-                <button class="btn btn-outline" id="btn-refresh-medsync">🔄 Refresh</button>
+                <button class="btn btn-danger-search" id="btn-search-medsync">Search</button>
+                <button class="btn btn-outline" id="btn-refresh-medsync">Refresh</button>
               </div>
             </div>
           </div>
@@ -631,7 +635,7 @@
 
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">📋 Synchronized Patient Refill Bundles</h3>
+            <h3 class="card-title">Synchronized Patient Refill Bundles</h3>
           </div>
           <div class="table-responsive" style="max-height: 540px;">
             <table class="data-table" id="table-medsync-bundles">
@@ -662,7 +666,7 @@
           <!-- Card 1: Total In Review Queue -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-amber">⚠️</div>
+              <div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div>
               <span class="kpi-trend-pill trend-warning">Clinical Action</span>
             </div>
             <div class="kpi-title">Total In Review Queue</div>
@@ -682,7 +686,7 @@
           <!-- Card 2: Missing Mobile Numbers -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-red">📱</div>
+              <div class="kpi-icon-pill kpi-icon-red"><svg viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"></path><line x1="23" y1="1" x2="1" y2="23"></line></svg></div>
               <span class="kpi-trend-pill trend-alert">Zero WhatsApp</span>
             </div>
             <div class="kpi-title">Missing Mobile Numbers</div>
@@ -702,7 +706,7 @@
           <!-- Card 3: Stability / Variance Risk -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-blue">📊</div>
+              <div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg></div>
               <span class="kpi-trend-pill trend-info">Cadence Check</span>
             </div>
             <div class="kpi-title">Stability / Variance Risk</div>
@@ -722,7 +726,7 @@
           <!-- Card 4: Cold-Start (Single Purchase) -->
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-purple">❄️</div>
+              <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg></div>
               <span class="kpi-trend-pill trend-up">First-Time</span>
             </div>
             <div class="kpi-title">Cold-Start (Single Purchase)</div>
@@ -743,7 +747,7 @@
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">⚠️ Pharmacist Clinical Review & Validation Queue</h3>
+              <h3 class="card-title">Pharmacist Clinical Review & Validation Queue</h3>
               <p style="color: var(--text-secondary); margin-top: 0.25rem;">
                 Review unstable refill predictions, missing contact numbers, and cold-start single purchases before patient outreach.
               </p>
@@ -763,7 +767,7 @@
                 <option value="Valid">Valid Mobile Only</option>
               </select>
               <input type="text" id="review-search-cust" placeholder="Search Patient / Phone / Reason..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); width: 220px;">
-              <button class="btn btn-danger-search" id="btn-refresh-review-queue">🔍 Filter Queue</button>
+              <button class="btn btn-danger-search" id="btn-refresh-review-queue"> Filter Queue</button>
             </div>
           </div>
           <div class="table-responsive" style="max-height: 520px;">
@@ -794,14 +798,14 @@
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">🧭 Data Freshness & Evaluation Windows</h3>
+              <h3 class="card-title">Data Freshness & Horizon Calibration</h3>
               <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
                 Windows are re-derived from the latest sale on every load, so they move forward automatically when a new month is uploaded.
               </p>
             </div>
             <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <button class="btn btn-outline" id="btn-ml-retrain">🔁 Retrain &amp; Evaluate</button>
-              <button class="btn btn-primary" id="btn-ml-retrain-promote">🚀 Retrain &amp; Promote if Gate Approves</button>
+              <button class="btn btn-outline" id="btn-ml-retrain">Retrain &amp; Evaluate</button>
+              <button class="btn btn-primary" id="btn-ml-retrain-promote"> Retrain &amp; Promote if Gate Approves</button>
             </div>
           </div>
           <div id="ml-freshness-banner" style="margin: 0.5rem 0 1rem;"></div>
@@ -818,7 +822,8 @@
         <!-- Registry -->
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
-            <h3 class="card-title">🤖 Model Version Registry</h3>
+            <h3 class="card-title">Model Version Registry</h3>
+            <button class="btn btn-outline" id="btn-ml-rollback" title="Put the previous validated model back">↩ Roll back production model</button>
           </div>
           <div class="table-responsive">
             <table class="data-table" id="table-models">
@@ -843,7 +848,7 @@
         <!-- Recent evaluations -->
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
-            <h3 class="card-title">📏 Recent Out-of-Time Evaluations</h3>
+            <h3 class="card-title">Recent Out-of-Time Evaluations</h3>
           </div>
           <div class="table-responsive">
             <table class="data-table" id="table-ml-evaluations">
@@ -858,7 +863,7 @@
         <!-- Prediction settings (read-only; set in .env) -->
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
-            <h3 class="card-title">⚙️ Prediction Settings</h3>
+            <h3 class="card-title">Prediction Settings</h3>
           </div>
           <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Rules, patient identity and therapy grouping the engine runs with. Change them in <code>.env</code> and restart; measure a rule first with the A/B test below.</p>
           <div class="table-responsive">
@@ -872,10 +877,10 @@
         <!-- Rule A/B and rolling test -->
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
-            <h3 class="card-title">🧪 Rule A/B and Multi-Month Test</h3>
+            <h3 class="card-title">Rule A/B and Multi-Month Testing</h3>
             <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-outline" id="btn-ml-rules-ab">🧪 Run Rule A/B</button>
-              <button class="btn btn-outline" id="btn-ml-rolling">📆 Run 3-Month Test</button>
+              <button class="btn btn-outline" id="btn-ml-rules-ab">Run Rule A/B</button>
+              <button class="btn btn-outline" id="btn-ml-rolling">Run 3-Month Test</button>
             </div>
           </div>
           <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Rule A/B scores every rule on the same unseen test month (~3 min). The multi-month test trains one model per month and checks the gain holds in every month (~20 min, needs RAM). Both run in the background; results appear here.</p>
@@ -898,9 +903,9 @@
         <!-- Identity cut-over -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">🔑 Patient Identity Cut-over</h3>
+            <h3 class="card-title">Patient Identity Cut-over</h3>
             <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-outline" id="btn-rekey-dry">🔍 Dry Run</button>
+              <button class="btn btn-outline" id="btn-rekey-dry">Dry Run</button>
               <button class="btn btn-primary" id="btn-rekey-apply">Apply Re-key</button>
             </div>
           </div>
@@ -915,14 +920,14 @@
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">💬 WhatsApp & Xinno Messaging Gateway</h3>
+              <h3 class="card-title">WhatsApp & Xinno Messaging Gateway</h3>
               <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
                 Automated WhatsApp reminders remain safely controlled with dry-run simulation mode enabled by default.
               </p>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center;">
               <span class="badge badge-warning" id="wa-dry-run-badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid #f59e0b; font-weight: 700;">DRY-RUN SIMULATION ACTIVE</span>
-              <button class="btn btn-primary" id="btn-dispatch-dryrun">⚡ Simulate Batch Send (Dry-Run)</button>
+              <button class="btn btn-primary" id="btn-dispatch-dryrun"> Simulate Batch Send (Dry-Run)</button>
             </div>
           </div>
 
@@ -975,7 +980,7 @@
             </div>
 
             <div style="display: flex; align-items: flex-end; padding-top: 1.15rem;">
-              <button class="btn btn-outline" id="btn-refresh-wa" style="padding: 0.45rem 1rem;">🔍 Refresh Queue</button>
+              <button class="btn btn-outline" id="btn-refresh-wa" style="padding: 0.45rem 1rem;">Refresh Queue</button>
             </div>
           </div>
         </div>
@@ -984,7 +989,7 @@
         <div class="kpi-grid" style="margin-bottom: 1.25rem;">
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-blue">👥</div>
+              <div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
               <span class="kpi-trend-pill trend-neutral">● Scheduled</span>
             </div>
             <div class="kpi-title">Total Scheduled</div>
@@ -995,7 +1000,7 @@
 
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-emerald">📱</div>
+              <div class="kpi-icon-pill kpi-icon-emerald"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg></div>
               <span class="kpi-trend-pill trend-success">▲ Ready to Send</span>
             </div>
             <div class="kpi-title">Delivery Ready (Valid)</div>
@@ -1006,7 +1011,7 @@
 
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-amber">⚠️</div>
+              <div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div>
               <span class="kpi-trend-pill trend-warning">● Attention Needed</span>
             </div>
             <div class="kpi-title">Missing Mobile</div>
@@ -1017,7 +1022,7 @@
 
           <div class="kpi-card">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-purple">🎯</div>
+              <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></div>
               <span class="kpi-trend-pill trend-neutral">Horizon Target</span>
             </div>
             <div class="kpi-title">Active Target</div>
@@ -1033,7 +1038,7 @@
           <div class="card" style="padding: 1.25rem;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
               <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">
-                📋 Candidate Outreach Queue (<span id="wa-candidate-count">0</span> records)
+                Candidate Outreach Queue (<span id="wa-candidate-count">0</span> records)
               </h4>
               <span style="font-size: 0.75rem; color: var(--text-muted);">Click any row to preview message</span>
             </div>
@@ -1064,7 +1069,7 @@
           <div class="card" style="padding: 1.25rem;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
               <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">
-                📱 Live 3-Tier Message Preview & Dynamic Variable Simulation
+                Live Message Preview & Clinical Variable Simulation
               </h4>
             </div>
 
@@ -1082,7 +1087,7 @@
             <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 1.15rem;">💬</span>
+                  <span style="font-size: 0.85rem; font-weight: 700; color: #38bdf8;">WABA</span>
                   <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">WhatsApp Live Message Preview</span>
                 </div>
                 <span id="wa-preview-badge" style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
@@ -1097,7 +1102,7 @@
             <!-- Interactive Single Test Dispatch Card -->
             <div style="background: var(--bg-hover); border: 1px solid var(--border-main); border-radius: 10px; padding: 1rem 1.25rem;">
               <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 6px;">
-                <span>📲</span> Send Single Test WhatsApp Message (Live / Dry-Run)
+                Send Single Test WhatsApp Message (Live / Dry-Run)
               </div>
               <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0.75rem; align-items: flex-end;">
                 <div>
@@ -1111,11 +1116,11 @@
                     <input type="checkbox" id="wa-single-dryrun-chk" checked>
                     <span>Dry-Run Simulation</span>
                   </label>
-                  <div id="wa-mode-caption" style="font-size: 0.7rem; color: #f59e0b; font-weight: 600; margin-top: 2px;">🟡 Mode: Dry-Run</div>
+                  <div id="wa-mode-caption" style="font-size: 0.7rem; color: #f59e0b; font-weight: 600; margin-top: 2px;">Mode: Dry-Run</div>
                 </div>
                 <div>
                   <button class="btn btn-primary" id="btn-send-single-wa" style="width: 100%; padding: 0.5rem 0.75rem;">
-                    🚀 Send Test Message
+                    Send Test Message
                   </button>
                 </div>
               </div>
@@ -1128,7 +1133,7 @@
         <div class="card" style="margin-top: 1.25rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">🚫 Patient WhatsApp Consent</h3>
+              <h3 class="card-title">Patient Outreach Consent &amp; Opt-Out Management</h3>
               <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
                 Patients who reply STOP (or are opted out here) are skipped by every send path: batch, Med-Sync, single stage and test send.
               </p>
@@ -1159,8 +1164,8 @@
   <div class="modal-overlay" id="modal-add-rule">
     <div class="modal-card">
       <div class="modal-header">
-        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main);">➕ Add Medication Classification Rule (Supabase)</h3>
-        <button class="action-btn" id="btn-close-modal-rule" style="border: none; font-size: 1.2rem;">✕</button>
+        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main);"> Add Medication Classification Rule (Supabase)</h3>
+        <button class="action-btn" id="btn-close-modal-rule" style="border: none; font-size: 1.2rem;">&times;</button>
       </div>
       <div class="modal-body">
         <div>
@@ -1201,7 +1206,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" id="btn-cancel-modal-rule">Cancel</button>
-        <button class="btn btn-primary" id="btn-save-rule-to-supabase">💾 Save Rule to Supabase</button>
+        <button class="btn btn-primary" id="btn-save-rule-to-supabase">Save Rule to Supabase</button>
       </div>
     </div>
   </div>

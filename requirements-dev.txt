@@ -1,0 +1,6 @@
+# Development / CI only (not installed in the production image).
+-r requirements.txt
+
+pytest==9.1.1
+httpx==0.28.1        # FastAPI TestClient
+pip-audit==2.9.0     # dependency vulnerability scan (CI)

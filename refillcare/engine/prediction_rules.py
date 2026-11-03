@@ -33,7 +33,9 @@ DOM_ANCHOR_INTERVAL_RANGE = (20, 40)  # monthly buyers only
 
 
 def _flag(name: str, default: bool) -> bool:
-    return os.getenv(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
+    from refillcare.stores import store_setting
+
+    return (store_setting(name, "true" if default else "false") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 @dataclass(frozen=True)
@@ -48,9 +50,11 @@ class EngineRules:
     def from_env(cls) -> "EngineRules":
         from refillcare.env import ensure_dotenv
 
+        from refillcare.stores import store_setting
+
         ensure_dotenv()
-        mode = os.getenv("REFILLCARE_RULE_PATH_B_MODE", "dos").strip().lower()
-        cap = os.getenv("REFILLCARE_RULE_DEVICE_CAP_MODE", "strict").strip().lower()
+        mode = (store_setting("REFILLCARE_RULE_PATH_B_MODE", "dos") or "dos").strip().lower()
+        cap = (store_setting("REFILLCARE_RULE_DEVICE_CAP_MODE", "strict") or "strict").strip().lower()
         return cls(
             high_stability_median=_flag("REFILLCARE_RULE_HIGH_STABILITY_MEDIAN", False),
             insulin_median=_flag("REFILLCARE_RULE_INSULIN_MEDIAN", False),

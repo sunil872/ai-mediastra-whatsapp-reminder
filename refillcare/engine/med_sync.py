@@ -498,10 +498,10 @@ class MedSyncEngine:
             items_bullets = "\n".join([f"  • {item.item_name}" for item in bundle.synced_items])
             return (
                 f"Hello {bundle.customer_name},\n\n"
-                f"🏥 *{pharmacy_name} - Chronic Care Check-in Notice*\n\n"
+                f"*{pharmacy_name} - Chronic Care Check-in Notice*\n\n"
                 f"We noticed your regular prescription refills due around *{anchor_date_str}* have not been refilled yet:\n\n"
                 f"{items_bullets}\n\n"
-                f"📦 Would you like our clinical team to assist you with home delivery or prescription coordination?\n\n"
+                f"Would you like our clinical team to assist you with home delivery or prescription coordination?\n\n"
                 f"• Reply *1* for Refill & Delivery\n"
                 f"• Reply *2* if already refilled or paused\n"
                 f"• Call our pharmacist hotline: {hotline}"
@@ -520,10 +520,10 @@ class MedSyncEngine:
             items_bullets = "\n".join([f"  • {item.item_name}" for item in bundle.synced_items])
             return (
                 f"Hello {bundle.customer_name},\n\n"
-                f"🏥 *{pharmacy_name} - Follow-up Refill Reminder*\n\n"
+                f"*{pharmacy_name} - Follow-up Refill Reminder*\n\n"
                 f"Friendly reminder regarding your ongoing chronic refills due on *{anchor_date_str}*:\n\n"
                 f"{items_bullets}\n\n"
-                f"📦 We have reserved fresh stock for your medications.\n\n"
+                f"We have reserved fresh stock for your medications.\n\n"
                 f"• Reply *1* to Confirm All {bundle.total_items_count} items\n"
                 f"• Reply *2* to Customize or Delay\n"
                 f"• Call our pharmacist hotline: {hotline}"
@@ -542,10 +542,10 @@ class MedSyncEngine:
         items_bullets = "\n".join([f"  • {item.item_name}" for item in bundle.synced_items])
         return (
             f"Hello {bundle.customer_name},\n\n"
-            f"🏥 *{pharmacy_name} - Synchronized Prescription Refill Notice*\n\n"
+            f"*{pharmacy_name} - Synchronized Prescription Refill Notice*\n\n"
             f"To save you multiple pharmacy trips, we have synchronized your upcoming chronic refills due around *{anchor_date_str}* into a single convenient order:\n\n"
             f"{items_bullets}\n\n"
-            f"📦 Would you like us to prepare all {bundle.total_items_count} medications together?\n\n"
+            f"Would you like us to prepare all {bundle.total_items_count} medications together?\n\n"
             f"• Reply *1* to Confirm All {bundle.total_items_count} items\n"
             f"• Reply *2* to Customize or Delay\n"
             f"• Call our pharmacist hotline: {hotline}"

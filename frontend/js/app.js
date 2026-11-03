@@ -82,10 +82,10 @@ function setTheme(theme) {
   const label = document.getElementById("theme-btn-label");
   if (icon && label) {
     if (theme === "dark") {
-      icon.innerText = "☀️";
+      icon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`;
       label.innerText = "Light Mode";
     } else {
-      icon.innerText = "🌙";
+      icon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
       label.innerText = "Dark Mode";
     }
   }
@@ -125,7 +125,7 @@ function setupNavigation() {
 
       // Lazy load tab data
       if (tabId === "tab-medrules" && window.loadMedRules) window.loadMedRules();
-      if (tabId === "tab-upload") { loadBatches(); loadColumnMappings(); }
+      if (tabId === "tab-upload") { loadBatches(); loadColumnMappings(); loadDataStatus(); }
       if (tabId === "tab-predictions") loadPredictionSnapshots();
       if (tabId === "tab-reminders") loadReminders();
       if (tabId === "tab-medsync") loadMedSyncBundles();
@@ -154,7 +154,7 @@ async function loadInitialData() {
       const evidence = kpis.measured_backtest_within_7_days_pct != null
         ? ` · ${kpis.measured_backtest_within_7_days_pct}% ±7d (measured)`
         : " · not yet evaluated";
-      document.getElementById("sidebar-active-model").innerText = `${v}${kpis.model_is_validated ? " ✓" : ""}${evidence}`;
+      document.getElementById("sidebar-active-model").innerText = `${v}${kpis.model_is_validated ? " (Validated)" : ""}${evidence}`;
     }
     if (document.getElementById("kpi-target-month-label") && kpis.target_prediction_month) {
       document.getElementById("kpi-target-month-label").innerText = `${kpis.target_prediction_month} forecast target pipeline`;
@@ -188,7 +188,7 @@ async function loadBatches() {
     tbody.innerHTML = "";
 
     if (!batches || batches.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-muted);">No import batches recorded yet.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color: var(--text-muted);">No import batches recorded yet.</td></tr>`;
       return;
     }
 
@@ -199,7 +199,10 @@ async function loadBatches() {
         <td><code>${esc(b.import_batch_id)}</code></td>
         <td>${esc(b.source_filename)}</td>
         <td>${new Date(b.upload_timestamp).toLocaleString()}</td>
-        <td>${b.detected_date_range || "-"}</td>
+        <td>${esc(b.detected_date_range || "-")}</td>
+        <td>${b.sync_status === "SYNC_FAILED"
+          ? `<span class="badge badge-danger" title="${esc(b.sync_error || "")}">failed</span> <button class="btn btn-outline btn-sm btn-retry-sync" data-batch="${esc(b.import_batch_id)}">Retry</button>`
+          : `<span class="badge ${b.sync_status === "SYNCED" ? "badge-success" : "badge-info"}">${esc(b.sync_status || "-")}</span>`}</td>
         <td><strong>${Number(b.records_inserted).toLocaleString()}</strong></td>
         <td><span class="badge ${isRolledBack ? 'badge-danger' : 'badge-success'}">${esc(b.processing_status)}</span></td>
         <td>
@@ -209,6 +212,19 @@ async function loadBatches() {
         </td>
       `;
       tbody.appendChild(tr);
+    });
+
+    document.querySelectorAll(".btn-retry-sync").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const res = await ApiClient.retryBatchSync(btn.getAttribute("data-batch"));
+          showToast(res.error ? `Retry failed: ${res.error}` : `Re-scored ${res.customer_items_rescored} medicines.`, res.error ? "error" : "success");
+          await loadBatches();
+          await loadDataStatus();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      });
     });
 
     document.querySelectorAll(".btn-rollback").forEach((btn) => {
@@ -417,8 +433,8 @@ function renderFilteredReminders(filterLabel = "") {
         <span style="color: var(--text-muted); font-size: 0.85rem; margin-right: 1.25rem;">
           Showing <strong>${reminderDisplayLimit}</strong> of <strong>${filtered.length.toLocaleString()}</strong> scheduled reminders.
         </span>
-        <button class="btn btn-sm btn-outline" id="btn-load-more-reminders" style="font-weight: 600;">➕ Load More (+250)</button>
-        <button class="btn btn-sm btn-outline" id="btn-show-all-reminders" style="font-weight: 600; margin-left: 0.5rem;">⚡ Show All</button>
+        <button class="btn btn-sm btn-outline" id="btn-load-more-reminders" style="font-weight: 600;">Load More (+250)</button>
+        <button class="btn btn-sm btn-outline" id="btn-show-all-reminders" style="font-weight: 600; margin-left: 0.5rem;">Show All</button>
       </td>
     `;
     tbody.appendChild(moreTr);
@@ -613,12 +629,12 @@ async function loadReviewQueue() {
       // Action buttons
       let actionHtml = `
         <div style="display:flex; gap:0.35rem;">
-          <button class="btn btn-sm btn-primary btn-approve-review" data-id="${r.decision_id || r.customer_id}" title="Approve candidate for dispatch">✓ Approve</button>
-          <button class="btn btn-sm btn-outline btn-reject-review" data-id="${r.decision_id || r.customer_id}" title="Reject candidate">✗ Reject</button>
+          <button class="btn btn-sm btn-primary btn-approve-review" data-id="${r.decision_id || r.customer_id}" title="Approve candidate for dispatch">Approve</button>
+          <button class="btn btn-sm btn-outline btn-reject-review" data-id="${r.decision_id || r.customer_id}" title="Reject candidate">Reject</button>
         </div>
       `;
       if (r.status === "APPROVED") {
-        actionHtml = `<span style="color:var(--success); font-size:0.85rem; font-weight:600;">✓ Approved</span>`;
+        actionHtml = `<span style="color:var(--success); font-size:0.85rem; font-weight:600;">Approved</span>`;
       } else if (r.status === "REJECTED") {
         actionHtml = `<span style="color:var(--danger); font-size:0.85rem;">Rejected</span>`;
       }
@@ -649,7 +665,7 @@ async function loadReviewQueue() {
       btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-id");
         btn.disabled = true;
-        btn.parentElement.innerHTML = `<span style="color:var(--success); font-size:0.85rem; font-weight:600;">✓ Approved</span>`;
+        btn.parentElement.innerHTML = `<span style="color:var(--success); font-size:0.85rem; font-weight:600;">Approved</span>`;
         showToast(`Candidate approved for clinical dispatch: ${id}`, "success");
       });
     });
@@ -795,7 +811,7 @@ async function showGate(versionId) {
     const g = await ApiClient.getMlGate(versionId);
     const checks = (g.checks || []).map((c) => `
       <tr>
-        <td>${c.passed ? "✅" : "❌"}</td>
+        <td>${c.passed ? `<span class="badge badge-success">Passed</span>` : `<span class="badge badge-danger">Failed</span>`}</td>
         <td>${esc(c.check)}</td>
         <td>${esc(c.detail ?? "")}</td>
       </tr>`).join("");
@@ -869,6 +885,16 @@ function setupMlActions() {
       showToast(err.message, "error");
     }
   };
+  document.getElementById("btn-ml-rollback")?.addEventListener("click", async () => {
+    if (!confirm("Put the previous validated model back into production?")) return;
+    try {
+      const r = await ApiClient.rollbackModel();
+      showToast(`Production model is now ${esc(r.production_version)}.`, "success");
+      await loadModels();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  });
   document.getElementById("btn-ml-rules-ab")?.addEventListener("click", () => startJob("rules_ab"));
   document.getElementById("btn-ml-rolling")?.addEventListener("click", () => startJob("rolling"));
 
@@ -896,13 +922,30 @@ function setupMlActions() {
   document.getElementById("btn-rekey-apply")?.addEventListener("click", async () => {
     if (!confirm("Apply the patient-identity / salt-grouping re-key now?\n\nThe database is backed up first. Old-key reminders are retired and every patient is re-scored.")) return;
     try {
-      showToast("Applying re-key (re-scores every patient)...", "info");
-      showRekey(await ApiClient.applyRekey(), true);
-      showToast("✅ Re-key applied.", "success");
+      const job = await ApiClient.applyRekey();
+      showToast(`Re-key queued as job #${esc(job.job_id)}; worker re-scoring initiated.`, "success");
     } catch (err) {
       showToast(err.message, "error");
     }
   });
+}
+
+async function loadDataStatus() {
+  const box = document.getElementById("data-status-banner");
+  if (!box) return;
+  try {
+    const st = await ApiClient.getDataStatus();
+    const latest = st.latest_sales_date || "none yet";
+    if (st.ok_to_send) {
+      box.innerHTML = `<span class="badge badge-success">Sales data current</span> latest sale ${esc(latest)} (${esc(st.days_behind)} day(s) ago)`;
+    } else {
+      const why = st.batches_failed_to_sync ? `${esc(st.batches_failed_to_sync)} upload(s) failed to re-score - retry below` :
+        `latest sale ${esc(latest)} is ${esc(st.days_behind ?? "-")} day(s) behind (max ${esc(st.max_allowed_lag_days)})`;
+      box.innerHTML = `<span class="badge badge-danger">Live WhatsApp sending is blocked</span> ${why}. Upload the missing days first.`;
+    }
+  } catch (err) {
+    box.textContent = "";
+  }
 }
 
 async function loadMlSettings() {
@@ -1059,15 +1102,23 @@ function setupApiKeyButton() {
   };
   refresh();
   btn?.addEventListener("click", () => {
-    const val = prompt("Write API key (REFILLCARE_API_KEY). Leave empty to clear:", "");
+    const val = prompt("API key (REFILLCARE_API_KEY). Leave empty to clear:", "");
     if (val === null) return;
+    let store = "";
+    try { store = localStorage.getItem("refillcare_store_id") || ""; } catch (e) { /* ignore */ }
+    const sid = prompt("Store id (X-Store-Id, e.g. ngos-colony). Leave empty for the server's default store:", store);
     try {
       if (val.trim()) localStorage.setItem("refillcare_api_key", val.trim());
       else localStorage.removeItem("refillcare_api_key");
+      if (sid !== null) {
+        if (sid.trim()) localStorage.setItem("refillcare_store_id", sid.trim().toLowerCase());
+        else localStorage.removeItem("refillcare_store_id");
+      }
     } catch (e) {
       showToast("Browser storage is blocked; the key cannot be saved.", "error");
     }
     refresh();
+    loadInitialData();
   });
 }
 
@@ -1135,7 +1186,7 @@ function renderColumnMapping(report, forceEdit = false) {
 
   const warnings = report.warnings || [];
   warnBox.style.display = warnings.length ? "block" : "none";
-  warnBox.textContent = warnings.map(w => `⚠️ ${w}`).join("  ");
+  warnBox.textContent = warnings.join("  ");
 
   const editing = needs || forceEdit;
   wrap.style.display = editing ? "block" : "none";
@@ -1212,7 +1263,7 @@ async function runSalesPreview() {
     const warningElem = document.getElementById("diag-warning");
     if (preview.date_diagnostics.warning) {
       warningElem.style.display = "block";
-      warningElem.innerText = `⚠️ ${esc(preview.date_diagnostics.warning)}`;
+      warningElem.innerText = esc(preview.date_diagnostics.warning);
     } else {
       warningElem.style.display = "none";
     }
@@ -1379,7 +1430,7 @@ async function loadMedSyncBundles() {
         <td style="white-space: nowrap;"><small>${p10p90}</small></td>
         <td style="text-align: center;"><strong>${esc(b.total_items_count)}</strong></td>
         <td>${reductionBadge}</td>
-        <td><button class="btn btn-sm btn-outline btn-preview-bundle-wa" data-msg="${encodeURIComponent(b.bundled_message_text || '')}">💬 WhatsApp Copy</button></td>
+        <td><button class="btn btn-sm btn-outline btn-preview-bundle-wa" data-msg="${encodeURIComponent(b.bundled_message_text || '')}">WhatsApp Copy</button></td>
       `;
       tbody.appendChild(tr);
     });
@@ -1443,13 +1494,22 @@ function setupActionListeners() {
     if (!activeFile) return;
     try {
       showToast("Ingesting sales records...", "info");
-      const res = await ApiClient.ingestSalesFile(activeFile, activeColumnMapping);
-      showToast(`✅ Successfully ingested batch ${esc(res.import_batch_id)} (only the RefillCare columns were stored)`, "success");
+      let res;
+      try {
+        res = await ApiClient.ingestSalesFile(activeFile, activeColumnMapping);
+      } catch (err) {
+        if (err.status !== 409 || !confirm(`${err.message}\n\nUpload it again anyway? Only lines not stored yet are added.`)) throw err;
+        res = await ApiClient.ingestSalesFile(activeFile, activeColumnMapping, true);
+      }
+      showToast(`Batch ${esc(res.import_batch_id)}: ${Number(res.records_inserted).toLocaleString()} new lines, ${Number(res.records_skipped).toLocaleString()} already stored.`, "success");
+      const w = res.data_warnings || {};
+      if (w.gap_before_file) showToast(`No sales uploaded for ${w.gap_before_file} - upload those days so reminders stay correct.`, "warning");
+      await loadDataStatus();
       const fresh = res.ml_data_freshness;
       if (res.ml_retrain_queued) {
-        showToast("🔁 New sales data: model retrain cycle queued in the background.", "info");
+        showToast("New sales data: model retrain cycle queued in background.", "info");
       } else if (fresh && fresh.retrain_recommended) {
-        showToast("🧭 New sales data moved the evaluation windows: a model retrain is recommended (Model Registry tab).", "info");
+        showToast("New sales data moved evaluation windows: model retrain recommended.", "info");
       }
       document.getElementById("upload-preview-area").style.display = "none";
       await loadBatches();
@@ -1477,7 +1537,7 @@ function setupActionListeners() {
     try {
       await ApiClient.saveColumnMapping(activeMappingReport.headers, mapping);
       activeColumnMapping = mapping;
-      showToast("✅ Column mapping saved for this store; next upload with these columns is mapped automatically.", "success");
+      showToast("Column mapping saved for this store.", "success");
       await runSalesPreview();
     } catch (err) {
       showToast(err.message, "error");
@@ -1581,8 +1641,8 @@ function setupActionListeners() {
     const caption = document.getElementById("wa-mode-caption");
     if (caption) {
       caption.innerHTML = isDry 
-        ? "🟡 Mode: Dry-Run" 
-        : "<span style='color: #ef4444;'>🔴 Mode: LIVE API</span>";
+        ? "Mode: Dry-Run (Simulation)" 
+        : "<span style='color: #ef4444; font-weight: 600;'>Mode: LIVE CARRIER DISPATCH</span>";
     }
   });
 
@@ -1617,7 +1677,7 @@ function setupActionListeners() {
         feedbackBox.style.display = "block";
         feedbackBox.innerHTML = `
           <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid #22c55e; border-radius: 6px; padding: 0.65rem 0.85rem; font-size: 0.82rem; color: #166534;">
-            <strong>✅ ${esc(res.message)}</strong> (Status: ${esc(res.status_code)})
+            <strong>${esc(res.message)}</strong> (Status: ${esc(res.status_code)})
           </div>
         `;
       }
@@ -1627,7 +1687,7 @@ function setupActionListeners() {
         feedbackBox.style.display = "block";
         feedbackBox.innerHTML = `
           <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 6px; padding: 0.65rem 0.85rem; font-size: 0.82rem; color: #b91c1c;">
-            <strong>❌ Dispatch Failed:</strong> ${esc(err.message)}
+            <strong>Dispatch Failed:</strong> ${esc(err.message)}
           </div>
         `;
       }
@@ -1717,7 +1777,7 @@ function setupMedicationRules() {
           <td style="color: var(--text-muted); font-size: 0.8rem;">${r.notes || '-'}</td>
           <td style="font-size: 0.78rem;">${r.created_by || 'Pharmacist'}</td>
           <td>
-            <button class="action-btn action-btn-delete btn-del-rule" data-id="${esc(r.id)}" data-pattern="${esc(r.pattern)}" title="Delete Rule">🗑️</button>
+            <button class="action-btn action-btn-delete btn-del-rule" data-id="${esc(r.id)}" data-pattern="${esc(r.pattern)}" title="Delete Rule">Delete</button>
           </td>
         `;
         tableBody.appendChild(tr);

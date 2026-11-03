@@ -241,7 +241,7 @@ if uploaded_file is not None:
     if grouped_customers:
         st.dataframe(
             _client_customer_table(grouped_customers),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -249,7 +249,7 @@ if uploaded_file is not None:
         with st.expander("Customers that need attention", expanded=False):
             st.dataframe(
                 _client_attention_table(invalid_df),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -432,7 +432,7 @@ if uploaded_file is not None:
                 disabled=not can_send or st.session_state.img_show_confirm,
                 key="img_bulk_send_btn",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
             if open_confirm:
                 st.session_state.img_show_confirm = True
@@ -446,7 +446,7 @@ if uploaded_file is not None:
             )
             cancel_col, confirm_col = st.columns(2)
             with cancel_col:
-                if st.button("Cancel", key="img_confirm_cancel", use_container_width=True):
+                if st.button("Cancel", key="img_confirm_cancel", width="stretch"):
                     st.session_state.img_show_confirm = False
                     st.rerun()
             with confirm_col:
@@ -454,7 +454,7 @@ if uploaded_file is not None:
                     "Send Messages",
                     key="img_confirm_send",
                     type="primary",
-                    use_container_width=True,
+                    width="stretch",
                     disabled=st.session_state.img_bulk_send_in_progress,
                 )
 
@@ -572,7 +572,7 @@ if uploaded_file is not None:
 
         results_df = _client_results_table(s["records"])
         if not results_df.empty:
-            st.dataframe(results_df, use_container_width=True, hide_index=True)
+            st.dataframe(results_df, width="stretch", hide_index=True)
             st.download_button(
                 label="Download results",
                 data=history_to_csv_bytes(s["records"], mask_phones=True),
@@ -594,7 +594,7 @@ if uploaded_file is not None:
     if history_df.empty:
         st.info("No send attempts recorded in this session yet.")
     else:
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.dataframe(history_df, width="stretch", hide_index=True)
         csv_bytes = history_to_csv_bytes(st.session_state.img_send_history, mask_phones=True)
         st.download_button(
             label="Download session history",
@@ -612,7 +612,7 @@ else:
     if history_df.empty:
         st.info("No send attempts recorded in this session yet.")
     else:
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.dataframe(history_df, width="stretch", hide_index=True)
         csv_bytes = history_to_csv_bytes(st.session_state.img_send_history, mask_phones=True)
         st.download_button(
             label="Download session history",

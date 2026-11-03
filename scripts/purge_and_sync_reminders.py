@@ -88,7 +88,13 @@ def main():
         df_sales = fetch_purchase_history()
         print(f"[INFO] Loaded {len(df_sales):,} sales transactions.")
         
-        engine = UnifiedRefillDecisionEngine()
+        # Serve with the registry's production model (never the unvalidated legacy file)
+        from database.connection import SessionLocal as _RegSession
+        from refillcare.ml.model_provider import ModelProvider
+
+        with _RegSession() as _reg_db:
+            _provider = ModelProvider.from_registry(_reg_db)
+        engine = UnifiedRefillDecisionEngine(model_provider=_provider)
         decisions_df, decisions_list = engine.evaluate_all_customer_items(df_sales, as_of_date=date.today())
         
         eligible_count = sum(1 for d in decisions_list if d.is_eligible)

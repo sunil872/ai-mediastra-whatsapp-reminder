@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -21,10 +22,25 @@ logger = logging.getLogger("refillcare.ml.service")
 
 
 def load_history(path: Optional[Path] = None) -> pd.DataFrame:
-    """Purchase history of the configured store (``REFILLCARE_DATA_DIR``), or ``path``."""
+    """Sales history of the current store: its database (cached until rows change), or ``path``.
+
+    Falls back to the store's legacy ``purchase_history.parquet`` while its database is still empty.
+    """
     from refillcare.store import StoreConfig
 
-    p = Path(path) if path else StoreConfig.from_env().history_parquet
+    if path is not None:
+        p = Path(path)
+        return pd.read_parquet(p) if p.is_file() else pd.DataFrame()
+    try:
+        from database.connection import SessionLocal
+        from refillcare.data import history_store as hs
+
+        with SessionLocal() as db:
+            if hs.history_count(db) > 0:
+                return hs.load_all(db)
+    except Exception:
+        logger.exception("Reading the store history from the database failed; using the parquet file")
+    p = StoreConfig.from_env().history_parquet
     return pd.read_parquet(p) if p.is_file() else pd.DataFrame()
 
 
@@ -55,7 +71,9 @@ def plan_time_splits(
     """
     test_days = test_days or _env_int("ML_TEST_WINDOW_DAYS", 30)
     validation_days = validation_days or _env_int("ML_VALIDATION_WINDOW_DAYS", 30)
-    censor = censor_buffer_days if censor_buffer_days is not None else _env_int("ML_CENSOR_BUFFER_DAYS", 45)
+    # 90 days: every refill up to 90 days after a test-window purchase is observable, so long-interval
+    # patients are scored fairly (a 45-day buffer only ever saw their short refills)
+    censor = censor_buffer_days if censor_buffer_days is not None else _env_int("ML_CENSOR_BUFFER_DAYS", 90)
 
     dts = pd.to_datetime(history_df["invoice_date"], errors="coerce").dropna() if "invoice_date" in history_df else pd.Series(dtype="datetime64[ns]")
     if dts.empty:
@@ -224,7 +242,7 @@ def run_evaluation(
         candidate_version_id = (non_prod[0] if non_prod else versions[0]).version_id
 
     run = MLEvaluationRunModel(
-        run_id=run_id or f"EVAL-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        run_id=run_id or f"EVAL-{datetime.utcnow().strftime('%Y%m%d%H%M%S') + '-' + uuid.uuid4().hex[:4]}",
         status="RUNNING",
         model_version=candidate_version_id,
         params={"versions": [v.version_id for v in versions], "max_events": max_events, "seed": seed},
@@ -352,13 +370,28 @@ def _model_for_cutoff(db: Session, hist: pd.DataFrame, train_end: date, max_trai
     """The HGB candidate trained up to ``train_end`` (reused if it exists, otherwise trained now)."""
     from refillcare.ml.training import train_interval_model
 
+    from refillcare.ml.training import history_rows_until
+
+    rows_now = history_rows_until(hist, train_end)
+
+    def _same_data(v) -> bool:
+        # Reuse only when the history up to the cutoff is unchanged (a back-dated upload changes it)
+        seen = (v.hyperparameters or {}).get("history_rows_until_cutoff") or ((v.train_metrics or {}).get("history_rows_until_cutoff"))
+        return seen is None or int(seen) == rows_now
+
     existing = next(
         (v for v in reg.list_versions(db, reg.FAMILY_PATH_A_INTERVAL)
-         if v.model_type == reg.TYPE_HIST_GB and v.train_window_end == train_end and v.status != reg.STATUS_RETIRED),
+         if v.model_type == reg.TYPE_HIST_GB and v.train_window_end == train_end and v.status != reg.STATUS_RETIRED
+         and v.artifact_uri and _same_data(v)),
         None,
     )
     if existing is not None:
-        return existing, False
+        from refillcare.ml.model_provider import load_version
+
+        if load_version(existing) is not None:
+            return existing, False
+        # e.g. pickled by another scikit-learn version: retrain instead of reusing a model that cannot load
+        logger.warning("Model %s for cutoff %s cannot be loaded here; training a new one.", existing.version_id, train_end)
     res = train_interval_model(db, hist, train_end=train_end, max_events=max_train_events, created_by=created_by)
     v = reg.get_version(db, res["version"]["version_id"])
     if v is None:
@@ -401,7 +434,7 @@ def freshness_experiment(
     run = run_evaluation(db, version_ids=ids, candidate_version_id=fresh.version_id,
                          eval_start=plan["test"]["start"], eval_end=plan["test"]["end"],
                          max_events=max_eval_events, created_by=created_by, history_df=hist,
-                         run_id=f"FRESH-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}")
+                         run_id=f"FRESH-{datetime.utcnow().strftime('%Y%m%d%H%M%S') + '-' + uuid.uuid4().hex[:4]}")
     if run.status != "COMPLETED":
         raise RuntimeError(f"Freshness evaluation failed: {run.error}")
     w_old, w_new = _within7(run, older.version_id), _within7(run, fresh.version_id)
@@ -558,7 +591,7 @@ def retrain_cycle(
         if v is not None and v.version_id not in ids:
             ids.append(v.version_id)
 
-    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
     val_run = run_evaluation(db, version_ids=ids, candidate_version_id=candidate.version_id,
                              eval_start=plan["validation"]["start"], eval_end=plan["validation"]["end"],
                              max_events=max_eval_events, created_by=created_by, history_df=hist, run_id=f"VAL-{stamp}")
@@ -619,8 +652,36 @@ def ml_health(db: Session, since_days: int = 30) -> Dict[str, Any]:
         "ml_fallback_rate_pct": round(100.0 * fallback / path_a_total, 2) if path_a_total else None,
         "process_fallback_counters": dict(FALLBACK_COUNTERS),
         "alert": bool(path_a_total and fallback / path_a_total > 0.05),
+        "prediction_drift": prediction_drift(db),
         "data_freshness": data_freshness(db),
     }
+
+
+def _psi(expected: List[float], actual: List[float], bins: Optional[List[float]] = None) -> Optional[float]:
+    """Population stability index of two samples (0 = same; > 0.2 = significant shift)."""
+    import numpy as np
+
+    if len(expected) < 50 or len(actual) < 50:
+        return None
+    edges = bins or [0, 10, 20, 25, 28, 31, 35, 45, 60, 90, 10_000]
+    e = np.histogram(expected, bins=edges)[0] / len(expected)
+    a = np.histogram(actual, bins=edges)[0] / len(actual)
+    e, a = np.clip(e, 1e-4, None), np.clip(a, 1e-4, None)
+    return round(float(((a - e) * np.log(a / e)).sum()), 4)
+
+
+def prediction_drift(db: Session, recent_days: int = 30, reference_days: int = 90) -> Dict[str, Any]:
+    """Are the predicted refill intervals shifting? (recent window vs the reference window before it)"""
+    now = datetime.utcnow()
+    def _intervals(start: datetime, end: datetime) -> List[float]:
+        return [float(v) for (v,) in db.query(RefillDecisionModel.predicted_interval_days)
+                .filter(RefillDecisionModel.is_eligible == True, RefillDecisionModel.predicted_interval_days != None,  # noqa: E711,E712
+                        RefillDecisionModel.updated_at >= start, RefillDecisionModel.updated_at < end).all()]
+    recent = _intervals(now - timedelta(days=recent_days), now)
+    ref = _intervals(now - timedelta(days=recent_days + reference_days), now - timedelta(days=recent_days))
+    psi = _psi(ref, recent)
+    return {"psi_predicted_interval": psi, "recent_n": len(recent), "reference_n": len(ref),
+            "alert": bool(psi is not None and psi > float(os.getenv("ML_DRIFT_PSI_ALERT", "0.2")))}
 
 
 # ----------------------------------------------------------------------------- settings & saved reports
@@ -657,30 +718,31 @@ def prediction_settings() -> Dict[str, Any]:
     }
 
 
-def _reports_dir() -> Path:
-    from refillcare.store import StoreConfig
-
-    return StoreConfig.from_env().processed_dir / "ml_reports"
-
-
-def save_report(kind: str, report: Dict[str, Any]) -> Path:
-    """Persist a rules A/B or rolling evaluation result so every UI can show the latest one."""
+def save_report(kind: str, report: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist a rules A/B or rolling evaluation result (job table: durable, per store, any UI reads it)."""
     import json
+
+    from database.connection import ControlSession
+    from database.control_models import JobModel
+    from refillcare.tenancy import current_store_id
 
     if kind not in REPORT_KINDS:
         raise ValueError(f"Unknown report kind '{kind}'")
-    d = _reports_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    payload = {"kind": kind, "created_at": datetime.utcnow().isoformat(), "report": report}
-    p = d / f"{kind}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.json"
-    p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    return p
+    now = datetime.utcnow()
+    with ControlSession() as c:
+        c.add(JobModel(store_id=current_store_id(), kind=kind, status="done", params={"source": "interactive"},
+                       result=json.loads(json.dumps(report, default=str)), created_at=now, started_at=now, finished_at=now))
+        c.commit()
+    return {"kind": kind, "created_at": now.isoformat()}
 
 
 def latest_report(kind: str) -> Optional[Dict[str, Any]]:
-    import json
+    """Latest finished rules A/B / rolling result of the current store (worker job or interactive run)."""
+    from refillcare.jobs.queue import latest_result
 
     if kind not in REPORT_KINDS:
         raise ValueError(f"Unknown report kind '{kind}'")
-    files = sorted(_reports_dir().glob(f"{kind}_*.json")) if _reports_dir().exists() else []
-    return json.loads(files[-1].read_text(encoding="utf-8")) if files else None
+    job = latest_result(kind)
+    if not job or job.get("result") is None:
+        return None
+    return {"kind": kind, "created_at": str(job.get("finished_at")), "report": job["result"], "job_id": job.get("job_id")}

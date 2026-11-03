@@ -1,32 +1,31 @@
-# Pinned to the versions verified by the test suite (Python 3.13).
-# Upgrade deliberately: bump, run `pytest`, re-run an ML evaluation, then commit.
+# Production dependencies, pinned to the versions verified by the test suite (Python 3.13).
+# Upgrade deliberately: bump, run `pytest`, re-run an ML evaluation (models record the
+# scikit-learn version they were trained with), then commit. Dev/test tools: requirements-dev.txt.
 
 # Web / API
 fastapi==0.141.1
 uvicorn==0.52.4
 pydantic==2.13.5
-python-multipart==0.0.32   # required by FastAPI UploadFile (sales upload endpoints)
-httpx==0.28.1
+python-multipart==0.0.32   # FastAPI UploadFile (sales upload endpoints)
 
 # UI
 streamlit==1.63.0
-matplotlib==3.11.2
+matplotlib==3.11.2         # Streamlit charts backend
 
 # Data / ML
 pandas==3.0.5
 numpy==2.5.2
-pyarrow==25.0.1
+pyarrow==25.0.1            # parquet (legacy history import / exports)
 scikit-learn==1.7.2
-xgboost==3.4.1
+xgboost==3.4.1             # offline quantile benchmark (scripts/train_chronic_specialized_model.py)
 joblib==1.6.0
-openpyxl==3.1.5
+openpyxl==3.1.5            # Excel (.xlsx) uploads
 
 # Storage / integrations
 SQLAlchemy==2.0.54
+psycopg[binary]==3.2.13    # PostgreSQL / AWS RDS (DATABASE_URL=postgresql+psycopg://...)
+boto3==1.40.76             # S3 model storage (REFILLCARE_MODEL_BUCKET); optional locally
 supabase==2.32.0           # pharmacist medication classification rules
 requests==2.34.2
 cloudinary==1.46.2
 python-dotenv==1.2.3
-
-# Tests
-pytest==9.1.1

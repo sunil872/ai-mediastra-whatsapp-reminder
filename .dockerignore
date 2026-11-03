@@ -1,0 +1,37 @@
+# Never in the image: secrets, patient data, local state, tooling
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.idea/
+.agents/
+.claude/
+.devcontainer/
+conversation_history/
+scratch/
+logs/
+exports/
+notebooks/
+docs/
+tests/
+data/
+*.db
+*.sqlite
+*.parquet
+*.csv
+*.xlsx
+*.log
+
+# Re-include what the app needs that holds no patient data (later rules win):
+# the tracked model files (Streamlit / legacy fallback) and the item -> salt catalogue
+!data/refillcare/processed/models/
+!data/refillcare/processed/models/*.joblib
+!data/refillcare/processed/*.json
+!data/refillcare/SALT ITEMS LIST.csv

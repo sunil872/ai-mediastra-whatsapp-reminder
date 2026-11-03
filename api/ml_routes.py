@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -49,42 +50,13 @@ class TrainRequest(BaseModel):
     max_events: int = Field(150000, ge=1000, le=1000000)
 
 
-def _run_evaluation_background(run_id: str, req: EvaluationRequest, user: str) -> None:
-    from refillcare.ml.service import run_evaluation
+def _queue(kind: str, params: Dict[str, Any], actor: str, dedupe_key: Optional[str] = None) -> Dict[str, Any]:
+    """Durable background job for the request's store (survives restarts, runs once)."""
+    from refillcare.jobs.queue import enqueue
 
-    db = SessionLocal()
-    try:
-        run_evaluation(db, version_ids=req.version_ids, candidate_version_id=req.candidate_version_id,
-                       eval_start=req.eval_start, eval_end=req.eval_end, max_events=req.max_events,
-                       seed=req.seed, created_by=user, run_id=run_id)
-    finally:
-        db.close()
-
-
-def _run_training_background(req: TrainRequest, user: str) -> None:
-    from refillcare.ml.service import load_history, plan_time_splits
-    from refillcare.ml.training import train_interval_model
-
-    db = SessionLocal()
-    try:
-        hist = load_history()
-        train_end = req.train_end or plan_time_splits(hist)["train"]["end"]
-        train_interval_model(db, hist, train_end=train_end, train_start=req.train_start,
-                             max_events=req.max_events, created_by=user)
-    finally:
-        db.close()
-
-
-def _run_retrain_background(req: RetrainRequest, user: str) -> None:
-    from refillcare.ml.service import retrain_cycle
-
-    db = SessionLocal()
-    try:
-        retrain_cycle(db, promote_best=req.promote_best, created_by=user, max_eval_events=req.max_eval_events)
-    except Exception:
-        logger.exception("Retrain cycle failed")
-    finally:
-        db.close()
+    job = enqueue(kind, params, dedupe_key=dedupe_key, created_by=actor)
+    return {"status": "QUEUED", "job_id": job["job_id"], "deduplicated": bool(job.get("deduplicated")),
+            "poll": f"/api/v1/jobs/{job['job_id']}"}
 
 
 @router.get("/plan")
@@ -96,9 +68,11 @@ def current_split_plan(db: Session = Depends(get_db)):
 
 
 @router.post("/retrain", status_code=status.HTTP_202_ACCEPTED)
-def start_retrain(req: RetrainRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
-    background.add_task(_run_retrain_background, req, actor)
-    return {"status": "QUEUED", "message": "Retrain cycle started; results appear in /api/v1/ml/evaluations (VAL-*/TEST-* runs)."}
+def start_retrain(req: RetrainRequest, actor: str = Depends(require_api_key)):
+    """Queue a retrain cycle (one pending per store); evaluations appear in /api/v1/ml/evaluations."""
+    res = _queue("retrain", {"promote_best": req.promote_best, "max_eval_events": req.max_eval_events, "created_by": actor}, actor, dedupe_key="retrain")
+    res["message"] = "Retrain cycle queued; results appear in /api/v1/ml/evaluations (VAL-*/TEST-* runs)."
+    return res
 
 
 @router.get("/models")
@@ -139,10 +113,21 @@ def promote_model_version(version_id: str, req: PromotionRequest, actor: str = D
 
 
 @router.post("/evaluations", status_code=status.HTTP_202_ACCEPTED)
-def start_evaluation(req: EvaluationRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
-    run_id = f"EVAL-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
-    background.add_task(_run_evaluation_background, run_id, req, actor)
-    return {"run_id": run_id, "status": "QUEUED", "poll": f"/api/v1/ml/evaluations/{run_id}"}
+def start_evaluation(req: EvaluationRequest, actor: str = Depends(require_api_key)):
+    run_id = f"EVAL-{datetime.utcnow().strftime('%Y%m%d%H%M%S') + '-' + uuid.uuid4().hex[:4]}"
+    params = req.model_dump(mode="json") | {"run_id": run_id, "created_by": actor}
+    res = _queue("evaluate", params, actor)
+    return res | {"run_id": run_id, "poll_run": f"/api/v1/ml/evaluations/{run_id}"}
+
+
+@router.post("/models/rollback")
+def rollback_production_model(actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Put the previous validated production model back (the baseline when there is none)."""
+    try:
+        v = reg.rollback_production(db, rolled_back_by=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"production_version": v.version_id, "rolled_back": True}
 
 
 @router.get("/evaluations")
@@ -171,9 +156,10 @@ def get_evaluation(run_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]
 
 
 @router.post("/train", status_code=status.HTTP_202_ACCEPTED)
-def start_training(req: TrainRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
-    background.add_task(_run_training_background, req, actor)
-    return {"status": "QUEUED", "message": "Training started; the new version appears in /api/v1/ml/models as a candidate."}
+def start_training(req: TrainRequest, actor: str = Depends(require_api_key)):
+    res = _queue("train", req.model_dump(mode="json") | {"created_by": actor}, actor)
+    res["message"] = "Training queued; the new version appears in /api/v1/ml/models as a candidate."
+    return res
 
 
 @router.post("/outcomes/refresh")
@@ -214,31 +200,6 @@ class RekeyRequest(BaseModel):
     confirm: bool = Field(False, description="Must be true: supersedes old-key reminder cycles and re-scores every patient")
 
 
-def _run_rules_ab_background(req: RulesAbRequest, user: str) -> None:
-    from refillcare.ml.service import compare_rules, save_report
-
-    db = SessionLocal()
-    try:
-        save_report("rules_ab", compare_rules(db, version_id=req.version_id, max_events=req.max_events))
-    except Exception:
-        logger.exception("Rules A/B failed")
-    finally:
-        db.close()
-
-
-def _run_rolling_background(req: RollingRequest, user: str) -> None:
-    from refillcare.ml.service import rolling_evaluation, save_report
-
-    db = SessionLocal()
-    try:
-        save_report("rolling", rolling_evaluation(db, n_folds=req.n_folds, created_by=user,
-                                                  max_eval_events=req.max_eval_events, max_train_events=req.max_train_events))
-    except Exception:
-        logger.exception("Rolling evaluation failed")
-    finally:
-        db.close()
-
-
 @router.get("/settings")
 def prediction_settings_view():
     """Prediction rules, patient identity and therapy grouping the engine is running with (from .env)."""
@@ -248,17 +209,15 @@ def prediction_settings_view():
 
 
 @router.post("/rules-ab", status_code=status.HTTP_202_ACCEPTED)
-def start_rules_ab(req: RulesAbRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
+def start_rules_ab(req: RulesAbRequest, actor: str = Depends(require_api_key)):
     """Compare every prediction rule on the same unseen events (read-only; result via /reports/rules_ab)."""
-    background.add_task(_run_rules_ab_background, req, actor)
-    return {"status": "queued", "result": "/api/v1/ml/reports/rules_ab"}
+    return _queue("rules_ab", req.model_dump(mode="json"), actor, dedupe_key="rules_ab") | {"result": "/api/v1/ml/reports/rules_ab"}
 
 
 @router.post("/rolling", status_code=status.HTTP_202_ACCEPTED)
-def start_rolling(req: RollingRequest, background: BackgroundTasks, actor: str = Depends(require_api_key)):
+def start_rolling(req: RollingRequest, actor: str = Depends(require_api_key)):
     """Score model + current rules on several back-to-back unseen months (trains one model per month)."""
-    background.add_task(_run_rolling_background, req, actor)
-    return {"status": "queued", "result": "/api/v1/ml/reports/rolling"}
+    return _queue("rolling", req.model_dump(mode="json"), actor, dedupe_key="rolling") | {"result": "/api/v1/ml/reports/rolling"}
 
 
 @router.get("/reports/{kind}")
@@ -284,19 +243,14 @@ def rekey_dry_run(db: Session = Depends(get_db)):
     return rekey_reminder_cycles(db, load_history(), apply=False)
 
 
-@router.post("/identity/rekey")
-def rekey_apply(req: RekeyRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
-    """Apply the cut-over after switching REFILLCARE_PATIENT_IDENTITY / REFILLCARE_ITEM_GROUPING.
+@router.post("/identity/rekey", status_code=status.HTTP_202_ACCEPTED)
+def rekey_apply(req: RekeyRequest, actor: str = Depends(require_api_key)):
+    """Queue the cut-over after switching REFILLCARE_PATIENT_IDENTITY / REFILLCARE_ITEM_GROUPING.
 
-    Backs up the SQLite database first; reminder stages already sent under the old key are never re-sent.
+    The job backs up the database first (SQLite online backup; on RDS rely on its snapshots) and never
+    re-sends a reminder stage already sent under the old key.
     """
     if not req.confirm:
         raise HTTPException(status_code=400, detail="Set confirm=true to apply the re-key.")
-    from refillcare.engine.rekey import backup_sqlite_db, rekey_reminder_cycles
-    from refillcare.ml.service import load_history
+    return _queue("rekey", {}, actor, dedupe_key="rekey")
 
-    backup = backup_sqlite_db()
-    res = rekey_reminder_cycles(db, load_history(), apply=True)
-    res["database_backup"] = backup
-    logger.info("Identity re-key applied by %s: %s", actor, res)
-    return res

@@ -49,7 +49,9 @@ def identity_mode() -> str:
     from refillcare.env import ensure_dotenv
 
     ensure_dotenv()
-    m = os.getenv("REFILLCARE_PATIENT_IDENTITY", "name").strip().lower()
+    from refillcare.stores import store_setting
+
+    m = (store_setting("REFILLCARE_PATIENT_IDENTITY", "name") or "name").strip().lower()
     return m if m in IDENTITY_MODES else "name"
 
 
@@ -57,7 +59,9 @@ def grouping_mode() -> str:
     from refillcare.env import ensure_dotenv
 
     ensure_dotenv()
-    m = os.getenv("REFILLCARE_ITEM_GROUPING", "item").strip().lower()
+    from refillcare.stores import store_setting
+
+    m = (store_setting("REFILLCARE_ITEM_GROUPING", "item") or "item").strip().lower()
     return m if m in GROUPING_MODES else "item"
 
 

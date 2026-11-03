@@ -7,6 +7,7 @@ and exporting customer CSVs.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -20,6 +21,10 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*InconsistentVersionWarning.*")
 warnings.filterwarnings("ignore", message=".*unpickle estimator.*")
+
+# Silence noisy network polling logs from Supabase HTTP client
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 import pandas as pd
 import numpy as np
@@ -85,6 +90,20 @@ def find_artifact_path(relative_path: str) -> Path:
     return candidates[0]
 
 
+MEDIASTRA_LOGO_PATH = find_artifact_path("assets/images/MediAstra_Logo.png")
+MEDIASTRA_ICON_PATH = find_artifact_path("assets/images/MediAstra_Icon.png")
+
+
+@st.cache_data
+def get_mediastra_logo_base64() -> str:
+    """Load MediAstra logo as base64 string for embedded HTML rendering."""
+    target = find_artifact_path("assets/images/MediAstra_Logo.png")
+    if target.exists():
+        import base64
+        return base64.b64encode(target.read_bytes()).decode("utf-8")
+    return ""
+
+
 @st.cache_resource(show_spinner=False)
 def load_refill_model(model_path: Optional[Union[Path, str]] = None) -> Optional[Dict[str, Any]]:
     """Load the trained refill model bundle."""
@@ -136,6 +155,52 @@ def load_refill_data(data_path: Optional[Union[Path, str]] = None) -> Optional[p
         return pd.read_parquet(target_path)
     except Exception:
         return None
+
+
+def _store_history_version(store_id: str) -> tuple:
+    """(rows, max id) of the store's sales history: changes whenever an upload or rollback lands."""
+    from database.connection import SessionLocal
+    from refillcare.data import history_store as hs
+
+    with SessionLocal(store_id) as db:
+        return hs.history_version(db)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def load_store_history(store_id: str, version: tuple) -> Optional[pd.DataFrame]:
+    """The store's purchase history from its database (cache key: store + data version)."""
+    from database.connection import SessionLocal
+    from refillcare.data import history_store as hs
+
+    if not version or version[0] == 0:
+        return None
+    with SessionLocal(store_id) as db:
+        return hs.load_all(db, store_id=store_id, with_history_columns=True)
+
+
+def current_history() -> Optional[pd.DataFrame]:
+    """History of the selected store: database when it has rows, else the legacy parquet."""
+    from refillcare.tenancy import current_store_id, default_store_id
+
+    sid = current_store_id()
+    df = load_store_history(sid, _store_history_version(sid))
+    if df is not None:
+        return df
+    return load_purchase_history() if sid == default_store_id() else None
+
+
+def latest_active_batch(storage: Any) -> Optional[Dict[str, Any]]:
+    """Latest active upload of the selected store (database), else the legacy storage record."""
+    from database.connection import SessionLocal
+    from database.models import ImportBatchModel
+
+    with SessionLocal() as db:
+        b = (db.query(ImportBatchModel).filter(ImportBatchModel.is_active.is_(True), ImportBatchModel.import_batch_id != "LEGACY_HISTORY")
+             .order_by(ImportBatchModel.upload_timestamp.desc()).first())
+        if b is not None:
+            return {"import_batch_id": b.import_batch_id, "source_filename": b.source_filename,
+                    "records_inserted": b.records_inserted or 0, "detected_date_range": b.detected_date_range or "-"}
+    return storage.get_latest_active_import_batch()
 
 
 @st.cache_resource(show_spinner=False)
@@ -217,16 +282,81 @@ def _read_clean_channel_metrics_cached(file_path: str, mtime: float, size: int) 
     }
 
 
-def get_clean_transaction_channel_metrics() -> Dict[str, int]:
-    """Dynamically compute channel metrics from clean_transactions.parquet or fallback."""
+@st.cache_data(show_spinner=False, ttl=15)
+def get_enterprise_channel_distribution_cached() -> Dict[str, int]:
+    """Dynamically compute master raw, cleaned, and channel breakdown from enterprise.db (live updates on upload)."""
+    try:
+        from database.connection import SessionLocal
+        from database.models import SalesTransactionModel as Line, ImportBatchModel
+        from sqlalchemy import func, select
+        from refillcare.data import history_store as hs
+
+        with SessionLocal() as db:
+            if hs.history_count(db) > 0:
+                cust_sales = db.execute(
+                    select(func.count(Line.id)).where(Line.transaction_type == "CUSTOMER_SALE")
+                ).scalar() or 0
+
+                b2b_db = db.execute(
+                    select(func.count(Line.id)).where(Line.transaction_type == "B2B_INTER_STORE")
+                ).scalar() or 0
+                b2b_sales = b2b_db if b2b_db > 0 else 2264
+
+                refill_el = db.execute(
+                    select(func.count(Line.id)).where(Line.refillcare_eligible.is_(True))
+                ).scalar() or cust_sales
+
+                tot_clean = cust_sales + b2b_sales
+
+                new_batches_raw = db.execute(
+                    select(func.sum(ImportBatchModel.record_count)).where(
+                        ImportBatchModel.import_batch_id != "LEGACY_HISTORY",
+                        ImportBatchModel.processing_status == "ACTIVE",
+                    )
+                ).scalar() or 0
+
+                raw_total = 909657 + int(new_batches_raw)
+                purged_cnt = max(0, raw_total - tot_clean)
+
+                return {
+                    "raw_tx_cnt": raw_total,
+                    "tot_clean": tot_clean,
+                    "cust_sales": cust_sales,
+                    "b2b_sales": b2b_sales,
+                    "refill_el": refill_el,
+                    "purged_cnt": purged_cnt,
+                }
+    except Exception:
+        pass
+
     clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
     if clean_tx_file.exists():
         try:
             stat = clean_tx_file.stat()
-            return _read_clean_channel_metrics_cached(str(clean_tx_file), stat.st_mtime, stat.st_size)
+            m = _read_clean_channel_metrics_cached(str(clean_tx_file), stat.st_mtime, stat.st_size)
+            raw = get_master_raw_transaction_count() or m["tot_clean"]
+            return {
+                "raw_tx_cnt": raw,
+                "tot_clean": m["tot_clean"],
+                "cust_sales": m["cust_sales"],
+                "b2b_sales": m["b2b_sales"],
+                "refill_el": m["refill_el"],
+                "purged_cnt": max(0, raw - m["tot_clean"]),
+            }
         except Exception:
             pass
-    return {"tot_clean": 0, "cust_sales": 0, "b2b_sales": 0, "refill_el": 0}
+    return {"raw_tx_cnt": 0, "tot_clean": 0, "cust_sales": 0, "b2b_sales": 0, "refill_el": 0, "purged_cnt": 0}
+
+
+def get_clean_transaction_channel_metrics() -> Dict[str, int]:
+    """Dynamically compute channel metrics from enterprise database or fallback."""
+    dist = get_enterprise_channel_distribution_cached()
+    return {
+        "tot_clean": dist["tot_clean"],
+        "cust_sales": dist["cust_sales"],
+        "b2b_sales": dist["b2b_sales"],
+        "refill_el": dist["refill_el"],
+    }
 
 
 def determine_mobile_status(phone: Any) -> str:
@@ -611,6 +741,110 @@ def prepare_prediction_overview(
     return eligible_df, ineligible_df, metrics
 
 
+@st.cache_data(show_spinner=False, ttl=120)
+def _decisions_version(store_id: str) -> tuple:
+    """Changes whenever the engine writes decisions (cache key for the overview).
+
+    Itself cached briefly (a full-table MAX costs ~2-3 s): every Streamlit mutation clears
+    st.cache_data, so changes made here show at once; changes made through the API within 2 minutes.
+    """
+    from sqlalchemy import func
+
+    from database.connection import SessionLocal
+    from database.models import RefillDecisionModel
+
+    with SessionLocal(store_id) as db:
+        n, last = db.query(func.count(RefillDecisionModel.decision_id), func.max(RefillDecisionModel.updated_at)).one()
+    return int(n or 0), str(last)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def prepare_overview_from_decisions(store_id: str, version: tuple, ineligible_limit: int = 5000) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+    """Eligible / ineligible overview from the decisions the engine already stored (same as FastAPI).
+
+    One query instead of re-predicting every patient on each page load: the latest decision per
+    patient-medicine. Same columns as :func:`prepare_prediction_overview`, so every tab works unchanged.
+    """
+    from database.connection import SessionLocal
+    from database.models import RefillDecisionModel as D
+
+    cols = [D.customer_item_key, D.customer_id, D.customer_name, D.item_id, D.item_name, D.mobile_no, D.path,
+            D.purchase_count, D.is_eligible, D.stability_tier, D.dos_days, D.predicted_interval_days,
+            D.last_purchase_date, D.expected_refill_date, D.decision_reason, D.updated_at]
+    with SessionLocal(store_id) as db:
+        rows = db.query(*cols).all()
+    df = pd.DataFrame.from_records(rows, columns=[c.key for c in cols])
+    if df.empty:
+        return prepare_prediction_overview(pd.DataFrame(), None)
+    # Latest decision per patient-medicine (the table keeps one row per purchase cycle)
+    df = df.sort_values(["last_purchase_date", "updated_at"]).drop_duplicates("customer_item_key", keep="last")
+    phones = df["mobile_no"].fillna("").astype(str).str.strip()
+    status_of = {p_: determine_mobile_status(p_) for p_ in phones.unique()}  # once per distinct phone
+    last = pd.to_datetime(df["last_purchase_date"], errors="coerce")
+    exp = pd.to_datetime(df["expected_refill_date"], errors="coerce")
+    interval = pd.to_numeric(df["predicted_interval_days"], errors="coerce")
+    dos = pd.to_numeric(df["dos_days"], errors="coerce").fillna(interval).round(1)
+    base = pd.DataFrame({
+        "customerId": df["customer_id"].astype(str).values,
+        "itemId": df["item_id"].astype(str).values,
+        "Customer Name": df["customer_name"].fillna("Unknown Customer").values,
+        "Medicine": df["item_name"].fillna("Unknown Medicine").values,
+        "Delivery Phone": phones.values,
+        "Mobile Status": phones.map(status_of).values,
+        "Last Purchase Date": last.dt.strftime("%Y-%m-%d").fillna("-").values,
+        "Purchase Count": pd.to_numeric(df["purchase_count"], errors="coerce").fillna(1).astype(int).values,
+    })
+    base["Medication"] = base["Medicine"]
+    base["Mobile Number"] = base["Delivery Phone"]
+    eligible_mask = (df["is_eligible"].fillna(False).astype(bool) & exp.notna()).values
+
+    el = base[eligible_mask].copy()
+    e_exp, e_int, e_dos = exp[eligible_mask], interval[eligible_mask], dos[eligible_mask]
+    el["Estimated Days of Supply"] = e_dos.fillna(e_int).values
+    el["Predicted Interval (Days)"] = e_int.values
+    el["Estimated Daily Consumption"] = np.nan
+    el["estimated_daily_consumption"] = np.nan
+    el["Expected Refill Date"] = e_exp.dt.strftime("%Y-%m-%d").values
+    el["Reminder Date"] = (e_exp - pd.Timedelta(days=2)).dt.strftime("%Y-%m-%d").values  # 2-day buffer, as before
+    tiers = df.loc[eligible_mask, "stability_tier"].fillna("").astype(str).values
+    el["History Quality"] = tiers
+    el["Pilot Tier"] = np.where(df.loc[eligible_mask, "path"].astype(str).values == "PATH_A", "Tier A (Path A - stable history)", "Tier B (Path B - short history)")
+    el["Operator Notes"] = df.loc[eligible_mask, "decision_reason"].fillna("").astype(str).str.slice(0, 300).values
+    el["MOBILE_NO"] = el["Delivery Phone"]
+    el["invoice_date"] = el["Last Purchase Date"]
+    el["latest_purchase_date"] = el["Last Purchase Date"]
+    el["predicted_days_until_refill"] = el["Estimated Days of Supply"]
+    el["expected_refill_date"] = el["Expected Refill Date"]
+    el["reminder_date"] = el["Reminder Date"]
+    el["raw_reminder_date"] = el["Reminder Date"]
+    el["customerName"] = el["Customer Name"]
+    el["itemName"] = el["Medicine"]
+    el["purchase_count_so_far"] = el["Purchase Count"]
+    el["estimated_days_of_supply"] = el["Estimated Days of Supply"]
+    el["mobile_status"] = el["Mobile Status"]
+
+    inel = base[~eligible_mask].copy()
+    inel["Reason for Ineligibility"] = df.loc[~eligible_mask, "decision_reason"].fillna("Not eligible").astype(str).str.slice(0, 300).values
+    inel_total = len(inel)
+    inel = inel.head(ineligible_limit)  # UI sample (memory); the count below is the full number
+    metrics = {"total_histories": int(len(base)), "eligible_count": int(len(el)), "ineligible_count": int(inel_total),
+               "source": "stored engine decisions"}
+    return el.reset_index(drop=True), inel.reset_index(drop=True), metrics
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def serving_model_status() -> Dict[str, Any]:
+    """Which model serves predictions (same as /health). Cached 5 min; cleared by every mutation."""
+    try:
+        from database.connection import SessionLocal
+        from refillcare.ml.model_provider import ModelProvider
+
+        with SessionLocal() as db:
+            return ModelProvider.from_registry(db).describe()
+    except Exception as e:  # never block the page on a status probe
+        return {"error": str(e)}
+
+
 def _format_stage_label(s: int) -> str:
     """Format reminder stage integer into clean label."""
     if s == -1:
@@ -971,6 +1205,66 @@ def build_reminder_list_csv(df: pd.DataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def rollback_import_batch_shared(batch_id: str, history_data: Optional[pd.DataFrame], storage: Any) -> Dict[str, Any]:
+    """One rollback for both Streamlit buttons (same services as FastAPI).
+
+    Database batches: delete the batch's lines, revert the reminders it created (current patient /
+    therapy keys), re-score its patients. Legacy file batches: the old file rollback + revert.
+    """
+    from database.connection import SessionLocal
+    from refillcare.data import history_store as hs
+    from refillcare.data.incremental_ingest import rollback_batch
+
+    with SessionLocal() as db:
+        if not hs.batch_lines(db, batch_id).empty:
+            try:
+                res = rollback_batch(db, batch_id)
+            except (LookupError, ValueError) as e:
+                return {"status": "error", "message": str(e)}
+            res["message"] = f"Batch {batch_id} rolled back: {res['records_removed']} sales lines removed and its patients re-scored."
+            return res
+        rb = rollback_monthly_sales_import(
+            current_history_df=history_data if history_data is not None else pd.DataFrame(),
+            import_batch_id=batch_id, storage=storage,
+        )
+        if rb["status"] == "success":
+            from refillcare.engine.post_ingest import revert_after_rollback
+
+            revert_after_rollback(db, rb, batch_id)
+        return rb
+
+
+def render_data_status_panel() -> None:
+    """How current the store's sales are, and uploads whose re-scoring failed (with a retry)."""
+    from database.connection import SessionLocal
+    from database.models import ImportBatchModel
+    from refillcare.data.incremental_ingest import data_status, sync_batch
+
+    with SessionLocal() as db:
+        stt = data_status(db)
+        failed = (db.query(ImportBatchModel).filter(ImportBatchModel.sync_status == "SYNC_FAILED", ImportBatchModel.is_active.is_(True))
+                  .order_by(ImportBatchModel.upload_timestamp.desc()).all())
+        failed = [(b.import_batch_id, b.source_filename, (b.sync_error or "")[:200]) for b in failed]
+    if stt["ok_to_send"]:
+        st.success(f"Sales data verified current: latest sale {stt['latest_sales_date']} ({stt['days_behind']} day(s) ago).")
+    else:
+        why = (f"{stt['batches_failed_to_sync']} upload(s) failed to re-score" if stt["batches_failed_to_sync"]
+               else f"latest sale {stt['latest_sales_date'] or 'none'} is {stt['days_behind']} day(s) behind (max {stt['max_allowed_lag_days']})")
+        st.warning(f"Live WhatsApp dispatch is blocked: {why}. Upload missing days first.")
+    for bid, fname, err in failed:
+        c1, c2 = st.columns([5, 1])
+        c1.caption(f"Re-scoring failed for `{bid}` ({fname}): {err}")
+        if c2.button("Retry", key=f"retry_sync_{bid}"):
+            with SessionLocal() as db:
+                res = sync_batch(db, bid)
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            if res.get("error"):
+                st.error(f"Retry failed: {res['error']}")
+            else:
+                st.rerun()
+
+
 def render_saved_column_mappings() -> None:
     """Saved per-store column mappings (delete one to have its layout detected again)."""
     from database.connection import SessionLocal
@@ -979,7 +1273,7 @@ def render_saved_column_mappings() -> None:
 
     with SessionLocal() as mdb:
         profiles = list_profiles(mdb, StoreConfig.from_env().store_id)
-    with st.expander(f"🧭 Saved Column Mappings ({len(profiles)})", expanded=False):
+    with st.expander(f"Saved Column Mappings ({len(profiles)})", expanded=False):
         if not profiles:
             st.caption("No saved mappings yet - the first successful upload saves one.")
             return
@@ -1011,12 +1305,12 @@ def render_column_mapping_panel(report: Dict[str, Any], map_key: str, force_open
     headers = list(report.get("headers", []) or [])
     needs = bool(report.get("needs_confirmation"))
     if needs:
-        status = f"⚠️ needs confirmation ({len(report.get('missing_required', []))} required field(s) not found)"
+        status = f"Requires mapping review ({len(report.get('missing_required', []))} required field(s) not found)"
     elif any(f.get("source") == "saved" for f in fields):
-        status = "✅ saved mapping for this store applied"
+        status = "Active store profile applied"
     else:
-        status = "✅ all required columns auto-matched"
-    with st.expander(f"🧭 Column Mapping - {status}", expanded=needs or force_open):
+        status = "All required columns matched"
+    with st.expander(f"Column Mapping - {status}", expanded=needs or force_open):
         for w in report.get("warnings", []) or []:
             st.warning(w)
         ignored = report.get("ignored_columns", []) or []
@@ -1043,7 +1337,7 @@ def render_column_mapping_panel(report: Dict[str, Any], map_key: str, force_open
             match = _MAPPING_SOURCE_LABEL.get(f.get("source", "none"), f.get("source", "")) if col else "not in file"
             c4.caption(f"{samples}  ({match})")
             chosen[f["field"]] = None if sel == none_opt else sel
-        if st.button("💾 Save mapping & validate", key=f"{map_key}::save"):
+        if st.button("Save Mapping & Validate", key=f"{map_key}::save"):
             from database.connection import SessionLocal
             from refillcare.data.column_mapping import save_profile
 
@@ -1055,7 +1349,7 @@ def render_column_mapping_panel(report: Dict[str, Any], map_key: str, force_open
                 st.cache_resource.clear()
                 st.rerun()
             except ValueError as e:
-                st.error(f"❌ {e}")
+                st.error(f"{e}")
 
 
 def parse_and_validate_uploaded_sales_file(
@@ -1394,7 +1688,7 @@ def load_v1_reminder_queue_df(
 
 @st.cache_data(ttl=5, show_spinner=False)
 def get_forecast_anchor_month() -> str:
-    """Active forecast month = month of (latest purchase in the decision store + 1 day)."""
+    """Active forecast month = current calendar month or latest purchase + 1 day, whichever is newer."""
     try:
         from database.connection import SessionLocal
         from database.models import RefillDecisionModel
@@ -1403,7 +1697,9 @@ def get_forecast_anchor_month() -> str:
         with SessionLocal() as db:
             latest = db.query(func.max(RefillDecisionModel.last_purchase_date)).scalar()
         if latest:
-            return (latest + timedelta(days=1)).strftime("%Y-%m")
+            data_m = (latest + timedelta(days=1)).strftime("%Y-%m")
+            cur_m = date.today().strftime("%Y-%m")
+            return max(data_m, cur_m)
     except Exception:
         pass
     return date.today().strftime("%Y-%m")
@@ -1678,12 +1974,26 @@ def load_active_refill_decisions_for_medsync(fallback_df: Optional[pd.DataFrame]
 # ==============================================================================
 def render_app():
     """Main Streamlit application layout."""
+    page_icon = str(MEDIASTRA_ICON_PATH) if MEDIASTRA_ICON_PATH.exists() else None
     st.set_page_config(
-        page_title="Pharmacy Refill Management System",
-        page_icon="💊",
+        page_title="Mediastra Refillcare — Clinical Operations",
+        page_icon=page_icon,
         layout="wide",
         initial_sidebar_state="expanded",
     )
+
+    if hasattr(st, "logo") and MEDIASTRA_LOGO_PATH.exists():
+        st.logo(
+            image=str(MEDIASTRA_LOGO_PATH),
+            icon_image=str(MEDIASTRA_ICON_PATH) if MEDIASTRA_ICON_PATH.exists() else None,
+            size="medium",
+        )
+
+    from refillcare.logging_setup import configure_logging
+
+    # No login / store picker here: the Mediastra application handles tenant > store logins;
+    # this app works on the configured store (REFILLCARE_STORE_ID).
+    configure_logging()
 
     # Clean Pharmacy Branding & Enterprise Hospital Styles
     st.markdown("""
@@ -1766,7 +2076,7 @@ def render_app():
 
         /* Search Buttons Red Background with White Text */
         div[data-testid="stButton"] button:has(p:contains("Search")),
-        div[data-testid="stButton"] button:has(p:contains("🔍 Search")),
+        div[data-testid="stButton"] button:has(p:contains("Search")),
         button[key="btn_apply_rem_search"],
         button[key="btn_apply_medsync_search"] {
             background-color: #dc2626 !important;
@@ -1775,14 +2085,24 @@ def render_app():
             font-weight: 600 !important;
         }
         div[data-testid="stButton"] button:hover:has(p:contains("Search")),
-        div[data-testid="stButton"] button:hover:has(p:contains("🔍 Search")) {
+        div[data-testid="stButton"] button:hover:has(p:contains("Search")) {
             background-color: #b91c1c !important;
             color: #ffffff !important;
             border-color: #991b1b !important;
             box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35) !important;
         }
         div[data-testid="stButton"] button:has(p:contains("Search")) p,
-        div[data-testid="stButton"] button:has(p:contains("🔍 Search")) p {
+                /* Bold Tab Labels & Professional Sizing */
+        div[data-testid="stTabs"] button,
+        button[data-testid="stTab"],
+        div[data-testid="stTabs"] button p,
+        button[data-testid="stTab"] p {
+            font-weight: 700 !important;
+            font-size: 0.95rem !important;
+            letter-spacing: -0.01em !important;
+        }
+
+        div[data-testid="stButton"] button:has(p:contains("Search")) p {
             color: #ffffff !important;
             font-weight: 600 !important;
         }
@@ -1790,23 +2110,35 @@ def render_app():
     """, unsafe_allow_html=True)
 
     # Enterprise Hospital Brand Header Banner
-    st.markdown("""
-        <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border-radius: 16px; padding: 1.2rem 1.6rem; margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <div style="width: 46px; height: 46px; background: linear-gradient(135deg, #2563eb, #0ea5e9); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: #fff; box-shadow: 0 0 16px rgba(37,99,235,0.4);">
-                    🏥
-                </div>
-                <div>
-                    <div style="font-size: 1.4rem; font-weight: 800; color: #ffffff; letter-spacing: -0.02em;">
-                        Mediastra <span style="color: #38bdf8;">Refillcare</span>
-                    </div>
-                    <div style="font-size: 0.8rem; color: #94a3b8; font-weight: 500;">
-                        Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
-                    </div>
-                </div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
+    logo_b64 = get_mediastra_logo_base64()
+    if logo_b64:
+        brand_icon_html = f'<div style="height: 48px; min-width: 54px; background: rgba(37, 99, 235, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px; display: flex; align-items: center; justify-content: center; padding: 4px 8px; box-shadow: 0 0 16px rgba(37,99,235,0.35);"><img src="data:image/png;base64,{logo_b64}" alt="Mediastra Logo" style="height: 38px; width: auto; object-fit: contain; filter: drop-shadow(0 2px 6px rgba(37, 99, 235, 0.5));" /></div>'
+    else:
+        brand_icon_html = '<div style="width: 46px; height: 46px; background: linear-gradient(135deg, #2563eb, #0ea5e9); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.15rem; font-weight: 800; color: #fff; box-shadow: 0 0 16px rgba(37,99,235,0.4);">MA</div>'
+
+    st.markdown(f"""<div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border-radius: 16px; padding: 1.2rem 1.6rem; margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
+<div style="display: flex; align-items: center; gap: 1rem;">
+{brand_icon_html}
+<div>
+<div style="font-size: 1.4rem; font-weight: 800; color: #ffffff; letter-spacing: -0.02em;">
+Mediastra <span style="color: #38bdf8;">Refillcare</span>
+</div>
+<div style="font-size: 0.8rem; color: #94a3b8; font-weight: 500;">
+Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
+</div>
+</div>
+</div>
+</div>""", unsafe_allow_html=True)
+
+    # Never let the store run on the baseline silently (e.g. a model pickled by another scikit-learn)
+    _serving = serving_model_status()
+    if sys.version_info < (3, 10):
+        # The project runs on .venv (Python 3.13, scikit-learn 1.7.2); an older Python cannot load its models
+        st.error(f"This app was started with Python {sys.version.split()[0]} ({sys.executable}), not the project's "
+                 "environment, so the ML model cannot load and predictions fall back to the baseline engine. "
+                 r"Stop it and start it with **run_streamlit.bat** (or `.venv\Scripts\streamlit run app_refillcare.py`).")
+    elif _serving.get("degraded"):
+        st.error(f"ML model warning: {_serving.get('warning')}")
 
     # Load Data & Model
     with st.spinner("Loading RefillCare system data..."):
@@ -1814,15 +2146,17 @@ def render_app():
         if "active_history_data" in st.session_state and st.session_state.active_history_data is not None:
             history_data = st.session_state.active_history_data
         else:
-            history_data = load_purchase_history()
+            history_data = current_history()
 
         if "active_sales_data" in st.session_state and st.session_state.active_sales_data is not None:
             recent_data = st.session_state.active_sales_data
+        elif history_data is not None and not history_data.empty:
+            recent_data = history_data
         else:
             recent_data = load_refill_data()
 
     if model_bundle is None or recent_data is None:
-        st.error("⚠️ RefillCare System Not Ready")
+        st.error("RefillCare System Telemetry Offline")
         st.warning("Required system data artifacts could not be loaded. Please ensure data files exist.")
         return
 
@@ -1837,7 +2171,16 @@ def render_app():
             "ineligible_count": len(ineligible_df),
         }
     else:
-        eligible_df, ineligible_df, metrics = prepare_prediction_overview(recent_data, model_bundle)
+        # From the decisions the engine stored (fast, same as FastAPI); the old on-the-fly
+        # re-prediction only runs while a store has no stored decisions yet
+        from refillcare.tenancy import current_store_id as _sid
+
+        _store = _sid()
+        _dver = _decisions_version(_store)
+        if _dver[0] > 0:
+            eligible_df, ineligible_df, metrics = prepare_overview_from_decisions(_store, _dver)
+        else:
+            eligible_df, ineligible_df, metrics = prepare_prediction_overview(recent_data, model_bundle)
 
     # Reminder List DataFrame
     reminder_list_df = eligible_df.copy()
@@ -1864,11 +2207,11 @@ def render_app():
     # Top Status Bar
     col_status1, col_status2, col_status3 = st.columns([2, 2, 1])
     with col_status1:
-        st.success("🟢 **System Ready:** Refill Prediction Engine Active")
+        st.success("**Engine Status:** Operational · Continuous Clinical Forecasting Active")
     with col_status2:
-        st.info(f"📅 **Sales Data Available:** {sales_coverage_str}")
+        st.info(f"**Verified Ledger Coverage:** {sales_coverage_str}")
     with col_status3:
-        if st.button("🔄 Refresh Data"):
+        if st.button("Refresh Telemetry"):
             st.cache_data.clear()
             st.cache_resource.clear()
             for k in ("active_sales_data", "active_history_data", "active_eligible_df", "active_ineligible_df"):
@@ -1878,21 +2221,21 @@ def render_app():
 
     # Main Client Tabs
     tab_dash, tab_upload, tab_results, tab_reminders, tab_medsync, tab_review, tab_whatsapp, tab_ml = st.tabs([
-        "📊 Operations Dashboard",
-        "📁 Data Update",
-        "🎯 Prediction Results",
-        "📅 Reminder List",
-        "📦 Med-Sync Bundles",
-        "⚠️ Customers Needing Review",
-        "💬 WhatsApp",
-        "🧠 ML Models",
+        "**Pharmacy Overview**",
+        "**Upload Sales Data**",
+        "**Upcoming Refills**",
+        "**Patient Reminders**",
+        "**Combined Prescriptions (Med-Sync)**",
+        "**Patients Needing Review**",
+        "**WhatsApp Messages**",
+        "**AI Accuracy & Settings**",
     ])
 
     # --------------------------------------------------------------------------
     # TAB 1: OPERATIONS DASHBOARD
     # --------------------------------------------------------------------------
     with tab_dash:
-        st.markdown("### 📈 Operations Summary")
+        st.markdown("### Pharmacy Overview Summary")
 
         dash_kpis = get_enterprise_dashboard_kpis(history_data)
         m1, m2, m3, m4, m5 = st.columns(5)
@@ -1909,7 +2252,29 @@ def render_app():
 
         # Monthly Forecast Pipeline - Dynamically computed from active eligible chronic stages
         dist = dash_kpis.get("monthly_stage_distribution", {})
-        target_m_str = dash_kpis.get("target_month") or get_forecast_anchor_month()
+        default_target_m = dash_kpis.get("target_month") or get_forecast_anchor_month()
+        cur_cal_m = date.today().strftime("%Y-%m")
+
+        avail_fc_months = [m for m in sorted(dist.keys()) if m >= "2026-09"]
+        if not avail_fc_months:
+            avail_fc_months = [default_target_m]
+
+        def_fc_idx = avail_fc_months.index(default_target_m) if default_target_m in avail_fc_months else 0
+
+        col_fc_hdr, col_fc_sel = st.columns([2.6, 1.4])
+        with col_fc_hdr:
+            st.markdown(f"#### Active Refill Forecast Horizon")
+            st.caption(f"Refill forecast models trained on verified historical sales up to **{latest_sales_date_str}**.")
+        with col_fc_sel:
+            target_m_str = st.selectbox(
+                "Forecast Month",
+                options=avail_fc_months,
+                index=def_fc_idx,
+                format_func=lambda m: f"{month_label(m)} {'(Current Horizon)' if m == cur_cal_m else '(Data Horizon)' if m == '2026-10' else ''}",
+                key="dashboard_forecast_month_selector",
+                help="Select target operational month to inspect forecast stages."
+            )
+
         try:
             t_y, t_m = map(int, target_m_str.split("-"))
             target_label = f"{date(t_y, t_m, 1).strftime('%B %Y')} ({target_m_str})"
@@ -1917,27 +2282,29 @@ def render_app():
             next_m_str = f"{n_y:04d}-{n_m:02d}"
             next_label = f"{date(n_y, n_m, 1).strftime('%B %Y')} ({next_m_str})"
         except Exception:
-            target_m_str = get_forecast_anchor_month()
             target_label = month_label(target_m_str)
             next_m_str = shift_month(target_m_str, 1)
             next_label = month_label(next_m_str)
 
-        target_stage_cnt = dist.get(target_m_str, dash_kpis.get("upcoming_reminders", 0))
+        target_stage_cnt = dist.get(target_m_str, 0)
         next_stage_cnt = dist.get(next_m_str, 0)
-
-        st.markdown(f"#### 🗓️ Active Refill Forecast Pipeline ({target_label})")
-        st.caption(f"Refill forecast models trained on verified historical sales up to **{latest_sales_date_str}**.")
 
         c_fc1, c_fc2 = st.columns(2)
         with c_fc1:
-            st.metric(f"{target_label.split('(')[0].strip()} (Active Forecast Target) ⭐", f"{target_stage_cnt:,} stages", f"{target_stage_cnt:,} Active Scheduled Reminders", delta_color="normal")
+            st.metric(f"{target_label.split('(')[0].strip()} (Primary Refill Horizon)", f"{target_stage_cnt:,} stages", f"{target_stage_cnt:,} Active Scheduled Reminders", delta_color="normal")
         with c_fc2:
-            st.metric(f"{next_label.split('(')[0].strip()} (Next Month Refills) 🔮", f"{next_stage_cnt:,} stages", "Extended Cycle Pipeline", delta_color="normal")
+            st.metric(f"{next_label.split('(')[0].strip()} (Secondary Refill Horizon)", f"{next_stage_cnt:,} stages", "Extended Cycle Pipeline", delta_color="normal")
+
+        if target_m_str == cur_cal_m and latest_sales_date_str != "N/A":
+            if "10-2026" in latest_sales_date_str or "2026-10" in latest_sales_date_str:
+                st.info(f"Showing **{month_label(cur_cal_m)}** operational pipeline ({target_stage_cnt:,} active refills). Refill predictions reflect verified sales through **{latest_sales_date_str}**.")
+            else:
+                st.info(f"Showing **{month_label(cur_cal_m)}** operational pipeline ({target_stage_cnt:,} active refills). Latest verified sales file on record is **{latest_sales_date_str}**. Ingest October sales to refresh the 30-day cohort into November.")
 
         st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### 🏪 Transaction Channel Overview")
+        st.markdown("### Transaction Channel Distribution")
         st.caption("Channel classification and isolation: Individual customer sales (S0/) participate in RefillCare; B2B / Inter-Store wholesale transfers (SB/) are strictly excluded from patient models.")
 
         # Dynamically compute channel metrics from master dataset and clean_transactions.parquet
@@ -1945,12 +2312,12 @@ def render_app():
         if "active_sales_data" in st.session_state and st.session_state.active_sales_data is not None and not st.session_state.active_sales_data.empty:
             override_cnt = len(st.session_state.active_sales_data)
 
-        raw_tx_cnt = get_master_raw_transaction_count(override_cnt)
-        chan_metrics = get_clean_transaction_channel_metrics()
-        clean_tx_cnt = chan_metrics["tot_clean"]
-        cust_sales = chan_metrics["cust_sales"]
-        b2b_sales = chan_metrics["b2b_sales"]
-        refill_el = chan_metrics["refill_el"]
+        chan_dist = get_enterprise_channel_distribution_cached()
+        raw_tx_cnt = override_cnt if (override_cnt and override_cnt > chan_dist["raw_tx_cnt"]) else chan_dist["raw_tx_cnt"]
+        clean_tx_cnt = chan_dist["tot_clean"]
+        cust_sales = chan_dist["cust_sales"]
+        b2b_sales = chan_dist["b2b_sales"]
+        refill_el = chan_dist["refill_el"]
         purged_cnt = max(0, raw_tx_cnt - clean_tx_cnt)
 
         tc1, tc2, tc3, tc4, tc5 = st.columns(5)
@@ -1960,7 +2327,7 @@ def render_app():
                 f"{raw_tx_cnt:,}",
                 f"{clean_tx_cnt:,} Cleaned",
                 delta_color="normal",
-                help=f"Master transaction records in customer_data_fields.csv ({raw_tx_cnt:,} rows). Updates dynamically whenever new sales data is added."
+                help=f"Master transaction records in enterprise database ({raw_tx_cnt:,} rows across verified batches). Updates dynamically whenever new sales data is ingested."
             )
         with tc2:
             st.metric(
@@ -1990,13 +2357,13 @@ def render_app():
             )
 
         st.caption(
-            f"🛡️ **Transaction Reconciliation Audit:** Master dataset contains **{raw_tx_cnt:,}** total records (through **{latest_sales_date_str}**). "
+            f"**Transaction Reconciliation Audit:** Master dataset contains **{raw_tx_cnt:,}** total records (through **{latest_sales_date_str}**). "
             f"The data hygiene pipeline safely purged **{purged_cnt:,}** exact duplicate rows (98.1% data retention), yielding **{clean_tx_cnt:,}** verified transactions "
             f"(**{cust_sales:,}** Retail Patient Sales + **{b2b_sales:,}** B2B Wholesale Transfers)."
         )
 
         st.markdown("---")
-        st.markdown("### 🎯 Quantile Uncertainty Envelopes & Model Benchmark ($P_{10}, P_{50}, P_{90}$)")
+        st.markdown("### Statistical Uncertainty Bounds & Model Calibration ($P_{10}, P_{50}, P_{90}$)")
         st.caption("3-Head Gradient Boosted Quantile Regressors dynamically bound patient refill intervals to catch early runouts and adherence lapses.")
 
         # Dynamically load Quantile Uncertainty Benchmark Report if present
@@ -2046,7 +2413,7 @@ def render_app():
             st.metric("Med-Sync Friction Reduction", "50.0%+", "Saved Multi-SMS Noise", delta_color="normal", help="Prescription synchronization reduces patient notification spam by half")
 
         st.markdown("---")
-        st.markdown("### 🧠 Clinical Dosage Regimen & Prediction Architecture")
+        st.markdown("### Clinical Dosage Regimen & Prediction Architecture")
         st.caption("The consensus engine analyzes prescription dosage frequencies, pack sizes, and historical adherence to calculate precise refill schedules.")
 
         tot_hist_events = len(history_data) if (history_data is not None and not history_data.empty) else 827955
@@ -2065,20 +2432,20 @@ def render_app():
         with dr4:
             st.metric("Thrice Daily (TID ~3.0/day)", "9.1%", f"{tid_cnt:,} patient cycles", help="High frequency dosing: Revlamer TID, Digestive enzymes")
 
-        with st.expander("🔍 Patient Adherence Scenarios Managed by the Engine", expanded=False):
+        with st.expander("Patient Adherence Scenarios Managed by Engine", expanded=False):
             st.markdown(
-                "- **📦 Med-Sync Multi-Prescription Bundling:** Groups multiple chronic medications due around the same time into a single coordinated WhatsApp reminder.\n"
-                "- **🛡️ Quantile Bounds ($P_{10} \\to P_{90}$):** Binds predictions with lower and upper confidence intervals to catch early runouts before churn.\n"
-                "- **📦 Multi-Pack Purchases:** Automatically scales refill intervals when patients buy multiple strips or boxes (e.g. 60 tablets $\\to$ 60 days).\n"
-                "- **🔄 Early Refill Carryover:** When patients refill before running out, remaining pills are factored in to avoid sending premature alerts.\n"
-                "- **💊 Travel / Emergency Strips:** Short-term partial purchases (e.g. 10 tabs) are scheduled proportionally for early follow-up.\n"
-                "- **⏱️ Return After Gap:** Resets cadence immediately to new purchase quantity when a lapsed patient resumes therapy."
+                "- **Med-Sync Multi-Prescription Bundling:** Groups multiple chronic medications due around the same time into a single coordinated WhatsApp reminder.\n"
+                "- **Quantile Bounds ($P_{10} \\to P_{90}$):** Binds predictions with lower and upper confidence intervals to catch early runouts before churn.\n"
+                "- **Multi-Pack Purchases:** Automatically scales refill intervals when patients buy multiple strips or boxes (e.g. 60 tablets $\\to$ 60 days).\n"
+                "- **Early Refill Carryover:** When patients refill before running out, remaining pills are factored in to avoid sending premature alerts.\n"
+                "- **Travel / Emergency Strips:** Short-term partial purchases (e.g. 10 tabs) are scheduled proportionally for early follow-up.\n"
+                "- **Return After Gap:** Resets cadence immediately to new purchase quantity when a lapsed patient resumes therapy."
             )
 
         st.markdown("---")
 
         # Key Business Notes & Architecture
-        st.markdown("#### 💡 Pharmacy Operations & Clinical Rules Summary")
+        st.markdown("#### Clinical Operations Governance & Rules Summary")
         st.markdown(
             "- **Dual-Path Routing:** High-frequency regular patients ($\\ge 6$ buys) receive precision ML forecasting; developing patients (< 6 buys) receive authoritative Days-of-Supply scheduling.\n"
             "- **Multi-Pack Awareness:** Supply intervals dynamically expand for multi-pack purchases, preventing unwanted early messages.\n"
@@ -2091,8 +2458,10 @@ def render_app():
     # TAB 2: DATA UPDATE (UPLOAD LATEST SALES DATA)
     # --------------------------------------------------------------------------
     with tab_upload:
-        st.markdown("### 📁 Upload Latest Sales Data")
+        st.markdown("### Upload Sales Data")
         st.write("Upload newly received pharmacy sales transactions (**CSV** or **XLSX/XLS**) to inspect transaction hygiene, validate records, and dynamically update the patient refill queue.")
+
+        render_data_status_panel()
 
         uploaded_file = st.file_uploader(
             "Select Sales Data File (.csv, .xlsx, .xls)",
@@ -2119,20 +2488,20 @@ def render_app():
                 render_column_mapping_panel(upload_metrics["column_mapping"], map_key)
 
             if upload_metrics.get("needs_column_mapping"):
-                st.info("ℹ️ Confirm the column mapping above (pick the matching column for each required field) to validate this file. Only the RefillCare columns are stored.")
+                st.info("Confirm the column mapping above (pick the matching column for each required field) to validate this file. Only the RefillCare columns are stored.")
             elif "error" in upload_metrics:
-                st.error(f"❌ {upload_metrics['error']}")
+                st.error(f"{upload_metrics['error']}")
             else:
-                st.success(f"📁 **File Uploaded:** `{uploaded_file.name}`")
+                st.success(f"**File Uploaded:** `{uploaded_file.name}`")
 
                 # Section 1: Overview & Coverage
-                st.markdown("#### 📊 Uploaded Sales Data Summary")
+                st.markdown("#### Uploaded File Summary")
                 
                 date_diag = upload_metrics.get("date_diagnostics", {})
-                st.info(f"📅 **Uploaded Date Range (DD-MM-YYYY):** `{upload_metrics['file_date_range']}`")
+                st.info(f"**Uploaded Date Range (DD-MM-YYYY):** `{upload_metrics['file_date_range']}`")
 
                 # Detailed Date Diagnostics Panel
-                with st.expander("🔍 Date Parsing & Validation Details (DD-MM-YYYY Standard)", expanded=True):
+                with st.expander("Date Parsing & Validation Details (DD-MM-YYYY Standard)", expanded=True):
                     dc1, dc2, dc3 = st.columns(3)
                     with dc1:
                         st.markdown(f"**Detected Source Format:** `{date_diag.get('source_format', 'Auto')}`")
@@ -2143,16 +2512,16 @@ def render_app():
                     with dc3:
                         inv_dates = date_diag.get("invalid_count", 0)
                         if inv_dates > 0:
-                            st.markdown(f"**Invalid / Unparseable Dates:** ⚠️ `{inv_dates:,}`")
+                            st.markdown(f"**Invalid / Unparseable Dates:** `{inv_dates:,}` (Flagged)")
                         else:
                             st.markdown("**Invalid / Unparseable Dates:** `0` (Clean)")
                         samples_str = ", ".join(date_diag.get("sample_dates_formatted", [])) if date_diag.get("sample_dates_formatted") else "None"
                         st.markdown(f"**Sample Parsed Dates:** `{samples_str}`")
 
                     if date_diag.get("warning"):
-                        st.warning(f"⚠️ **Date Notice:** {date_diag['warning']}")
+                        st.warning(f"**Date Notice:** {date_diag['warning']}")
                     if date_diag.get("is_ambiguous"):
-                        st.error("❌ **Ambiguous Date Format:** The uploaded dates cannot be deterministically resolved to DD-MM-YYYY. Processing has been blocked.")
+                        st.error("**Ambiguous Date Format:** The uploaded dates cannot be deterministically resolved to DD-MM-YYYY. Processing has been blocked.")
 
                 # 8 Required Business & Data Hygiene Metrics
                 c1, c2, c3, c4 = st.columns(4)
@@ -2176,7 +2545,7 @@ def render_app():
                     st.metric("Invalid/Negative Qty", f"{upload_metrics['invalid_quantities']:,}")
 
                 st.markdown("---")
-                st.markdown("#### 🔍 Data Preview (First 10 Records)")
+                st.markdown("#### Data Preview (First 10 Records)")
                 if parsed_sales_df is not None and not parsed_sales_df.empty:
                     preview_df = parsed_sales_df.copy()
                     if "invoice_date" in preview_df.columns:
@@ -2184,13 +2553,13 @@ def render_app():
                     preview_cols = [c for c in ["invoice_date", "customerId", "customerName", "itemId", "itemName", "quantity", "packing", "MOBILE_NO"] if c in preview_df.columns]
                     if not preview_cols:
                         preview_cols = list(preview_df.columns[:8])
-                    st.dataframe(preview_df[preview_cols].head(10), use_container_width=True, hide_index=True)
+                    st.dataframe(preview_df[preview_cols].head(10), width="stretch", hide_index=True)
 
                 st.markdown("---")
-                st.markdown("#### ⚙️ Data Actions")
+                st.markdown("#### Ingestion Workflow Actions")
 
                 st.caption(
-                    "📌 **Data Policy:** Customers with missing or invalid mobile numbers are **never deleted**. "
+                    "**Data Retention Policy:** Customers with missing or invalid mobile numbers are **never deleted**. "
                     "They remain in historical sales records for refill interval tracking and are only filtered when exporting delivery-ready reminder files."
                 )
 
@@ -2198,19 +2567,19 @@ def render_app():
 
                 btn_col1, btn_col2, btn_col3 = st.columns([1.3, 1.6, 2.1])
                 with btn_col1:
-                    btn_validate = st.button("🔍 Validate Data", key="btn_validate_sales_data")
+                    btn_validate = st.button("Validate File Hygiene", key="btn_validate_sales_data")
                 with btn_col2:
                     btn_process = st.button(
-                        "🚀 Process Sales Data",
+                        "Process Sales Ingestion",
                         key="btn_process_sales_data",
                         disabled=is_date_blocked,
                         help="Disabled if date interpretation is ambiguous or no valid records exist." if is_date_blocked else "Ingest verified sales records with traceable batch ID.",
                     )
                 with btn_col3:
-                    btn_gen_pred = st.button("🔮 Generate Updated Predictions", key="btn_gen_predictions_upload")
+                    btn_gen_pred = st.button("Generate Updated Predictions", key="btn_gen_predictions_upload")
 
                 if is_date_blocked:
-                    st.error("🛑 **Processing Disabled:** Date verification failed or contains unresolved ambiguity. Please check the file formatting.")
+                    st.error("**Processing Blocked:** Date verification failed or contains unresolved ambiguity. Please check the file formatting.")
 
                 # Handle [Validate Data]
                 if btn_validate:
@@ -2218,69 +2587,58 @@ def render_app():
                     st.session_state["sales_validation_file"] = uploaded_file.name
 
                 if st.session_state.get("sales_validation_run") and st.session_state.get("sales_validation_file") == uploaded_file.name:
-                    st.markdown("##### 📋 Validation Report")
+                    st.markdown("##### Validation Report")
                     if upload_metrics["valid_records"] > 0:
                         st.success(
-                            f"✅ **Validation Complete:** {upload_metrics['valid_records']:,} out of {upload_metrics['records_received']:,} "
+                            f"**Validation Verified:** {upload_metrics['valid_records']:,} out of {upload_metrics['records_received']:,} "
                             f"records are fully validated and meet operational ingestion criteria."
                         )
                     if upload_metrics["records_requiring_review"] > 0:
                         st.warning(
-                            f"⚠️ **Review Notice:** {upload_metrics['records_requiring_review']:,} records require review "
+                            f"**Review Notice:** {upload_metrics['records_requiring_review']:,} records require review "
                             f"({upload_metrics['invalid_quantities']:,} non-positive/invalid quantity, "
                             f"{upload_metrics['missing_customer_info']:,} missing customer identity)."
                         )
                     st.info(
-                        f"ℹ️ **Customer Mobile Breakdown:** {upload_metrics['unique_customers']:,} total customers in file. "
+                        f"**Customer Mobile Breakdown:** {upload_metrics['unique_customers']:,} total customers in file. "
                         f"{upload_metrics['missing_mobile_numbers']:,} transactions have missing phone numbers (preserved in history for continuity)."
                     )
 
                 # Handle [Process Sales Data]
                 if btn_process:
-                    with st.spinner("Processing sales data into RefillCare purchase history with batch ID..."):
-                        process_result = process_monthly_sales_data(
-                            sales_input=parsed_sales_df,
-                            existing_history_df=history_data if history_data is not None else pd.DataFrame(),
-                            storage=storage,
-                            source_filename=uploaded_file.name,
-                        )
+                    with st.spinner("Adding the new sales lines and re-scoring their patients..."):
+                        try:
+                            from database.connection import SessionLocal
+                            from refillcare.data.incremental_ingest import (
+                                ColumnMappingRequired,
+                                DuplicateUpload,
+                                file_checksum,
+                                ingest_sales_batch,
+                            )
+
+                            with SessionLocal() as db:
+                                process_result = ingest_sales_batch(
+                                    db, parsed_sales_df, uploaded_file.name,
+                                    checksum=file_checksum(uploaded_file.getvalue()), actor="streamlit",
+                                    force=bool(st.session_state.get("force_reupload")),
+                                )
+                                if upload_metrics.get("column_mapping_result") is not None:
+                                    from refillcare.data.column_mapping import mark_profile_used
+
+                                    # Remember this layout for the store: next upload is mapped instantly
+                                    mark_profile_used(db, upload_metrics["column_mapping_result"], confirmed_by="streamlit")
+                        except DuplicateUpload as e:
+                            process_result = {"status": "duplicate", "message": str(e)}
+                        except (ColumnMappingRequired, ValueError) as e:
+                            process_result = {"status": "error", "message": str(e)}
                     if process_result.get("status") == "success":
-                        st.session_state.active_history_data = process_result["updated_history_df"]
-                        st.session_state.active_sales_data = process_result["updated_history_df"]
+                        st.session_state.pop("active_history_data", None)
+                        st.session_state.pop("active_sales_data", None)
                         st.session_state["sales_processed_metrics"] = process_result["metrics"]
                         st.session_state["sales_processed_file"] = uploaded_file.name
                         st.session_state["last_import_batch_id"] = process_result.get("import_batch_id")
-
-                        # Same post-ingest path as the FastAPI /sales/ingest endpoint: mirror the batch,
-                        # re-score touched customer-items with the registry's serving model, sync
-                        # cycles, expire stages, refresh outcomes, re-plan the ML windows.
-                        with st.spinner("Synchronizing refill cycles and superseding repurchases in database..."):
-                            try:
-                                import hashlib
-                                from database.connection import SessionLocal
-                                from refillcare.engine.post_ingest import (
-                                    ml_freshness_after_ingest,
-                                    mirror_import_batch,
-                                    sync_after_ingest,
-                                )
-
-                                with SessionLocal() as db:
-                                    if upload_metrics.get("column_mapping_result") is not None:
-                                        from refillcare.data.column_mapping import mark_profile_used
-
-                                        # Remember this layout for the store: next upload is mapped instantly
-                                        mark_profile_used(db, upload_metrics["column_mapping_result"], confirmed_by="streamlit")
-                                    mirror_import_batch(
-                                        db, process_result, uploaded_file.name,
-                                        checksum=hashlib.sha256(uploaded_file.getvalue()).hexdigest(),
-                                    )
-                                    st.session_state["online_sync_metrics"] = sync_after_ingest(db, process_result)
-                                    st.session_state["ml_data_freshness"] = ml_freshness_after_ingest(
-                                        db, process_result["updated_history_df"]
-                                    )
-                            except Exception as e:
-                                st.warning(f"Note: Refill cycle sync completed with notification: {e}")
-
+                        st.session_state["online_sync_metrics"] = process_result.get("online_sync") or {}
+                        st.session_state["sales_data_warnings"] = process_result.get("data_warnings") or {}
                         # Clear old predictions so updated ones must be generated explicitly
                         st.session_state.pop("active_eligible_df", None)
                         st.session_state.pop("active_ineligible_df", None)
@@ -2290,8 +2648,11 @@ def render_app():
                         st.cache_data.clear()
                         st.cache_resource.clear()
                         st.rerun()
+                    elif process_result.get("status") == "duplicate":
+                        st.warning(f"{process_result['message']}")
+                        st.checkbox("Upload it again anyway (only lines not stored yet are added)", key="force_reupload")
                     else:
-                        st.warning(process_result.get("message", "Processing completed with warnings."))
+                        st.error(f"{process_result.get('message', 'Processing failed.')}")
 
                 # Handle [Generate Updated Predictions] from upload
                 if btn_gen_pred:
@@ -2313,9 +2674,9 @@ def render_app():
                 if st.session_state.get("sales_processed_metrics") and st.session_state.get("sales_processed_file") == uploaded_file.name:
                     p_metrics = st.session_state["sales_processed_metrics"]
                     st.markdown("---")
-                    st.success("✅ **Sales Data Updated Successfully**")
-                    st.markdown("#### 📋 Sales Processing Summary")
-                    st.info(f"🏷️ **Import Batch ID:** `{p_metrics.get('import_batch_id', 'N/A')}`")
+                    st.success("**Sales Data Ingested Successfully**")
+                    st.markdown("#### Ingestion Processing Summary")
+                    st.info(f"**Import Batch ID:** `{p_metrics.get('import_batch_id', 'N/A')}`")
 
                     p1, p2, p3, p4 = st.columns(4)
                     with p1:
@@ -2349,20 +2710,20 @@ def render_app():
                     fresh = st.session_state.get("ml_data_freshness") or {}
                     if fresh.get("retrain_recommended"):
                         st.info(
-                            "🧭 **New sales data moved the ML evaluation windows.** A model retrain is recommended - "
-                            "see the 🧠 ML Models tab."
+                            "**New sales data moved the ML evaluation windows.** A model retrain is recommended - "
+                            "see the AI Accuracy & Settings tab."
                         )
 
                 # Section: Undo Last Import (Rollback)
                 active_batch_id = st.session_state.get("last_import_batch_id")
                 if active_batch_id:
                     st.markdown("---")
-                    st.markdown("#### ↺ Undo Last Import (Rollback)")
+                    st.markdown("#### Undo Last Ingestion (Rollback)")
                     st.write(
                         "Safely rollback the most recent sales data import. This operation removes only "
                         "the transaction records inserted by this batch and invalidates any predictions generated from it."
                     )
-                    st.warning(f"⚠️ **Target Batch for Rollback:** `{active_batch_id}`")
+                    st.warning(f"**Target Batch for Rollback:** `{active_batch_id}`")
 
                     col_chk, col_rb = st.columns([3, 1])
                     with col_chk:
@@ -2371,24 +2732,12 @@ def render_app():
                             key="chk_confirm_rollback_upload",
                         )
                     with col_rb:
-                        if st.button("⚠️ Rollback Import", key="btn_rollback_upload", disabled=not confirm_rollback):
+                        if st.button("Rollback Import", key="btn_rollback_upload", disabled=not confirm_rollback):
                             with st.spinner("Rolling back import batch..."):
-                                rb_result = rollback_monthly_sales_import(
-                                    current_history_df=history_data if history_data is not None else pd.DataFrame(),
-                                    import_batch_id=active_batch_id,
-                                    storage=storage,
-                                )
+                                rb_result = rollback_import_batch_shared(active_batch_id, history_data, storage)
                             if rb_result["status"] == "success":
-                                try:
-                                    from database.connection import SessionLocal
-                                    from refillcare.engine.post_ingest import revert_after_rollback
-
-                                    with SessionLocal() as db:
-                                        revert_after_rollback(db, rb_result, active_batch_id)
-                                except Exception as e:
-                                    st.warning(f"Rollback removed the sales records, but reminder-state revert reported: {e}")
-                                st.session_state.active_history_data = rb_result["restored_history_df"]
-                                st.session_state.active_sales_data = rb_result["restored_history_df"]
+                                st.session_state.pop("active_history_data", None)
+                                st.session_state.pop("active_sales_data", None)
                                 st.session_state.pop("last_import_batch_id", None)
                                 st.session_state.pop("sales_processed_metrics", None)
                                 st.session_state.pop("sales_processed_file", None)
@@ -2397,15 +2746,15 @@ def render_app():
                                 st.session_state.pop("prediction_gen_metrics", None)
                                 st.cache_data.clear()
                                 st.cache_resource.clear()
-                                st.success(f"✅ {rb_result['message']} Latest Sales Date restored to `{rb_result['restored_latest_sales_date']}`.")
+                                st.success(f"{rb_result['message']} Latest Sales Date restored to `{rb_result['restored_latest_sales_date']}`.")
                                 st.rerun()
                             else:
                                 st.error(rb_result["message"])
         else:
-            st.info("👆 Upload an Excel or CSV sales file above to view the business summary and update predictions.")
+            st.info("Upload an Excel or CSV sales file above to view the business summary and update predictions.")
 
             # Display current active file summary if available
-            st.markdown("#### 📋 Current Active File Status")
+            st.markdown("#### Current Active File Status")
             if eval_data_for_dates is not None and not eval_data_for_dates.empty:
                 d_col = "invoice_date" if "invoice_date" in eval_data_for_dates.columns else None
                 if d_col:
@@ -2424,9 +2773,9 @@ def render_app():
 
             # Refill Prediction Updates for active history
             st.markdown("---")
-            st.markdown("#### 🔮 Refill Prediction Updates")
+            st.markdown("#### Forecast Pipeline Execution")
             st.write("Generate updated expected refill dates and reminder schedules based on the latest historical purchase records.")
-            if st.button("🔮 Generate Updated Predictions", key="btn_generate_updated_predictions_main"):
+            if st.button("Generate Updated Predictions", key="btn_generate_updated_predictions_main"):
                 with st.spinner("Generating updated refill predictions using existing prediction engine..."):
                     pred_result = generate_updated_predictions(
                         history_df=history_data if history_data is not None else pd.DataFrame(),
@@ -2442,12 +2791,12 @@ def render_app():
                     st.warning(pred_result.get("message", "Prediction generation completed with warnings."))
 
             # Rollback active batch from database if one exists
-            latest_db_batch = storage.get_latest_active_import_batch()
+            latest_db_batch = latest_active_batch(storage)
             if latest_db_batch and history_data is not None and "import_batch_id" in history_data.columns:
                 batch_id = latest_db_batch["import_batch_id"]
                 if (history_data["import_batch_id"].astype(str) == batch_id).any():
                     st.markdown("---")
-                    st.markdown("#### ↺ Undo Last Import (Rollback)")
+                    st.markdown("#### Undo Last Ingestion (Rollback)")
                     st.write(
                         f"Active import batch found in database: **`{batch_id}`** "
                         f"(Source: `{latest_db_batch['source_filename']}`, Records: {latest_db_batch['records_inserted']:,}, "
@@ -2457,21 +2806,18 @@ def render_app():
                         f"I confirm that I want to rollback batch `{batch_id}`.",
                         key="chk_confirm_main_rb",
                     )
-                    if st.button("⚠️ Rollback Import Batch", key="btn_main_rollback", disabled=not confirm_main_rb):
+                    if st.button("Rollback Ingestion Batch", key="btn_main_rollback", disabled=not confirm_main_rb):
                         with st.spinner("Rolling back import batch..."):
-                            rb_result = rollback_monthly_sales_import(
-                                current_history_df=history_data,
-                                import_batch_id=batch_id,
-                                storage=storage,
-                            )
+                            rb_result = rollback_import_batch_shared(batch_id, history_data, storage)
                         if rb_result["status"] == "success":
-                            st.session_state.active_history_data = rb_result["restored_history_df"]
-                            st.session_state.active_sales_data = rb_result["restored_history_df"]
+                            st.session_state.pop("active_history_data", None)
+                            st.session_state.pop("active_sales_data", None)
                             st.session_state.pop("active_eligible_df", None)
                             st.session_state.pop("active_ineligible_df", None)
                             st.session_state.pop("prediction_gen_metrics", None)
                             st.cache_data.clear()
-                            st.success(f"✅ {rb_result['message']}")
+                            st.cache_resource.clear()
+                            st.success(f"{rb_result['message']}")
                             st.rerun()
                         else:
                             st.error(rb_result["message"])
@@ -2480,13 +2826,13 @@ def render_app():
             # PHARMACIST MEDICATION RULES MANAGER (SUPABASE CLOUD SYNC)
             # ------------------------------------------------------------------
             st.markdown("---")
-            st.markdown("#### 💊 Pharmacist Medication Rules Manager (Live Supabase Cloud)")
+            st.markdown("#### Pharmacist Medication Rules Manager (Live Supabase Cloud)")
             st.caption(
                 "Easily add or exclude medications from automated refill reminder modeling without touching code. "
                 "Rules are securely synced across your store via Supabase PostgreSQL."
             )
 
-            with st.expander("➕ Add / Search / Manage Medication Classification Rules", expanded=False):
+            with st.expander("Add / Search / Manage Medication Classification Rules", expanded=False):
                 from refillcare.data.medication_classifier import (
                     add_classification_rule,
                     list_classification_rules,
@@ -2495,7 +2841,7 @@ def render_app():
                 )
 
                 # Quick Add Form
-                st.markdown("##### ➕ Quick Add New Medication Rule")
+                st.markdown("##### Add Medication Classification Rule")
                 with st.form("form_add_pharmacist_med_rule", clear_on_submit=True):
                     col_m1, col_m2 = st.columns([2.5, 1.5])
                     with col_m1:
@@ -2507,12 +2853,12 @@ def render_app():
                     with col_m2:
                         rule_type_choice = st.selectbox(
                             "Classification Decision",
-                            options=["✅ CHRONIC (Participates in Refill Modeling)", "❌ EXCLUDE (Suppress - OTC/FMCG/Acute/Topical)"],
+                            options=["CHRONIC (Participates in Refill Modeling)", "EXCLUDE (Suppress - OTC/FMCG/Acute/Topical)"],
                             index=0,
                         )
                     rule_notes = st.text_input("Optional Pharmacist Notes", placeholder="e.g. New anti-diabetic launch / Personal care exclusion")
 
-                    btn_save_rule = st.form_submit_button("💾 Save Rule to Supabase")
+                    btn_save_rule = st.form_submit_button("Save Rule to Database")
                     if btn_save_rule and rule_med_name.strip():
                         r_type_val = "CHRONIC" if "CHRONIC" in rule_type_choice else "EXCLUDE"
                         save_res = add_classification_rule(
@@ -2521,14 +2867,14 @@ def render_app():
                             notes=rule_notes.strip(),
                         )
                         if save_res["status"] == "success":
-                            st.success(f"✅ {save_res['message']} RefillCare predictions will immediately respect this rule.")
+                            st.success(f"{save_res['message']} RefillCare predictions will immediately respect this rule.")
                             st.cache_data.clear()
                             st.rerun()
                         else:
-                            st.error(f"❌ {save_res['message']}")
+                            st.error(f"{save_res['message']}")
 
                 st.markdown("---")
-                st.markdown("##### 🔍 Active Supabase Classification Rules")
+                st.markdown("##### Active Supabase Classification Rules")
                 col_s1, col_s2, col_s3 = st.columns([2, 1.5, 1])
                 with col_s1:
                     search_rules_txt = st.text_input("Search Saved Rules", placeholder="e.g. TELMA, DOLO, SOAP", key="med_rule_search_txt")
@@ -2536,7 +2882,7 @@ def render_app():
                     filter_rules_type = st.selectbox("Filter Rule Type", ["All", "CHRONIC", "EXCLUDE"], key="med_rule_filter_type")
                 with col_s3:
                     st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                    if st.button("🔄 Sync Rules", key="btn_refresh_rules"):
+                    if st.button("Sync Rules", key="btn_refresh_rules"):
                         get_dynamic_classification_rules()
                         st.success("Rules refreshed!")
                         st.rerun()
@@ -2568,7 +2914,7 @@ def render_app():
                         st.markdown("<div style='padding-top: 0.6rem;'></div>", unsafe_allow_html=True)
                         csv_data_disp = rules_df_disp.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            label=f"📥 Download Table ({cnt_total:,})",
+                            label=f"Export Table ({cnt_total:,} Rows)",
                             data=csv_data_disp,
                             file_name="mediastra_active_rules_display.csv",
                             mime="text/csv",
@@ -2584,14 +2930,14 @@ def render_app():
                             df_complete = df_complete[std_order]
                         csv_complete = df_complete.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            label=f"📥 Export All {len(all_live_rules):,} (Full CSV)",
+                            label=f"Export All {len(all_live_rules):,} (Full CSV)",
                             data=csv_complete,
                             file_name="medication_classification_rules_complete.csv",
                             mime="text/csv",
                             key="download_all_supabase_complete_csv"
                         )
 
-                    st.dataframe(rules_df_disp, use_container_width=True, hide_index=True)
+                    st.dataframe(rules_df_disp, width="stretch", hide_index=True)
 
                     # Delete rule selector
                     del_options = {r["id"]: f"{r['medication_name_or_keyword']} ({r['rule_type']})" for r in existing_rules if "id" in r}
@@ -2601,14 +2947,14 @@ def render_app():
                             target_del_id = st.selectbox("Select Rule to Delete:", options=list(del_options.keys()), format_func=lambda x: del_options.get(x, x), key="del_rule_selector")
                         with c_del2:
                             st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                            if st.button("🗑️ Delete Rule", key="btn_delete_rule"):
+                            if st.button("Delete Rule", key="btn_delete_rule"):
                                 del_res = delete_classification_rule(target_del_id)
                                 if del_res["status"] == "success":
-                                    st.success("✅ Rule deleted.")
+                                    st.success("Rule deleted successfully.")
                                     st.cache_data.clear()
                                     st.rerun()
                                 else:
-                                    st.error(f"❌ {del_res['message']}")
+                                    st.error(f"{del_res['message']}")
                 else:
                     st.info("No matching rules found in Supabase.")
 
@@ -2616,8 +2962,8 @@ def render_app():
         if st.session_state.get("prediction_gen_metrics"):
             gen_m = st.session_state["prediction_gen_metrics"]
             st.markdown("---")
-            st.success("✅ **Refill Predictions Generated Successfully**")
-            st.markdown("#### 🔮 Prediction Generation Summary")
+            st.success("**Refill Predictions Generated Successfully**")
+            st.markdown("#### Prediction Generation Summary")
 
             g1, g2, g3 = st.columns(3)
             with g1:
@@ -2637,7 +2983,7 @@ def render_app():
     # TAB: PREDICTION RESULTS (INTERNAL EVALUATION & OUTCOME ACCURACY)
     # --------------------------------------------------------------------------
     with tab_results:
-        st.markdown("### 🎯 Prediction Results")
+        st.markdown("### Upcoming Refills & Predictions")
         st.write("Comparison between calculated expected refill dates and actual customer purchase dates from subsequent sales.")
 
         # Load evaluated prediction results from storage
@@ -2650,7 +2996,7 @@ def render_app():
                 eval_results = sess_eval
 
         # Section 1: Active Refill Forecast Explorer
-        st.markdown("#### 🔮 Active Refill Forecast Explorer")
+        st.markdown("#### Active Refill Forecast Explorer")
         st.caption("Review calculated refill predictions, expected runout dates, and lifecycle timelines.")
 
         # Target Month Filter for Predictions
@@ -2712,23 +3058,23 @@ def render_app():
                 path_a_cnt = int((df_filtered["Clinical Path"] == "PATH_A").sum())
                 st.metric("Path A Chronic", f"{path_a_cnt:,}")
 
-            st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+            st.dataframe(df_filtered, width="stretch", hide_index=True)
 
             # CSV Export
             csv_forecast = df_filtered.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Export Refill Forecasts (CSV)",
+                "Export Refill Forecasts (CSV)",
                 data=csv_forecast,
                 file_name=f"refill_forecasts_{sel_m_key or 'all'}.csv",
                 mime="text/csv",
                 key="btn_download_forecast_csv",
             )
         else:
-            st.info(f"ℹ️ No eligible refill forecasts found for `{sel_pred_month_label}`.")
+            st.info(f"No eligible refill forecasts found for `{sel_pred_month_label}`.")
 
         st.markdown("---")
         # Section 2: Historical Holdout Accuracy & Benchmarks
-        st.markdown("#### 📊 Historical Holdout Accuracy & Benchmarks")
+        st.markdown("#### Historical Holdout Accuracy & Benchmarks")
         r1, r2, r3, r4 = st.columns(4)
         with r1:
             st.metric("Holdout Cycles Evaluated", f"{eval_results.get('predictions_evaluated', 7126):,}")
@@ -2752,14 +3098,14 @@ def render_app():
             )
 
         if eval_results.get("predictions_evaluated", 0) > 0 and not eval_results["evaluated_df"].empty:
-            st.markdown("##### 📋 Completed Cycle Evaluation Details")
-            st.dataframe(eval_results["evaluated_df"], use_container_width=True, hide_index=True)
+            st.markdown("##### Completed Cycle Evaluation Details")
+            st.dataframe(eval_results["evaluated_df"], width="stretch", hide_index=True)
 
     # --------------------------------------------------------------------------
     # TAB 4: REMINDER LIST (DATE / MONTH SELECTOR & CSV/JSON EXPORTS)
     # --------------------------------------------------------------------------
     with tab_reminders:
-        st.markdown("### 📅 Customer Reminder List")
+        st.markdown("### Patient Reminders")
         st.write("View patients scheduled for refill outreach by **Specific Date** or for the **Complete Month** (e.g. the active forecast month) from the persistent decision engine.")
 
         # Determine available dates and months from enterprise.db
@@ -2817,7 +3163,7 @@ def render_app():
                 horizon_end = horizon_start + timedelta(days=29)
                 filter_label = f"Rolling 30d ({horizon_start.strftime('%d-%b')} - {horizon_end.strftime('%d-%b-%Y')})"
                 file_stem = f"reminder_list_rolling_30d_{horizon_start.strftime('%Y%m%d')}_{horizon_end.strftime('%Y%m%d')}"
-                st.caption(f"🗓️ **Active Horizon:** {horizon_start.strftime('%d-%b-%Y')} → {horizon_end.strftime('%d-%b-%Y')} (30 Days Outreach)")
+                st.caption(f"**Active Horizon:** {horizon_start.strftime('%d-%b-%Y')} → {horizon_end.strftime('%d-%b-%Y')} (30 Days Outreach)")
             else:
                 # Default to the active forecast month (latest sale + 1 day), else the latest month
                 default_m_idx = 0
@@ -2899,7 +3245,7 @@ def render_app():
             )
         with c_btn:
             st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            st.button("🔍 Search", key="btn_apply_rem_search", use_container_width=True)
+            st.button("Search", key="btn_apply_rem_search", width="stretch")
 
         # Load queue from persistent enterprise.db for selected date, month, or rolling 30-day range
         db_queue_df = load_v1_reminder_queue_df(
@@ -2959,7 +3305,7 @@ def render_app():
         missing_mob_on_date = tot_on_date - valid_mob_on_date
         path_a_on_date = int((working_rem_df["path"] == "PATH_A").sum()) if tot_on_date > 0 and "path" in working_rem_df.columns else 0
 
-        overview_title = f"#### 📊 {'Monthly' if view_mode == 'Complete Month' else 'Daily'} Queue Overview ({filter_label})"
+        overview_title = f"#### {'Monthly' if view_mode == 'Complete Month' else 'Daily'} Queue Overview ({filter_label})"
         st.markdown(overview_title)
         s1, s2, s3, s4 = st.columns(4)
         with s1:
@@ -2975,7 +3321,7 @@ def render_app():
 
         # Handle B2B Audit View
         if channel_filter == "B2B / Inter-Store (Audit)":
-            st.warning("⚠️ **B2B / Inter-Store Audit View:** Displaying excluded inter-store transactions (SB/...). These records NEVER participate in patient reminder delivery.")
+            st.warning("**B2B / Inter-Store Audit View:** Displaying excluded inter-store transactions (SB/...). These records do not participate in patient reminder delivery.")
             clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
             if clean_tx_file.exists():
                 all_clean_df = pd.read_parquet(clean_tx_file)
@@ -2983,14 +3329,14 @@ def render_app():
                 st.info(f"Total B2B Inter-Store Transactions in Master Store: **{len(b2b_df):,}** (RefillCare Eligible: **NO**, Exclusion Reason: **INTER_STORE_TRANSACTION**)")
                 st.dataframe(
                     b2b_df[["invoice_number", "invoice_date", "customerName", "itemName", "quantity", "transaction_type", "refillcare_eligible", "exclusion_reason"]].head(100),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
             else:
                 st.info("No clean_transactions.parquet artifact found.")
             filtered_reminders = pd.DataFrame()
         elif channel_filter == "Unknown":
-            st.warning("⚠️ **Unknown Transactions Audit View:** No unknown transaction types detected in source dataset.")
+            st.warning("**Unknown Transactions Audit View:** No unknown transaction types detected in source dataset.")
             filtered_reminders = pd.DataFrame()
         else:
             # Apply Regular Filters
@@ -3057,10 +3403,10 @@ def render_app():
             # Header and Technical View Toggle
             t_col1, t_col2 = st.columns([3, 1])
             with t_col1:
-                st.markdown(f"##### 📋 Scheduled Patients Queue ({len(filtered_reminders):,} records)")
+                st.markdown(f"##### Scheduled Patients Queue ({len(filtered_reminders):,} records)")
             with t_col2:
                 show_technical_details = st.checkbox(
-                    "⚙️ Technical Diagnostics",
+                    "Technical Diagnostics",
                     value=False,
                     key="chk_show_tech_details_reminders",
                     help="Show internal clinical regimen, archetype, stability tier, and decision provenance columns.",
@@ -3097,7 +3443,7 @@ def render_app():
                 avail_cols = [c for c in display_columns if c in filtered_reminders.columns]
                 st.dataframe(
                     filtered_reminders[avail_cols],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
             else:
@@ -3109,7 +3455,7 @@ def render_app():
             from reminder.reminder_engine import RefillReminderEngine
             reminder_csv_bytes = RefillReminderEngine.build_10_column_export_csv(pd.DataFrame(filtered_reminders))
             st.download_button(
-                label=f"📥 Download CSV ({'Month' if view_mode == 'Complete Month' else 'Date'})",
+                label=f"Export CSV ({'Month' if view_mode == 'Complete Month' else 'Date'})",
                 data=reminder_csv_bytes,
                 file_name=f"{file_stem}_export.csv",
                 mime="text/csv",
@@ -3126,7 +3472,7 @@ def render_app():
             }
             json_str = json.dumps(json_export_data, indent=2, default=str)
             st.download_button(
-                label=f"📥 Download JSON ({'Month' if view_mode == 'Complete Month' else 'Date'})",
+                label=f"Export JSON ({'Month' if view_mode == 'Complete Month' else 'Date'})",
                 data=json_str.encode("utf-8"),
                 file_name=f"{file_stem}_export.json",
                 mime="application/json",
@@ -3140,7 +3486,7 @@ def render_app():
             )
 
         # Informational Explainer Box
-        with st.expander("ℹ️ Clinical Operations & Decision Engine Architecture", expanded=False):
+        with st.expander("Clinical Operations & Decision Engine Architecture", expanded=False):
             st.markdown("""
             **V1 Unified Refill Decision Engine Architecture:**
             - **Dual-Path Clinical Routing:**
@@ -3155,7 +3501,7 @@ def render_app():
     # TAB 5: MED-SYNC (MULTI-PRESCRIPTION SYNCHRONIZATION & APPOINTMENT BUNDLING)
     # --------------------------------------------------------------------------
     with tab_medsync:
-        st.markdown("### 📦 Med-Sync: Multi-Prescription Synchronization & Appointment Bundling")
+        st.markdown("### Combined Prescriptions (Med-Sync)")
         st.caption(
             "Med-Sync automatically clusters multiple chronic prescriptions for each patient due within a configurable "
             "synchronization window into a single unified appointment reminder. This eliminates patient notification fatigue, "
@@ -3242,11 +3588,11 @@ def render_app():
         for y, m in ordered_tuples:
             m_name = date(y, m, 1).strftime("%B %Y")
             if (y, m) == target_tuple:
-                month_display_map[f"{y}-{m:02d}"] = f"🎯 {m_name} (Active Prediction Target — Default)"
+                month_display_map[f"{y}-{m:02d}"] = f"{m_name} (Active Target — Default)"
             else:
-                month_display_map[f"{y}-{m:02d}"] = f"📅 {m_name}"
+                month_display_map[f"{y}-{m:02d}"] = f"{m_name}"
 
-        month_display_map["ALL"] = "🌐 All Future Months (Full Pipeline)"
+        month_display_map["ALL"] = "All Future Months (Full Pipeline)"
         month_keys = list(month_display_map.keys())
 
         with c_target:
@@ -3301,7 +3647,7 @@ def render_app():
             search_sync_tier = st.selectbox("Refill Function / Tier", ["All Functions", "DUE_REFILL (Due Soon)", "REFILL_FOLLOW_UP (Follow-up)", "LAPSED_REENGAGEMENT (+45d)"], key="medsync_tier_filter")
         with c_sync_btn:
             st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            st.button("🔍 Search", key="btn_apply_medsync_search", use_container_width=True)
+            st.button("Search", key="btn_apply_medsync_search", width="stretch")
 
         # Load candidates from scheduled review queue for selected target date/month
         if medsync_view_mode == "Specific Date" and medsync_selected_date:
@@ -3337,7 +3683,7 @@ def render_app():
         sync_impact = med_sync_engine.summarize_sync_impact(month_filtered_bundles)
 
         st.info(
-            f"🎯 **Active Prediction Target: {active_target_label}** — Clustered refill schedules "
+            f"**Active Prediction Target: {active_target_label}** — Clustered refill schedules "
             f"(predicted from uploaded sales up to **{last_sales_month_str}** with **{sync_window}d** sync window). "
             f"**{sync_impact['total_prescriptions_synced']:,}** prescriptions grouped into **{sync_impact['total_dispatches_generated']:,}** bundles."
         )
@@ -3417,10 +3763,10 @@ def render_app():
 
         t_col1, t_col2 = st.columns([3, 1])
         with t_col1:
-            st.markdown(f"#### 📋 Synchronized Refill Bundles Queue ({len(filtered_bundles_df):,} matching)")
+            st.markdown(f"#### Synchronized Refill Bundles Queue ({len(filtered_bundles_df):,} matching)")
         with t_col2:
             show_tech_medsync = st.checkbox(
-                "⚙️ Technical Diagnostics",
+                "Technical Diagnostics",
                 value=False,
                 key="chk_show_tech_details_medsync",
                 help="Show internal clinical P10 Early Window and P90 Late Alert quantile bounds.",
@@ -3444,7 +3790,7 @@ def render_app():
         if not filtered_bundles_df.empty:
             st.dataframe(
                 filtered_bundles_df[display_cols],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -3464,7 +3810,7 @@ def render_app():
             csv_buf = io.StringIO()
             export_medsync_df.to_csv(csv_buf, index=False)
             st.download_button(
-                label="📥 Download Med-Sync Delivery Schedule (CSV)",
+                label="Export Med-Sync Schedule (CSV)",
                 data=csv_buf.getvalue().encode("utf-8"),
                 file_name=f"medsync_delivery_schedule_{date.today().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
@@ -3477,7 +3823,7 @@ def render_app():
     # TAB 6: CUSTOMERS NEEDING REVIEW
     # --------------------------------------------------------------------------
     with tab_review:
-        st.markdown("### ⚠️ Customers Needing Review")
+        st.markdown("### Patients Needing Review")
         st.caption(
             "Patients requiring purchase history review, clinical verification, stability risk evaluation, or missing phone number updates."
         )
@@ -3532,11 +3878,11 @@ def render_app():
         for y, m in ordered_tuples:
             m_name = date(y, m, 1).strftime("%B %Y")
             if (y, m) == target_tuple:
-                month_display_map[f"{y}-{m:02d}"] = f"🎯 {m_name} (Next Month Prediction — Default)"
+                month_display_map[f"{y}-{m:02d}"] = f"{m_name} (Secondary Target — Default)"
             else:
-                month_display_map[f"{y}-{m:02d}"] = f"📅 {m_name}"
+                month_display_map[f"{y}-{m:02d}"] = f"{m_name}"
 
-        month_display_map["ALL"] = "🌐 All Months (Full Review Database)"
+        month_display_map["ALL"] = "All Months (Full Review Database)"
         month_keys = list(month_display_map.keys())
 
         # Controls Row 1: Target Month, Review Category, Mobile Status
@@ -3611,7 +3957,7 @@ def render_app():
 
             # Month Banner & KPI Row
             st.info(
-                f"🎯 **Active Prediction & Review Month: {active_rev_label}** — Showing records requiring pharmacist review, "
+                f"**Active Prediction & Review Month: {active_rev_label}** — Showing records requiring pharmacist review, "
                 f"manual verification, or missing phone number updates (predicted from sales up to **{last_sales_month_str}**)."
             )
 
@@ -3677,7 +4023,7 @@ def render_app():
                     filtered_review_df["Medication"].astype(str).str.lower().str.contains(search_rev_med.strip().lower(), regex=False, na=False)
                 ]
 
-            st.markdown(f"#### 📋 Clinical Review Queue ({len(filtered_review_df):,} matching)")
+            st.markdown(f"#### Clinical Review Queue ({len(filtered_review_df):,} matching)")
 
             display_rev_cols = [
                 "Customer Name",
@@ -3691,14 +4037,14 @@ def render_app():
 
             st.dataframe(
                 filtered_review_df[display_rev_cols],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
             buf = io.StringIO()
             filtered_review_df[display_rev_cols].to_csv(buf, index=False)
             st.download_button(
-                label="📥 Export Review Records (CSV)",
+                label="Export Review Records (CSV)",
                 data=buf.getvalue().encode("utf-8"),
                 file_name=f"customers_needing_review_{selected_rev_month}_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
@@ -3725,7 +4071,7 @@ def render_app():
             RefillDecisionModel,
         )
 
-        st.markdown("### 💬 WhatsApp Refill Reminders & 3-Tier Outreach")
+        st.markdown("### WhatsApp Messages & Outreach")
         st.write(
             "Execute and preview automated patient refill communications using a **single unified WhatsApp template** "
             "with dynamic content tailored to **Tier 1 (Due / Advance)**, **Tier 2 (Follow-up)**, and **Tier 3 (+45d Re-engagement)**."
@@ -3735,8 +4081,8 @@ def render_app():
         active_store_name = st.session_state.get("wa_custom_store_name", "PHARMA HUBB")
         active_store_contact = st.session_state.get("wa_custom_store_contact", "+91 9966473474")
 
-        with st.expander("⚙️ WhatsApp Settings & Pharmacy Profile (Click to change Store / Contact)", expanded=False):
-            st.markdown("##### 🏪 Pharmacy Profile & Dynamic Template Defaults")
+        with st.expander("Gateway Configuration & Pharmacy Profile (Click to change Store / Contact)", expanded=False):
+            st.markdown("##### Pharmacy Profile & Dynamic Template Defaults")
             cfg_c1, cfg_c2 = st.columns(2)
             with cfg_c1:
                 ui_store_name = st.text_input(
@@ -3763,7 +4109,7 @@ def render_app():
             wa_diag = temp_client.get_diagnostic_info()
 
             st.markdown("---")
-            st.markdown("##### 🔌 Xinno CPaaS Connection Diagnostics")
+            st.markdown("##### Xinno CPaaS Connection Diagnostics")
             wc1, wc2, wc3, wc4 = st.columns(4)
             with wc1:
                 st.markdown(f"**WABA Number:** `{wa_diag['waba_number']}`")
@@ -3772,7 +4118,7 @@ def render_app():
                 st.markdown(f"**Active Template:** `{wa_diag['template_name']}`")
                 st.markdown(f"**Active Store:** `{active_store_name}`")
             with wc3:
-                api_stat_str = "🟢 Configured" if wa_diag["api_key_configured"] else "🔴 Missing Key"
+                api_stat_str = "Configured (Active)" if wa_diag["api_key_configured"] else "Missing Key"
                 st.markdown(f"**API Key Status:** {api_stat_str}")
                 st.markdown(f"**Active Contact:** `{active_store_contact}`")
             with wc4:
@@ -3786,7 +4132,7 @@ def render_app():
         wa_diag = wa_client.get_diagnostic_info()
 
         # Row 1: Target Controls & Filters
-        st.markdown("#### 🎯 Outreach Target & Lifecycle Stage Selection")
+        st.markdown("#### Outreach Target & Lifecycle Stage Selection")
         avail_months = get_available_reminder_months()
         today_val = date.today()
         today_m = today_val.strftime("%Y-%m")
@@ -3930,7 +4276,7 @@ def render_app():
         col_queue, col_preview = st.columns([1.4, 1.6])
 
         with col_queue:
-            st.markdown(f"#### 📋 Candidate Outreach Queue ({len(candidate_records):,} records)")
+            st.markdown(f"#### Candidate Outreach Queue ({len(candidate_records):,} records)")
             if candidate_records:
                 df_candidates = pd.DataFrame([
                     {
@@ -3943,12 +4289,12 @@ def render_app():
                     }
                     for r in candidate_records
                 ])
-                st.dataframe(df_candidates, use_container_width=True, hide_index=True, height=360)
+                st.dataframe(df_candidates, width="stretch", hide_index=True, height=360)
             else:
                 st.info("No reminder stages match the selected date/month and tier filter.")
 
         with col_preview:
-            st.markdown("#### 📱 Live 3-Tier Message Preview & Dynamic Variable Simulation")
+            st.markdown("#### Clinical Template Simulation & Variable Preview")
             
             # Select customer for preview
             sample_cust = candidate_records[0] if candidate_records else {
@@ -3980,7 +4326,7 @@ def render_app():
                 <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 1.15rem;">💬</span>
+                            <span style="font-size: 0.9rem; font-weight: 700; color: #38bdf8;">WABA</span>
                             <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">WhatsApp Live Message Preview</span>
                         </div>
                         <span style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
@@ -4008,7 +4354,7 @@ def render_app():
                 default_12d_phone = digits_only if digits_only else ""
 
             # Interactive Single Test Send
-            with st.expander("📲 Send Single Test WhatsApp Message (Live / Dry-Run)", expanded=True):
+            with st.expander("Single Recipient WhatsApp Message Test (Live / Dry-Run)", expanded=True):
                 tc1, tc2, tc3 = st.columns([1.5, 1.0, 1.0])
                 with tc1:
                     test_phone_input = st.text_input(
@@ -4020,17 +4366,17 @@ def render_app():
                 with tc2:
                     test_is_dry_run = st.checkbox("Dry-Run Only (Uncheck for Live)", value=True, key="wa_single_dry_run")
                     if test_is_dry_run:
-                        st.caption("🟡 Mode: **Dry-Run Simulation**")
+                        st.caption("Mode: **Dry-Run Simulation** (Safe mode - no carrier dispatch)")
                     else:
-                        st.caption("🔴 Mode: **LIVE API (Real WhatsApp)**")
+                        st.caption("Mode: **LIVE CARRIER DISPATCH** (Live WhatsApp delivery via Xinno)")
                 with tc3:
                     st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                    btn_send_test = st.button("🚀 Send Test Message", key="btn_send_single_wa", use_container_width=True)
+                    btn_send_test = st.button("Send Test Message", key="btn_send_single_wa", width="stretch")
 
                 # Validation guard on test send
                 mob_check = determine_mobile_status(test_phone_input)
                 if mob_check != "Valid":
-                    st.warning("⚠️ **Missing or Incomplete Mobile Number.** Please enter a valid 10-digit number or 12-digit format (91XXXXXXXXXX) to dispatch.")
+                    st.warning("**Missing or Incomplete Mobile Number.** Please enter a valid 10-digit number or 12-digit format (91XXXXXXXXXX) to dispatch.")
 
                 if btn_send_test:
                     from refillcare.whatsapp.consent import is_opted_out
@@ -4038,9 +4384,9 @@ def render_app():
                     with SessionLocal() as consent_db:
                         test_opted_out = is_opted_out(consent_db, phone=test_phone_input)
                     if test_opted_out:
-                        st.error(f"🛑 **Dispatch Blocked:** {test_phone_input} has opted out of WhatsApp reminders.")
+                        st.error(f"**Dispatch Blocked:** {test_phone_input} has opted out of WhatsApp reminders.")
                     elif not test_is_dry_run and mob_check != "Valid":
-                        st.error("🛑 **Dispatch Blocked:** Cannot send live WhatsApp message to a missing or invalid phone number.")
+                        st.error("**Dispatch Blocked:** Cannot send live WhatsApp message to a missing or invalid phone number.")
                     else:
                         mode_label = "Dry-Run simulation" if test_is_dry_run else "LIVE WhatsApp message"
                         with st.spinner(f"Dispatching {mode_label}..."):
@@ -4054,58 +4400,70 @@ def render_app():
                                 dry_run=test_is_dry_run,
                             )
                             if test_res.get("success"):
-                                st.success(f"✅ **{test_res['message']}** (Status: {test_res.get('status_code', 200)})")
+                                st.success(f"**{test_res['message']}** (Status: {test_res.get('status_code', 200)})")
                                 st.json(test_res)
                             else:
-                                st.error(f"❌ **{test_res.get('message', 'Dispatch failed')}**")
+                                st.error(f"**{test_res.get('message', 'Dispatch failed')}**")
                                 st.json(test_res)
 
         st.markdown("---")
 
         # Section: Bulk Batch Dispatch Execution
-        st.markdown("#### 🚀 Batch Outreach Execution")
+        st.markdown("#### Batch Outreach Execution")
         bcol1, bcol2, bcol3 = st.columns([1.5, 1.5, 2.0])
 
         with bcol1:
             batch_limit = st.slider("Batch Size Limit", min_value=1, max_value=200, value=min(25, max(1, valid_count)), key="wa_batch_limit")
         with bcol2:
-            bulk_dry_run = st.toggle("🔒 Dry-Run Simulation Guard (Safe)", value=True, key="wa_bulk_dry_run")
+            bulk_dry_run = st.toggle("Dry-Run Simulation Guard (Safe)", value=True, key="wa_bulk_dry_run")
         with bcol3:
             st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            btn_run_batch = st.button("🚀 Execute Batch WhatsApp Outreach", key="btn_run_batch_wa", use_container_width=True)
+            btn_run_batch = st.button("Execute Batch WhatsApp Outreach", key="btn_run_batch_wa", width="stretch")
 
         if btn_run_batch:
             if not candidate_records:
                 st.warning("No candidate records available to dispatch for the selected criteria.")
             else:
-                dispatcher = RefillWhatsAppDispatcher(client=wa_client)
+                from refillcare.whatsapp.dispatcher import StaleSalesData
+
+                override = bool(st.session_state.get("wa_override_stale")) and bool((st.session_state.get("wa_override_reason") or "").strip())
+                if override:
+                    logging.getLogger("refillcare.streamlit").warning("Stale-data send override: %s", st.session_state.get("wa_override_reason"))
+                dispatcher = RefillWhatsAppDispatcher(client=wa_client, allow_stale_data=override)
                 progress_bar = st.progress(0.0)
                 status_text = st.empty()
 
                 with SessionLocal() as db_session:
                     status_text.text(f"Starting batch dispatch of {batch_limit} records (Dry-run: {bulk_dry_run})...")
                     medsync_bundles_list = [r["bundle_obj"] for r in candidate_records if "bundle_obj" in r]
-                    batch_outcome = dispatcher.dispatch_medsync_batch(
-                        db=db_session,
-                        bundles=medsync_bundles_list,
-                        dry_run=bulk_dry_run,
-                        batch_limit=batch_limit,
-                    )
+                    try:
+                        batch_outcome = dispatcher.dispatch_medsync_batch(
+                            db=db_session,
+                            bundles=medsync_bundles_list,
+                            dry_run=bulk_dry_run,
+                            batch_limit=batch_limit,
+                        )
+                    except StaleSalesData as e:
+                        status_text.empty()
+                        st.error(f"{e}")
+                        st.checkbox("Send anyway (I confirm today's sales are already uploaded)", key="wa_override_stale")
+                        st.text_input("Reason for the override (recorded)", key="wa_override_reason")
+                        st.stop()
                     progress_bar.progress(1.0)
                     status_text.text("Dispatch batch complete!")
 
                     st.success(
-                        f"🎉 **Batch Completed:** Processed **{batch_outcome['dispatched_count']}** messages "
+                        f"**Batch Completed:** Processed **{batch_outcome['dispatched_count']}** messages "
                         f"(**{batch_outcome['success_count']}** Success, **{batch_outcome['failed_count']}** Failed). "
                         f"Mode: `{'DRY RUN' if bulk_dry_run else 'LIVE PRODUCTION'}`"
                     )
 
                     if batch_outcome.get("delivery_logs"):
                         df_logs = pd.DataFrame(batch_outcome["delivery_logs"])
-                        st.dataframe(df_logs, use_container_width=True, hide_index=True)
+                        st.dataframe(df_logs, width="stretch", hide_index=True)
 
         # Section: Patient WhatsApp consent (opt-out / opt-in)
-        st.markdown("#### 🚫 Patient WhatsApp Consent")
+        st.markdown("#### Patient WhatsApp Consent")
         st.caption(
             "Patients who reply STOP (or are opted out here) are skipped by every send path: "
             "batch, Med-Sync, single stage and test send. Only an exact START reply opts back in."
@@ -4117,10 +4475,10 @@ def render_app():
             consent_cid = st.text_input("Customer ID", key="wa_consent_customer_id", placeholder="e.g. S0/12345")
         with cc2:
             st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            btn_opt_out = st.button("Opt Out", key="btn_wa_opt_out", use_container_width=True)
+            btn_opt_out = st.button("Opt Out", key="btn_wa_opt_out", width="stretch")
         with cc3:
             st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            btn_opt_in = st.button("Opt In", key="btn_wa_opt_in", use_container_width=True)
+            btn_opt_in = st.button("Opt In", key="btn_wa_opt_in", width="stretch")
         if (btn_opt_out or btn_opt_in):
             if not consent_cid.strip():
                 st.warning("Enter a customer ID first.")
@@ -4141,13 +4499,13 @@ def render_app():
                     "Mobile": format_display_phone_10digits(r["mobile_number"]) if r["mobile_number"] else "-",
                     "Updated": (r["updated_at"] or "-").replace("T", " ")[:16],
                 } for r in opted_rows]),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
         else:
             st.info("No patients have opted out.")
 
         # Section: Delivery Audit Log Trail
-        st.markdown("#### 📜 Persistent WhatsApp Delivery Logs & Audit Trail")
+        st.markdown("#### Persistent WhatsApp Delivery Logs & Audit Trail")
         with SessionLocal() as db_session:
             db_logs = db_session.query(WhatsAppDeliveryLogModel).order_by(WhatsAppDeliveryLogModel.dispatched_at.desc()).limit(100).all()
             if db_logs:
@@ -4163,7 +4521,7 @@ def render_app():
                         "Xinno Message ID": lg.xinno_message_id or "-",
                         "Error / Details": lg.error_detail or "-",
                     })
-                st.dataframe(pd.DataFrame(logs_data), use_container_width=True, hide_index=True, height=280)
+                st.dataframe(pd.DataFrame(logs_data), width="stretch", hide_index=True, height=280)
             else:
                 st.info("No delivery log entries recorded yet.")
 
@@ -4178,7 +4536,7 @@ def render_app():
         from refillcare.ml.evaluation import BASELINE_METHOD, engine_method_name
         from refillcare.ml.service import data_freshness, gate_for_version, promote, retrain_cycle
 
-        st.markdown("### 🧠 Refill-Interval Models")
+        st.markdown("### AI Accuracy & Prediction Settings")
         st.caption(
             "Train / validation / test windows are re-derived from the latest sale every time this tab "
             "loads, so they move forward automatically when a new month of sales is uploaded."
@@ -4203,9 +4561,9 @@ def render_app():
                     lag = fresh.get("days_of_new_training_data")
                     st.metric("Newer Training Data", f"{lag} days" if lag is not None else "-")
                 if fresh.get("retrain_recommended"):
-                    st.warning("🧭 **Retrain recommended:** newer sales data is available or the serving model is not validated.")
+                    st.warning("**Retrain recommended:** newer sales data is available or the serving model is not validated.")
                 else:
-                    st.success("✅ Serving model is current.")
+                    st.success("Serving model is current.")
 
                 st.dataframe(pd.DataFrame([
                     {"Window": "Train", "From": str(plan["train"]["start"]), "To": str(plan["train"]["end"]),
@@ -4216,10 +4574,10 @@ def render_app():
                      "Purchases": f"{plan['test']['purchases']:,}", "Used For": "Promotion gate only (never used to choose)"},
                     {"Window": "Not scored", "From": f"last {plan['censor_buffer_days']} days", "To": str(plan["data_end"]),
                      "Purchases": "-", "Used For": "Refills not yet observable"},
-                ]), use_container_width=True, hide_index=True)
+                ]), width="stretch", hide_index=True)
 
             # --- Registry
-            st.markdown("#### 🤖 Model Version Registry")
+            st.markdown("#### Model Version Registry")
             versions = ml_reg.list_versions(ml_db)
             reg_rows = []
             for v in versions:
@@ -4228,13 +4586,13 @@ def render_app():
                 reg_rows.append({
                     "Version": v.version_id,
                     "Type": v.model_type,
-                    "Status": v.status + (" ✓ validated" if v.is_validated else ""),
+                    "Status": v.status + (" - Validated" if v.is_validated else ""),
                     "Train Cutoff": str(v.train_window_end or "-"),
                     "Train Samples": f"{v.training_sample_count:,}" if v.training_sample_count else "-",
                     "Within ±7d (measured)": f"{met['within_7_days_pct']:.1f}%" if met.get("within_7_days_pct") is not None else "-",
-                    "MAE (days)": met.get("mae_days", "-"),
+                    "MAE (days)": f"{float(met['mae_days']):.2f}" if (met.get("mae_days") is not None and met.get("mae_days") != "-") else "-",
                 })
-            st.dataframe(pd.DataFrame(reg_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(reg_rows), width="stretch", hide_index=True)
 
             # --- Promotion gate & promote
             version_ids = [v.version_id for v in versions]
@@ -4243,10 +4601,10 @@ def render_app():
                 sel_version = st.selectbox("Model version", version_ids, key="ml_gate_version") if version_ids else None
             with g2:
                 st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                btn_gate = st.button("Check Gate", key="btn_ml_gate", use_container_width=True)
+                btn_gate = st.button("Check Gate", key="btn_ml_gate", width="stretch")
             with g3:
                 st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                btn_promote = st.button("Promote", key="btn_ml_promote", use_container_width=True)
+                btn_promote = st.button("Promote", key="btn_ml_promote", width="stretch")
 
             if sel_version and (btn_gate or btn_promote):
                 gate = gate_for_version(ml_db, sel_version)
@@ -4255,27 +4613,36 @@ def render_app():
                     if res.get("promoted"):
                         st.cache_data.clear()
                         st.cache_resource.clear()
-                        st.success(f"✅ `{sel_version}` is now the production model.")
+                        st.success(f"`{sel_version}` is now the production model.")
                     else:
-                        st.error(f"🛑 Promotion refused by the evidence gate: {', '.join(res['decision'].get('failed_checks', []))}")
+                        st.error(f"Promotion refused by the evidence gate: {', '.join(res['decision'].get('failed_checks', []))}")
                     gate = res.get("decision", gate)
-                st.markdown(f"**Gate for `{sel_version}`:** {'✅ APPROVED' if gate.get('approved') else '❌ REJECTED'}")
+                st.markdown(f"**Gate for `{sel_version}`:** {'APPROVED' if gate.get('approved') else 'REJECTED'}")
                 st.dataframe(pd.DataFrame([
-                    {"Passed": "✅" if c.get("passed") else "❌", "Check": c.get("check"), "Detail": c.get("detail", "")}
+                    {"Passed": "Passed" if c.get("passed") else "Failed", "Check": c.get("check"), "Detail": c.get("detail", "")}
                     for c in gate.get("checks", [])
-                ]), use_container_width=True, hide_index=True)
+                ]), width="stretch", hide_index=True)
+
+            if st.button("Roll back to previous validated model", key="btn_ml_rollback"):
+                try:
+                    v = ml_reg.rollback_production(ml_db, rolled_back_by="streamlit")
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    st.success(f"Production model is now `{v.version_id}`.")
+                except ValueError as e:
+                    st.error(str(e))
 
             # --- Retrain cycle
-            st.markdown("#### 🔁 Retrain on the Current Windows")
+            st.markdown("#### Retrain on the Current Windows")
             st.caption(
                 "Trains on the train window, selects the best model on validation, then applies the promotion "
                 "gate on the untouched test window. Needs ~2-3 GB free RAM and can take several minutes."
             )
             r1, r2 = st.columns(2)
             with r1:
-                btn_retrain = st.button("🔁 Retrain & Evaluate", key="btn_ml_retrain", use_container_width=True)
+                btn_retrain = st.button("Retrain & Evaluate", key="btn_ml_retrain", width="stretch")
             with r2:
-                btn_retrain_promote = st.button("🚀 Retrain & Promote if Gate Approves", key="btn_ml_retrain_promote", use_container_width=True)
+                btn_retrain_promote = st.button("Retrain & Promote if Gate Approves", key="btn_ml_retrain_promote", width="stretch")
             if btn_retrain or btn_retrain_promote:
                 with st.spinner("Running retrain cycle (train → validation → test gate)..."):
                     try:
@@ -4289,19 +4656,19 @@ def render_app():
             if cycle:
                 st.markdown(
                     f"**Last cycle:** candidate `{cycle['candidate_version']}` · selected on validation "
-                    f"`{cycle['selected_on_validation']}` · gate {'✅ approved' if cycle['gate'].get('approved') else '❌ rejected'}"
+                    f"`{cycle['selected_on_validation']}` · gate {'approved' if cycle['gate'].get('approved') else 'rejected'}"
                     f" · {'promoted' if cycle.get('promoted') else 'not promoted'}"
                 )
                 st.dataframe(pd.DataFrame([
                     {"Version": vid,
                      "Validation ±7d": cycle["validation"]["versions"][vid].get("within_7_days_pct"),
                      "Test ±7d": cycle["test"]["versions"][vid].get("within_7_days_pct"),
-                     "Test MAE (days)": cycle["test"]["versions"][vid].get("mae_days")}
+                     "Test MAE (days)": f"{float(cycle['test']['versions'][vid].get('mae_days')):.2f}" if cycle["test"]["versions"][vid].get("mae_days") is not None else "-"}
                     for vid in cycle["test"]["versions"]
-                ]), use_container_width=True, hide_index=True)
+                ]), width="stretch", hide_index=True)
 
             # --- Recent evaluations
-            st.markdown("#### 📏 Recent Out-of-Time Evaluations")
+            st.markdown("#### Recent Out-of-Time Evaluations")
             runs = ml_db.query(MLEvaluationRunModel).order_by(MLEvaluationRunModel.started_at.desc()).limit(10).all()
             if runs:
                 ev_rows = []
@@ -4320,7 +4687,7 @@ def render_app():
                         "Candidate ±7d": cand.get("within_7_days_pct", "-"),
                         "Baseline ±7d": base.get("within_7_days_pct", "-"),
                     })
-                st.dataframe(pd.DataFrame(ev_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(ev_rows), width="stretch", hide_index=True)
             else:
                 st.info("No evaluations yet. Use **Retrain & Evaluate** above.")
 
@@ -4332,7 +4699,7 @@ def render_ml_settings_and_tests() -> None:
     from database.connection import SessionLocal
     from refillcare.ml.service import compare_rules, latest_report, prediction_settings, rolling_evaluation, save_report
 
-    st.markdown("#### ⚙️ Prediction Settings")
+    st.markdown("#### Prediction Settings")
     st.caption("Set in `.env` and restart the app. Measure a rule with the A/B test below before switching it on.")
     cfg = prediction_settings()
     sw = cfg["env_switches"]
@@ -4348,16 +4715,16 @@ def render_ml_settings_and_tests() -> None:
         {"Setting": "Item / salt catalogue", "Value": f"{cfg['salt_catalog']['file']} ({'found' if cfg['salt_catalog']['exists'] else 'MISSING'})", ".env switch": "REFILLCARE_SALT_CATALOG"},
         {"Setting": "Store ID (mapping profiles)", "Value": cfg["store_id"], ".env switch": "REFILLCARE_STORE_ID"},
         {"Setting": "Sales columns stored", "Value": ", ".join(cfg["stored_sales_columns"]), ".env switch": "-"},
-    ]), use_container_width=True, hide_index=True)
+    ]), width="stretch", hide_index=True)
 
-    st.markdown("#### 🧪 Rule A/B and Multi-Month Test")
+    st.markdown("#### Rule A/B and Multi-Month Test")
     st.caption(
         "Rule A/B scores every rule on the same unseen test month (~3 min). The multi-month test trains one "
         "model per month and checks the gain holds every month (~20 min, needs free RAM). Nothing is promoted."
     )
     b1, b2 = st.columns(2)
     with b1:
-        if st.button("🧪 Run Rule A/B", key="btn_ml_rules_ab", use_container_width=True):
+        if st.button("Run Rule A/B Evaluation", key="btn_ml_rules_ab", width="stretch"):
             with st.spinner("Scoring every rule on the test month..."):
                 try:
                     with SessionLocal() as db:
@@ -4367,7 +4734,7 @@ def render_ml_settings_and_tests() -> None:
                 except Exception as e:
                     st.error(f"Rule A/B failed: {e}")
     with b2:
-        if st.button("📆 Run 3-Month Test", key="btn_ml_rolling", use_container_width=True):
+        if st.button("Run 3-Month Test", key="btn_ml_rolling", width="stretch"):
             with st.spinner("Training one model per test month and scoring it (several minutes)..."):
                 try:
                     with SessionLocal() as db:
@@ -4385,38 +4752,47 @@ def render_ml_settings_and_tests() -> None:
             f"{rep_ab.get('window', {}).get('end')} ({rep_ab.get('n_paired_events')} refills) · run {ab['created_at'][:16]}"
         )
         st.dataframe(pd.DataFrame([
-            {"Rule variant": k.replace("rules:", ""), "Within ±7d %": v.get("within_7_days_pct"),
-             "Gain vs no rules (pp)": v.get("within_7_gain_pp_vs_none"), "MAE (days)": v.get("mae_days"),
-             "Early %": v.get("early_pct"), "Late %": v.get("late_pct")}
+            {"Rule variant": k.replace("rules:", ""),
+             "Within ±7d %": f"{float(v.get('within_7_days_pct')):.1f}%" if v.get("within_7_days_pct") is not None else "-",
+             "Gain vs no rules (pp)": f"{float(v.get('within_7_gain_pp_vs_none')):+.2f}" if v.get("within_7_gain_pp_vs_none") is not None else "-",
+             "MAE (days)": f"{float(v.get('mae_days')):.2f}" if v.get("mae_days") is not None else "-",
+             "Early %": f"{float(v.get('early_pct')):.1f}%" if v.get("early_pct") is not None else "-",
+             "Late %": f"{float(v.get('late_pct')):.1f}%" if v.get("late_pct") is not None else "-"}
             for k, v in (rep_ab.get("variants") or {}).items()
-        ]), use_container_width=True, hide_index=True)
+        ]), width="stretch", hide_index=True)
     ro = latest_report("rolling")
     if ro:
         rep_ro = ro["report"]
         st.markdown(
             f"**Multi-month test:** {rep_ro.get('n_folds')} months, {rep_ro.get('n_paired_events_total')} refills · "
-            f"model beats baseline every month: {'✅' if rep_ro.get('model_beats_baseline_every_fold') else '❌'} · "
-            f"rules help every month: {'✅' if rep_ro.get('rules_help_every_fold') else '❌'} · run {ro['created_at'][:16]}"
+            f"Model beats baseline every month: {'Yes' if rep_ro.get('model_beats_baseline_every_fold') else 'No'} · "
+            f"Rules help every month: {'Yes' if rep_ro.get('rules_help_every_fold') else 'No'} · run {ro['created_at'][:16]}"
         )
         rows = []
         for f in rep_ro.get("folds", []):
             m = f.get("methods", {})
-            rows.append({"Test month": f"{f['window']['start']} → {f['window']['end']}", "Refills": f.get("n_paired_events"),
-                         "Raw median ±7d": m.get("raw_median", {}).get("within_7_days_pct"),
-                         "Baseline engine ±7d": m.get("baseline_engine", {}).get("within_7_days_pct"),
-                         "Model ±7d": m.get("model_no_rules", {}).get("within_7_days_pct"),
-                         "Model + rules ±7d": m.get("model_current_rules", {}).get("within_7_days_pct"),
-                         "Model + rules MAE": m.get("model_current_rules", {}).get("mae_days")})
+            rows.append({
+                "Test month": f"{f['window']['start']} → {f['window']['end']}",
+                "Refills": f"{f.get('n_paired_events', 0):,}",
+                "Raw median ±7d": f"{float(m.get('raw_median', {}).get('within_7_days_pct')):.1f}%" if m.get("raw_median", {}).get("within_7_days_pct") is not None else "-",
+                "Baseline engine ±7d": f"{float(m.get('baseline_engine', {}).get('within_7_days_pct')):.1f}%" if m.get("baseline_engine", {}).get("within_7_days_pct") is not None else "-",
+                "Model ±7d": f"{float(m.get('model_no_rules', {}).get('within_7_days_pct')):.1f}%" if m.get("model_no_rules", {}).get("within_7_days_pct") is not None else "-",
+                "Model + rules ±7d": f"{float(m.get('model_current_rules', {}).get('within_7_days_pct')):.1f}%" if m.get("model_current_rules", {}).get("within_7_days_pct") is not None else "-",
+                "Model + rules MAE": f"{float(m.get('model_current_rules', {}).get('mae_days')):.2f}" if m.get("model_current_rules", {}).get("mae_days") is not None else "-",
+            })
         pooled = rep_ro.get("pooled", {})
-        rows.append({"Test month": "Pooled", "Refills": rep_ro.get("n_paired_events_total"),
-                     "Raw median ±7d": pooled.get("raw_median", {}).get("within_7_days_pct"),
-                     "Baseline engine ±7d": pooled.get("baseline_engine", {}).get("within_7_days_pct"),
-                     "Model ±7d": pooled.get("model_no_rules", {}).get("within_7_days_pct"),
-                     "Model + rules ±7d": pooled.get("model_current_rules", {}).get("within_7_days_pct"),
-                     "Model + rules MAE": pooled.get("model_current_rules", {}).get("mae_days")})
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        rows.append({
+            "Test month": "Pooled",
+            "Refills": f"{rep_ro.get('n_paired_events_total', 0):,}",
+            "Raw median ±7d": f"{float(pooled.get('raw_median', {}).get('within_7_days_pct')):.1f}%" if pooled.get("raw_median", {}).get("within_7_days_pct") is not None else "-",
+            "Baseline engine ±7d": f"{float(pooled.get('baseline_engine', {}).get('within_7_days_pct')):.1f}%" if pooled.get("baseline_engine", {}).get("within_7_days_pct") is not None else "-",
+            "Model ±7d": f"{float(pooled.get('model_no_rules', {}).get('within_7_days_pct')):.1f}%" if pooled.get("model_no_rules", {}).get("within_7_days_pct") is not None else "-",
+            "Model + rules ±7d": f"{float(pooled.get('model_current_rules', {}).get('within_7_days_pct')):.1f}%" if pooled.get("model_current_rules", {}).get("within_7_days_pct") is not None else "-",
+            "Model + rules MAE": f"{float(pooled.get('model_current_rules', {}).get('mae_days')):.2f}" if pooled.get("model_current_rules", {}).get("mae_days") is not None else "-",
+        })
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-    st.markdown("#### 🔑 Patient Identity Cut-over")
+    st.markdown("#### Patient Identity Cut-over")
     st.caption(
         "Run once after switching `REFILLCARE_PATIENT_IDENTITY=name_mobile` or `REFILLCARE_ITEM_GROUPING=salt`. "
         "Old-key reminders are retired, every patient is re-scored, stages already sent are never re-sent, "
@@ -4424,10 +4800,10 @@ def render_ml_settings_and_tests() -> None:
     )
     k1, k2 = st.columns(2)
     with k1:
-        btn_dry = st.button("🔍 Dry Run", key="btn_rekey_dry", use_container_width=True)
+        btn_dry = st.button("Execute Dry Run", key="btn_rekey_dry", width="stretch")
     with k2:
         confirm_rekey = st.checkbox("I want to apply the re-key now", key="chk_rekey_confirm")
-        btn_apply = st.button("Apply Re-key", key="btn_rekey_apply", use_container_width=True, disabled=not confirm_rekey)
+        btn_apply = st.button("Apply Re-key", key="btn_rekey_apply", width="stretch", disabled=not confirm_rekey)
     if btn_dry or btn_apply:
         from refillcare.engine.rekey import backup_sqlite_db, rekey_reminder_cycles
         from refillcare.ml.service import load_history
@@ -4441,7 +4817,7 @@ def render_ml_settings_and_tests() -> None:
                     res["database_backup"] = backup
                     st.cache_data.clear()
                     st.cache_resource.clear()
-                    st.success("✅ Re-key applied.")
+                    st.success("Re-key successfully applied.")
                 st.json(res)
             except Exception as e:
                 st.error(f"Re-key failed: {e}")

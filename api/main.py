@@ -7,8 +7,10 @@ database session dependency injection, and static frontend mounting.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 from datetime import date, datetime
 from typing import Optional, List, Dict, Any
@@ -40,6 +42,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from database.connection import get_db, init_db
 from api.schemas import (
     ColumnMappingSaveRequest,
+    StoreRegisterRequest,
     SalesPreviewResponse,
     SalesIngestionResponse,
     ImportBatchResponse,
@@ -78,20 +81,44 @@ from api.schemas import (
 from api.services import EnterpriseServices
 from api.ml_routes import router as ml_router
 from refillcare.engine.persistence import RefillPersistenceManager
-from api.security import require_api_key
+from api.security import check_api_key, rate_limiter, require_api_key, verify_webhook
+from refillcare.logging_setup import configure_logging, request_id_var
+from refillcare.tenancy import InvalidStoreId, current_store_id, is_production, set_current_store
+from refillcare.data.incremental_ingest import DuplicateUpload
+from refillcare.whatsapp.dispatcher import StaleSalesData
 from database.models import RefillDecisionModel, ReminderCycleModel, ReminderStageModel
 
 # The database schema is created / additively migrated lazily on first use
 # (database.connection.get_sessionmaker), so importing the app never touches a live database.
 
 # Create FastAPI app
+configure_logging()
+logger = logging.getLogger("refillcare.api")
+_DOCS = not is_production() or os.getenv("REFILLCARE_ENABLE_DOCS", "false").lower() in ("1", "true", "yes", "on")
 app = FastAPI(
     title="RefillCare & Mediastra Enterprise API",
-    description="Enterprise Medication Refill Prediction, Prescription Tracking, and WhatsApp Gateway API.",
-    version="2.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    description="Enterprise Medication Refill Prediction, Prescription Tracking, and WhatsApp Gateway API. "
+                "Every /api call needs X-API-Key and X-Store-Id.",
+    version="3.0.0",
+    docs_url="/docs" if _DOCS else None,
+    redoc_url="/redoc" if _DOCS else None,
+    openapi_url="/openapi.json" if _DOCS else None,
 )
+
+# Warm the pharmacist classification rules (Supabase) in the background at start-up, so the first
+# reminder / KPI request does not pay the network fetch (~2-4 s). Skipped in tests.
+if os.getenv("REFILLCARE_ENV", "").lower() != "test" and os.getenv("REFILLCARE_WARM_RULES", "true").lower() in ("1", "true", "yes", "on"):
+    import threading as _threading
+
+    def _warm_rules() -> None:
+        try:
+            from refillcare.data.medication_classifier import get_dynamic_classification_rules
+
+            get_dynamic_classification_rules()
+        except Exception:  # pragma: no cover - warm-up is best effort
+            logger.warning("Classification rule warm-up failed; rules load on first use.")
+
+    _threading.Thread(target=_warm_rules, name="refillcare-rules-warmup", daemon=True).start()
 
 # CORS: explicit allow-list (comma-separated CORS_ALLOW_ORIGINS); never "*" with credentials
 _cors_origins = [o.strip() for o in os.getenv(
@@ -103,8 +130,53 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Store-Id", "X-Tenant-Id", "X-Actor", "X-Request-Id"],
 )
+
+_UPLOAD_PATHS = ("/api/v1/sales/ingest", "/api/v1/sales/preview", "/api/v1/sales/column-mapping/detect")
+_WEBHOOK_PATH = "/api/v1/whatsapp/webhook"
+
+
+@app.middleware("http")
+async def refillcare_request_context(request: Request, call_next):
+    """Request id, rate limit, API key, and the store of this request (X-Store-Id)."""
+    from refillcare.stores import UnknownStore, require_known_store
+
+    rid = (request.headers.get("X-Request-Id") or uuid.uuid4().hex[:16])[:64]
+    request_id_var.set(rid)
+    path = request.url.path
+    if path.startswith("/api/"):
+        client = request.client.host if request.client else "-"
+        bucket = f"{request.headers.get('X-API-Key', '')[:6]}|{client}"
+        if not rate_limiter.allow(bucket, cost=10.0 if path in _UPLOAD_PATHS else 1.0):
+            return JSONResponse(status_code=429, content={"detail": "Too many requests; slow down.", "request_id": rid})
+        if not path.startswith(_WEBHOOK_PATH):
+            try:
+                request.state.actor = check_api_key(request)
+            except HTTPException as e:
+                return JSONResponse(status_code=e.status_code, content={"detail": e.detail, "request_id": rid})
+        raw_store = request.headers.get("X-Store-Id") or request.query_params.get("store")
+        if not raw_store and is_production() and not path.startswith("/api/v1/stores"):
+            return JSONResponse(status_code=400, content={"detail": "X-Store-Id header is required.", "request_id": rid})
+        try:
+            set_current_store(require_known_store(raw_store) if raw_store else None, request.headers.get("X-Tenant-Id"))
+        except InvalidStoreId as e:
+            return JSONResponse(status_code=400, content={"detail": str(e), "request_id": rid})
+        except UnknownStore as e:
+            return JSONResponse(status_code=404, content={"detail": str(e), "request_id": rid})
+    else:
+        set_current_store(None)
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = rid
+    return response
+
+
+def _client_error(e: Exception) -> str:
+    """Message safe to return to the caller: validation errors verbatim, anything else generic."""
+    if isinstance(e, (ValueError, LookupError, PermissionError)):
+        return str(e)
+    logger.exception("Request failed")
+    return f"Internal error (request id {request_id_var.get()})."
 
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 
@@ -113,6 +185,13 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 async def value_error_handler(request: Request, exc: ValueError):
     """Invalid user input (bad month, reversed range, ...) is a 400, not a silent default."""
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    """Never leak internals: log with the request id, return a generic message."""
+    logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal error.", "request_id": request_id_var.get()})
 
 
 app.include_router(ml_router)
@@ -135,6 +214,25 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 # ------------------------------------------------------------------------------
 # 1. SYSTEM HEALTH & METRICS
 # ------------------------------------------------------------------------------
+@app.get("/livez", tags=["System"], include_in_schema=False)
+def liveness():
+    """Process is up (load balancer / ECS liveness)."""
+    return {"status": "alive"}
+
+
+@app.get("/readyz", tags=["System"], include_in_schema=False)
+def readiness():
+    """Ready to serve: control-plane database reachable."""
+    from database.connection import ControlSession
+
+    try:
+        with ControlSession() as c:
+            c.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not-ready"})
+    return {"status": "ready"}
+
+
 @app.get("/health", tags=["System"])
 def health_check(db: Session = Depends(get_db)):
     """Readiness probe: database ping, classification-rule source and serving model."""
@@ -157,7 +255,7 @@ def health_check(db: Session = Depends(get_db)):
     except Exception as e:  # pragma: no cover
         serving = {"error": str(e)}
     return {
-        "status": "healthy" if db_ok else "degraded",
+        "status": "healthy" if db_ok and not (isinstance(serving, dict) and serving.get("degraded")) else "degraded",
         "service": "RefillCare Enterprise API",
         "version": "2.1.0",
         "timestamp": datetime.utcnow().isoformat(),
@@ -227,7 +325,7 @@ async def detect_column_mapping(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.post("/api/v1/sales/column-mapping", tags=["Sales Ingestion"])
@@ -237,7 +335,7 @@ def save_column_mapping(req: ColumnMappingSaveRequest, actor: str = Depends(requ
     try:
         return srv.save_column_mapping(req.headers, req.mapping, actor=actor)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.get("/api/v1/sales/column-mapping/profiles", tags=["Sales Ingestion"])
@@ -273,7 +371,7 @@ async def preview_sales_file(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.post("/api/v1/sales/ingest", response_model=SalesIngestionResponse, tags=["Sales Ingestion"])
@@ -281,10 +379,14 @@ async def ingest_sales_file(
     background: BackgroundTasks,
     file: UploadFile = File(...),
     column_mapping: Optional[str] = Form(None),
+    force: bool = Form(False),
     actor: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Ingest validated sales records into persistent storage with an immutable batch ID.
+
+    Append-only: lines already stored are skipped, only the patients in the file are re-scored.
+    The same file twice returns 409 unless ``force=true``.
 
     The response re-plans the ML train/validation/test windows on the new data
     (``ml_data_freshness``). With ``ML_AUTO_RETRAIN_ON_INGEST=true`` a due retrain cycle is queued
@@ -293,22 +395,89 @@ async def ingest_sales_file(
     srv = EnterpriseServices(db)
     contents = await _read_upload(file)
     try:
-        res = srv.ingest_sales_file(contents, file.filename or "uploaded_sales.xlsx", _mapping_form(column_mapping), actor=actor)
+        res = srv.ingest_sales_file(contents, file.filename or "uploaded_sales.xlsx", _mapping_form(column_mapping), actor=actor, force=force)
     except HTTPException:
         raise
+    except DuplicateUpload as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
     fresh = res.get("ml_data_freshness") or {}
     if fresh.get("retrain_recommended") and _env_flag("ML_AUTO_RETRAIN_ON_INGEST"):
-        from api.ml_routes import RetrainRequest, _run_retrain_background
+        from refillcare.jobs.queue import enqueue
 
-        background.add_task(_run_retrain_background, RetrainRequest(promote_best=_env_flag("ML_AUTO_PROMOTE")), actor)
+        enqueue("retrain", {"promote_best": _env_flag("ML_AUTO_PROMOTE"), "created_by": actor}, dedupe_key="retrain", created_by=actor)
         res["ml_retrain_queued"] = True
     return res
 
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+@app.get("/api/v1/stores", tags=["Stores"])
+def list_registered_stores():
+    """Stores served by this deployment."""
+    from refillcare.stores import list_stores
+
+    return list_stores()
+
+
+@app.post("/api/v1/stores", tags=["Stores"])
+def register_store_endpoint(req: StoreRegisterRequest, actor: str = Depends(require_api_key)):
+    """Register / update a store and create its database schema (call once per new Mediastra store)."""
+    from refillcare.stores import register_store
+
+    try:
+        return register_store(req.store_id, tenant_id=req.tenant_id, store_name=req.store_name,
+                              store_contact=req.store_contact, settings=req.settings)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/v1/stores/current", tags=["Stores"])
+def current_store():
+    """The store of this request (X-Store-Id) and its settings."""
+    from refillcare.stores import get_store
+
+    return get_store(current_store_id()) or {"store_id": current_store_id()}
+
+
+@app.get("/api/v1/sales/data-status", tags=["Sales Ingestion"])
+def sales_data_status(db: Session = Depends(get_db)):
+    """How current the store's sales are; live sends are blocked when stale or a batch failed to sync."""
+    from refillcare.data.incremental_ingest import data_status
+
+    return data_status(db)
+
+
+@app.post("/api/v1/sales/batches/{batch_id}/retry-sync", tags=["Sales Ingestion"])
+def retry_batch_sync(batch_id: str, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Re-run the post-upload re-scoring of a batch whose sync failed."""
+    from refillcare.data.incremental_ingest import sync_batch
+
+    try:
+        return sync_batch(db, batch_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/v1/jobs", tags=["Jobs"])
+def list_store_jobs(limit: int = Query(20, ge=1, le=200), kind: Optional[str] = None):
+    """Background jobs of this store (retrain, A/B, rolling test, re-key, sync retries, expiry)."""
+    from refillcare.jobs.queue import list_jobs
+
+    return list_jobs(limit=limit, kind=kind)
+
+
+@app.get("/api/v1/jobs/{job_id}", tags=["Jobs"])
+def get_store_job(job_id: int):
+    from refillcare.jobs.queue import get_job
+
+    job = get_job(job_id)
+    if job is None or job["store_id"] != current_store_id():
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @app.get("/api/v1/sales/batches", response_model=List[ImportBatchResponse], tags=["Sales Ingestion"])
@@ -327,7 +496,7 @@ def rollback_import_batch(batch_id: str, actor: str = Depends(require_api_key),
         res = srv.rollback_batch(batch_id)
         return res
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 # ------------------------------------------------------------------------------
@@ -346,7 +515,7 @@ def generate_predictions(
         res = srv.generate_predictions(prediction_date=pred_dt)
         return res
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.get("/api/v1/predictions/snapshots", response_model=List[PredictionSnapshotItem], tags=["Predictions"])
@@ -370,7 +539,7 @@ def evaluate_outcomes(actor: str = Depends(require_api_key),
         res = srv.evaluate_outcomes()
         return res
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 # ------------------------------------------------------------------------------
@@ -508,7 +677,7 @@ def activate_model(version_id: str, actor: str = Depends(require_api_key),
     try:
         return srv.activate_model(version_id, promoted_by=actor)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_client_error(e))
 
 
 # ------------------------------------------------------------------------------
@@ -586,9 +755,14 @@ def dispatch_whatsapp(
             tier_filter=getattr(req, "tier_filter", None) or "ALL",
             dry_run=req.dry_run,
             batch_size=req.batch_size,
+            override_stale_data=req.override_stale_data,
+            override_reason=req.override_reason,
+            actor=actor,
         )
+    except StaleSalesData as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.post("/api/v1/whatsapp/webhook", response_model=WhatsAppWebhookResponse, tags=["WhatsApp Gateway"])
@@ -599,10 +773,12 @@ async def receive_whatsapp_webhook(
     """Receive incoming WhatsApp replies/callbacks from Xinno or Meta cloud API.
     Automatically honours STOP / UNSUBSCRIBE messages to opt out patients.
     """
+    raw = await request.body()
+    verify_webhook(request, raw)
     srv = EnterpriseServices(db)
     try:
-        body = await request.json()
-    except Exception:
+        body = json.loads(raw.decode("utf-8") or "{}")
+    except ValueError:
         body = {}
     return srv.handle_inbound_whatsapp_webhook(body)
 
@@ -674,7 +850,7 @@ def approve_reminder(reminder_id: str, actor: str = Depends(require_api_key),
         res = pm.approve_reminder_stage(db, reminder_id)
         return ReviewActionResponse(reminder_id=reminder_id, status=res["status"], success=True, message="Approved successfully")
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.post("/api/reminders/{reminder_id}/reject", response_model=ReviewActionResponse, tags=["V1 Pharmacist Review Queue"])
@@ -686,7 +862,7 @@ def reject_reminder(reminder_id: str, req: ReviewActionRequest, actor: str = Dep
         res = pm.reject_reminder_stage(db, reminder_id, reason=req.reason or "Pharmacist rejected")
         return ReviewActionResponse(reminder_id=reminder_id, status=res["status"], success=True, message=res["reason"])
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.post("/api/reminders/{reminder_id}/dispatch", response_model=ReviewActionResponse, tags=["V1 Pharmacist Review Queue"])
@@ -704,7 +880,7 @@ def dispatch_single_reminder(reminder_id: str, req: ReviewActionRequest, actor: 
             provider_msg_id=res.get("provider_msg_id"),
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
 
 
 @app.get("/api/customers/{customer_id}/refill-history", response_model=CustomerRefillHistoryResponse, tags=["V1 Refill Decisions"])
@@ -869,6 +1045,10 @@ def test_classify_medication(
 # ------------------------------------------------------------------------------
 # 10. FRONTEND STATIC ASSETS & SPA ROUTING
 # ------------------------------------------------------------------------------
+ASSETS_DIR = PROJECT_ROOT / "assets"
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
@@ -878,3 +1058,13 @@ if FRONTEND_DIR.exists():
         if index_file.exists():
             return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
         return HTMLResponse("<h2>RefillCare Enterprise API Online. Frontend loading...</h2>")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def serve_favicon():
+    favicon_ico = FRONTEND_DIR / "favicon.ico"
+    if not favicon_ico.exists():
+        favicon_ico = ASSETS_DIR / "images" / "favicon.ico"
+    if favicon_ico.exists():
+        return FileResponse(str(favicon_ico), media_type="image/x-icon")
+    return Response(status_code=404)

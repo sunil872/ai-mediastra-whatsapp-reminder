@@ -11,6 +11,7 @@ ENV/
 # Environment secrets & credentials (STRICTLY FORBIDDEN FROM VERSION CONTROL)
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.cert
@@ -33,7 +34,8 @@ htmlcov/
 .nox/
 
 # Logs & Transient Operational Output (May contain customer phone numbers & outreach)
-logs/
+logs/*
+!logs/.gitkeep
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -48,6 +50,7 @@ yarn-error.log*
 *.sqlite3
 *.db-journal
 *.db-wal
+*.db-shm
 
 # Patient Datasets & Transaction Parquets (Preserved locally, never pushed)
 data/refillcare/*.csv
@@ -62,7 +65,21 @@ data/refillcare/processed/*.sqlite
 # Generated per run: rule A/B / rolling-test reports and newly trained registry candidates
 data/refillcare/processed/ml_reports/
 data/refillcare/processed/models/hgb-*.joblib
-!data/refillcare/processed/models/hgb-20260617-20261016062117.joblib
+data/refillcare/stores/
+*.parquet
+
+# Model weights & serialized artifacts (production models go to S3 / artifact store, not git).
+# The two legacy models below are still loaded by app_refillcare.py / supply_hybrid.py / registry
+# (legacy-human-hgb); untrack them only once deploys fetch artifacts from S3 (GO_LIVE_CHECKLIST B1).
+*.joblib
+*.pkl
+*.pickle
+*.onnx
+!data/refillcare/processed/models/refill_model.joblib
+!data/refillcare/processed/models/human_ml_refill_model.joblib
+# chronic_refill_model.joblib: tests/refillcare/test_med_sync.py; refill_model.pkl: config.DEFAULT_PKL_MODEL_PATH
+!data/refillcare/processed/models/chronic_refill_model.joblib
+!data/refillcare/processed/models/refill_model.pkl
 data/*.csv
 data/*.xlsx
 data/*.parquet
@@ -70,7 +87,12 @@ data/*.parquet
 # Patient Export Lists & Campaign Samples (Contain phone numbers & personal health data)
 exports/*.csv
 exports/*.xlsx
+# experiments/identity_audit/*.py is imported by tests/test_customer_item_identity_audit.py - keep the code,
+# never the generated audit reports / data (may contain patient identifiers)
+experiments/**/*_report.*
 experiments/**/*.csv
+experiments/**/*.xlsx
+sample folder/
 whatsapp_campaigns/sample_data/*.csv
 
 # Temporary, Scratch & Operating System Files
@@ -81,6 +103,7 @@ scratch/
 .DS_Store
 Thumbs.db
 ehthumbs.db
+~$*
 
 # IDE & Editor Settings
 .vscode/
@@ -94,7 +117,9 @@ file_to_markdown_converter/
 converted_markdown/
 
 # AI Agent Workspace & IDE Local Rules
-.agents/
+# .agents/rules/ holds the project rules and stays versioned; everything else under .agents/ is local
+.agents/*
+!.agents/rules/
 .claude/settings.local.json
 .user_uploaded/
 scratch*.py

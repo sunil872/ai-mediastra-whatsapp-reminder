@@ -48,6 +48,12 @@ class ImportBatchModel(Base):
     checksum_sha256 = Column(String(64), nullable=True, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # Post-upload re-scoring state: PENDING -> SYNCED, or SYNC_FAILED (retried by the worker)
+    sync_status = Column(String(16), nullable=True, index=True)
+    sync_error = Column(Text, nullable=True)
+    min_sales_date = Column(Date, nullable=True)
+    max_sales_date = Column(Date, nullable=True)
+    data_warnings = Column(JSON, nullable=True)  # gaps, stale days, placeholder invoices, returns netted
 
     # Relationships
     transactions = relationship("SalesTransactionModel", back_populates="batch", cascade="all, delete-orphan")
@@ -55,24 +61,32 @@ class ImportBatchModel(Base):
 
 
 class SalesTransactionModel(Base):
-    """Individual pharmacy sales and dispensing records."""
+    """The store's sales history: one row per sales line, only the RefillCare fields.
+
+    Uploads append here (lines already stored are skipped by ``line_key``); a rollback deletes the
+    batch's rows. This replaces rewriting a master CSV / parquet on every upload.
+    """
     __tablename__ = "sales_transactions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     import_batch_id = Column(String(64), ForeignKey("import_batches.import_batch_id"), nullable=False, index=True)
     invoice_number = Column(String(64), nullable=True, index=True)
-    invoice_date = Column(DateTime, nullable=False, index=True)
-    customer_id = Column(String(64), nullable=False, index=True)
+    invoice_date = Column(DateTime, nullable=False)  # covered by idx_sales_date_cust
+    customer_id = Column(String(64), nullable=False)  # covered by idx_sales_cust_item
     customer_name = Column(String(255), nullable=True)
+    item_code = Column(String(64), nullable=True)
     item_id = Column(String(64), nullable=False, index=True)
     item_name = Column(String(255), nullable=True)
     quantity = Column(Float, nullable=False)
+    free_quantity = Column(Float, nullable=True)
     packing = Column(String(64), nullable=True)
     mobile_no = Column(String(32), nullable=True, index=True)
     salt_composition = Column(String(255), nullable=True)
+    salt_category = Column(String(128), nullable=True)
+    line_key = Column(String(64), nullable=True)  # sha1(invoice, item, date, qty, line no) - unique (migration v1)
     net_amount = Column(Float, nullable=True)
-    transaction_type = Column(String(32), default="CUSTOMER_SALE", nullable=False, index=True)
-    refillcare_eligible = Column(Boolean, default=True, nullable=False, index=True)
+    transaction_type = Column(String(32), default="CUSTOMER_SALE", nullable=False)
+    refillcare_eligible = Column(Boolean, default=True, nullable=False)
     exclusion_reason = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -363,7 +377,9 @@ class MLModelVersionModel(Base):
     model_family: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # path_a_interval
     model_type: Mapped[str] = mapped_column(String(64), nullable=False)  # hist_gradient_boosting, baseline_historical_median
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="candidate", index=True)
-    artifact_uri: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # relative to models root; None for baselines
+    artifact_uri: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # relative to models root or s3://; None for baselines
+    artifact_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # verified before loading
+    library_versions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # python / sklearn / numpy / pandas
     feature_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     feature_cols: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     train_window_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
@@ -449,3 +465,13 @@ class ColumnMappingProfileModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class StoreCacheModel(Base):
+    """Small per-store cached values that are expensive to recompute on every upload
+    (e.g. salt priors from the whole history; refreshed by the monthly job or when older than 30 days)."""
+    __tablename__ = "refillcare_store_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

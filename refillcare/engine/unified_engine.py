@@ -868,11 +868,16 @@ class UnifiedRefillDecisionEngine:
         df_clean = normalise_trajectory_keys(df_clean)
 
         trajectories = {}
-        cids = df_clean["customerId"].astype(str).values
-        iids = df_clean["itemId"].astype(str).values
-        cnames = df_clean["customerName"].values if "customerName" in df_clean.columns else [None] * len(df_clean)
-        inames = df_clean["itemName"].values if "itemName" in df_clean.columns else [None] * len(df_clean)
-        mobiles = df_clean["MOBILE_NO"].values if "MOBILE_NO" in df_clean.columns else [None] * len(df_clean)
+        # Plain numpy arrays for the row loop: pandas 3 keeps text in Arrow arrays, where every
+        # element read is a slow Python call (it dominated the per-upload re-scoring time)
+        def _col(name: str):
+            return df_clean[name].to_numpy(dtype=object, na_value=None) if name in df_clean.columns else [None] * len(df_clean)
+
+        cids = df_clean["customerId"].astype(str).to_numpy(dtype=object)
+        iids = df_clean["itemId"].astype(str).to_numpy(dtype=object)
+        cnames = _col("customerName")
+        inames = _col("itemName")
+        mobiles = _col("MOBILE_NO")
         inv_dates = df_clean["invoice_date"].values
         if "quantity" in df_clean.columns:
             # Free strips go home with the patient: billed + free quantity is the supply (customer sales only here)
@@ -881,9 +886,9 @@ class UnifiedRefillDecisionEngine:
             qtys = supply_quantity(df_clean["quantity"], df_clean["freeQuantity"]).values if "freeQuantity" in df_clean.columns else df_clean["quantity"].values
         else:
             qtys = [None] * len(df_clean)
-        packings = df_clean["packing"].values if "packing" in df_clean.columns else [None] * len(df_clean)
+        packings = _col("packing")
         salt_col = next((c for c in ("salt_composition", "SALT") if c in df_clean.columns), None)
-        salts = df_clean[salt_col].values if salt_col else [None] * len(df_clean)
+        salts = _col(salt_col) if salt_col else [None] * len(df_clean)
 
         for i in range(len(df_clean)):
             cid = cids[i]

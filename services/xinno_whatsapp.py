@@ -101,13 +101,11 @@ def _log_send_attempt(
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "whatsapp_send.log")
 
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        formatter = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s")
-        file_handler.setFormatter(formatter)
-
         log_inst = logging.getLogger("xinno_whatsapp_file")
         log_inst.setLevel(logging.INFO)
-        if not log_inst.handlers:
+        if not log_inst.handlers:  # one handler for the process (no file handle per send)
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
             log_inst.addHandler(file_handler)
 
         status_str = "SUCCESS" if success else "FAILED"
@@ -115,7 +113,7 @@ def _log_send_attempt(
         xinno_status = xinno_status or ("accepted" if success else "failed")
         mid = message_id or "-"
         log_inst.info(
-            f"[{status_str}] Customer='{customer_name}', Phone='{masked_phone}', "
+            f"[{status_str}] Phone='{masked_phone}', "
             f"Template='{template_name}', Status={status_code}, "
             f"XinnoStatus='{xinno_status}', MessageId='{mid}', Message='{message}'"
         )
@@ -335,7 +333,7 @@ def send_template_message(
 
     # 4. DRY RUN Mode
     if dry_run:
-        logger.info(f"[DRY RUN] Template message created for {normalized_phone}")
+        logger.info(f"[DRY RUN] Template message created for {_mask_phone_for_log(normalized_phone)}")
         return {
             "success": True,
             "status_code": None,

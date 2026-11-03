@@ -40,6 +40,10 @@ def gate_config() -> Dict[str, float]:
         "max_segment_regression_pp": _env_float("ML_GATE_MAX_SEGMENT_REGRESSION_PP", 5.0),
         "max_segment_mae_regression_days": _env_float("ML_GATE_MAX_SEGMENT_MAE_REGRESSION_DAYS", 1.5),
         "max_early_increase_pp": _env_float("ML_GATE_MAX_EARLY_INCREASE_PP", 5.0),
+        # Late = reminder after the patient has already run out (stock-out risk)
+        "max_late_increase_pp": _env_float("ML_GATE_MAX_LATE_INCREASE_PP", 3.0),
+        # A model may not "win" by abstaining: coverage vs production may drop at most this much
+        "max_coverage_drop_pp": _env_float("ML_GATE_MAX_COVERAGE_DROP_PP", 2.0),
     }
 
 
@@ -103,6 +107,12 @@ def evaluate_gate(
             early_diff <= cfg["max_early_increase_pp"],
             f"early (spam) rate {cand.get('early_pct')}% vs baseline {base.get('early_pct')}%",
         )
+        late_diff = (cand.get("late_pct") or 0) - (base.get("late_pct") or 0)
+        check(
+            "no_extra_late_reminders",
+            late_diff <= cfg["max_late_increase_pp"],
+            f"late (stock-out) rate {cand.get('late_pct')}% vs baseline {base.get('late_pct')}% (max +{cfg['max_late_increase_pp']} pp)",
+        )
         # Segment regressions vs baseline
         for seg_name, seg_vals in (report.get("segments") or {}).items():
             for val, seg in seg_vals.items():
@@ -135,6 +145,15 @@ def evaluate_gate(
             c7 is not None and p7 is not None and (c7 - p7) >= -cfg["max_prod_regression_pp"],
             f"within+/-7d {c7}% vs current production {p7}%",
         )
+        cov = report.get("coverage") or {}
+        cc = (cov.get(candidate_method) or {}).get("coverage_pct")
+        pc = (cov.get(production_method) or {}).get("coverage_pct")
+        if cc is not None and pc is not None:
+            check(
+                "coverage_not_lower",
+                (cc - pc) >= -cfg["max_coverage_drop_pp"],
+                f"coverage {cc}% vs current production {pc}% (max -{cfg['max_coverage_drop_pp']} pp)",
+            )
     return _decision(checks, cfg, report, candidate_method)
 
 

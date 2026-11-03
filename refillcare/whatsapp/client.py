@@ -81,13 +81,11 @@ def log_refill_send_attempt(
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "whatsapp_refill_send.log"
 
-        file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
-        formatter = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s")
-        file_handler.setFormatter(formatter)
-
         log_inst = logging.getLogger("refillcare_whatsapp_file")
         log_inst.setLevel(logging.INFO)
-        if not log_inst.handlers:
+        if not log_inst.handlers:  # one handler for the process (no file handle per send)
+            file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
+            file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
             log_inst.addHandler(file_handler)
 
         mode_str = "DRY_RUN" if is_dry_run else "LIVE"
@@ -96,7 +94,7 @@ def log_refill_send_attempt(
         mid = message_id or "-"
 
         log_inst.info(
-            f"[{mode_str}_{status_str}] Tier='{tier}', Customer='{customer_name}', Phone='{masked_phone}', "
+            f"[{mode_str}_{status_str}] Tier='{tier}', Phone='{masked_phone}', "
             f"Template='{template_name}', Status={status_code}, MessageId='{mid}', Message='{message}'"
         )
     except Exception as log_err:

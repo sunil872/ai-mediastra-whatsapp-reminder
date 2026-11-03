@@ -51,8 +51,13 @@ def classify_error(error_days: float) -> str:
     return ON_TIME
 
 
-def refresh_outcomes(db: Session, history_df: pd.DataFrame, as_of: Optional[date] = None) -> Dict[str, int]:
-    """Create / update outcome rows for every eligible decision with an expected refill date."""
+def refresh_outcomes(db: Session, history_df: pd.DataFrame, as_of: Optional[date] = None,
+                     only_keys: Optional[set] = None) -> Dict[str, int]:
+    """Create / update outcome rows for every eligible decision with an expected refill date.
+
+    ``only_keys`` ({customer_item_key}) limits the refresh to decisions whose purchases are in
+    ``history_df`` (incremental uploads pass only the touched patients' history).
+    """
     if history_df is None or history_df.empty:
         return {"evaluated": 0}
     idx = _purchase_index(history_df)
@@ -74,12 +79,21 @@ def refresh_outcomes(db: Session, history_df: pd.DataFrame, as_of: Optional[date
             for (cid,) in db.query(ReminderStageModel.cycle_id).filter(ReminderStageModel.reminder_id.in_(ids[i:i + 500])).all():
                 live_cycles.add(cid)
 
-    decisions = (
-        db.query(RefillDecisionModel)
-        .filter(RefillDecisionModel.is_eligible == True, RefillDecisionModel.expected_refill_date != None)  # noqa: E711,E712
-        .all()
-    )
-    existing = {o.decision_id: o for o in db.query(RefillDecisionOutcomeModel).all()}
+    q = db.query(RefillDecisionModel).filter(RefillDecisionModel.is_eligible == True, RefillDecisionModel.expected_refill_date != None)  # noqa: E711,E712
+    if only_keys is not None:
+        keys = sorted(only_keys)
+        decisions = []
+        for i in range(0, len(keys), 500):
+            decisions.extend(q.filter(RefillDecisionModel.customer_item_key.in_(keys[i:i + 500])).all())
+    else:
+        decisions = q.all()
+    if only_keys is not None:
+        ids = [d.decision_id for d in decisions]
+        existing = {}
+        for i in range(0, len(ids), 500):
+            existing.update({o.decision_id: o for o in db.query(RefillDecisionOutcomeModel).filter(RefillDecisionOutcomeModel.decision_id.in_(ids[i:i + 500]))})
+    else:
+        existing = {o.decision_id: o for o in db.query(RefillDecisionOutcomeModel).all()}
     counts = {"evaluated": 0, ON_TIME: 0, EARLY: 0, LATE: 0, NO_REFILL: 0, OPEN: 0}
     new_rows = []
     now = datetime.utcnow()

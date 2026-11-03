@@ -212,6 +212,14 @@ def parse_pharmacy_dates(series: pd.Series) -> Tuple[pd.Series, Dict[str, Any]]:
         parsed = pd.Series([parse_single_date(v) for v in series], index=series.index)
         parsed = pd.to_datetime(parsed, errors="coerce")
 
+    # The format was detected on the first 100 values; rows further down in another format are
+    # parsed individually instead of silently becoming NaT
+    failed = parsed.isna() & clean_str_series.reindex(series.index).fillna("").str.strip().ne("")         & ~clean_str_series.reindex(series.index).fillna("").str.lower().isin(["nan", "none", "nat", "null", "-"])
+    if failed.any():
+        retry = pd.to_datetime(pd.Series([parse_single_date(v) for v in series[failed]], index=series[failed].index), errors="coerce")
+        parsed = parsed.copy()
+        parsed.loc[failed] = retry
+
     valid_mask = parsed.notna()
     valid_count = int(valid_mask.sum())
     invalid_count = len(series) - valid_count
@@ -219,6 +227,12 @@ def parse_pharmacy_dates(series: pd.Series) -> Tuple[pd.Series, Dict[str, Any]]:
 
     is_ambiguous = False
     warning = None
+    # Too many unparseable dates in a column means the format was not understood: block, don't guess
+    import os
+
+    max_bad = float(os.getenv("REFILLCARE_MAX_INVALID_DATE_PCT", "5")) / 100.0
+    bad_count = len(non_empty) - int(parsed[non_empty.index].notna().sum())
+    bad_share = bad_count / max(1, len(non_empty))
 
     if valid_count > 0:
         min_dt = valid_parsed.min()
@@ -233,6 +247,10 @@ def parse_pharmacy_dates(series: pd.Series) -> Tuple[pd.Series, Dict[str, Any]]:
         is_ambiguous = True
         warning = "No dates could be reliably parsed from the date column."
 
+    if valid_count > 0 and bad_count >= 3 and bad_share > max_bad:
+        is_ambiguous = True
+        warning = (f"{bad_share:.0%} of the dates could not be read (limit {max_bad:.0%}); "
+                   "check the date column / format before uploading.")
     if invalid_count > 0 and warning is None:
         warning = f"{invalid_count} row(s) contained invalid or unparseable date strings."
 

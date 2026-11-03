@@ -226,6 +226,7 @@ CHRONIC_FORM_MARKERS: List[str] = [
 
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -420,22 +421,43 @@ _DYNAMIC_EXCLUSIONS: Set[str] = set()
 _DYNAMIC_CHRONIC: Set[str] = set()
 _DYNAMIC_EXCLUSION_REGEX: List[re.Pattern] = []
 _DYNAMIC_CHRONIC_REGEX: List[re.Pattern] = []
+# Serialises the Supabase fetch: concurrent callers (API workers' threads, the start-up warm-up) wait
+# for the one fetch in flight instead of classifying with no pharmacist rules or fetching twice.
+_RULES_FETCH_LOCK = threading.RLock()
 
 
-def get_supabase_client():
-    """Retrieve or initialize Supabase client safely."""
-    global _SUPABASE_CLIENT
-    if _SUPABASE_CLIENT is not None:
+_SUPABASE_WRITE_CLIENT = None
+
+
+def get_supabase_client(write: bool = False):
+    """Supabase client: reads use the public (anon) key so row-level security applies; only rule
+    changes use the service-role key (kept out of every read path)."""
+    global _SUPABASE_CLIENT, _SUPABASE_WRITE_CLIENT
+    if write and _SUPABASE_WRITE_CLIENT is not None:
+        return _SUPABASE_WRITE_CLIENT
+    if not write and _SUPABASE_CLIENT is not None:
         return _SUPABASE_CLIENT
     supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if write:
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    else:
+        supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     if supabase_url and supabase_key:
         try:
-            from supabase import create_client
-            _SUPABASE_CLIENT = create_client(supabase_url, supabase_key)
-            return _SUPABASE_CLIENT
+            from supabase import create_client, ClientOptions
+            opts = ClientOptions(postgrest_client_timeout=8)
+            client = create_client(supabase_url, supabase_key, options=opts)
         except Exception:
-            return None
+            try:
+                from supabase import create_client
+                client = create_client(supabase_url, supabase_key)
+            except Exception:
+                return None
+        if write:
+            _SUPABASE_WRITE_CLIENT = client
+        else:
+            _SUPABASE_CLIENT = client
+        return client
     return None
 
 
@@ -446,6 +468,8 @@ def _reset_fetch_throttle() -> None:
 
 def clear_classification_caches() -> None:
     """Drop memoised classification results (call whenever the rule set changes)."""
+    global _RULES_LIST_CACHE_TIMESTAMP
+    _RULES_LIST_CACHE_TIMESTAMP = 0.0
     for fn_name in ("is_chronic_medication", "classify_medication_cached"):
         fn = globals().get(fn_name)
         if fn is not None and hasattr(fn, "cache_clear"):
@@ -464,6 +488,14 @@ def get_rules_status() -> Dict[str, Any]:
 
 
 def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
+    """Active pharmacist rules (exclusions, chronic markers); one fetch at a time across threads."""
+    if (time.time() - _CACHED_RULES_TIMESTAMP) < _CACHE_TTL_SECONDS and (_DYNAMIC_EXCLUSIONS or _DYNAMIC_CHRONIC):
+        return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
+    with _RULES_FETCH_LOCK:
+        return _get_dynamic_classification_rules_locked()
+
+
+def _get_dynamic_classification_rules_locked() -> Tuple[Set[str], Set[str]]:
     """Fetch active dynamic classification rules from Supabase with full pagination and local fallback."""
     global _CACHED_RULES_TIMESTAMP, _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC, _DYNAMIC_EXCLUSION_REGEX, _DYNAMIC_CHRONIC_REGEX
     global _LAST_FETCH_ATTEMPT, _RULES_SOURCE
@@ -478,24 +510,10 @@ def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
     client = get_supabase_client()
     if client:
         try:
-            all_rows: List[Dict[str, Any]] = []
-            page_size = 1000
-            offset = 0
-            while True:
-                res = (
-                    client.table("medication_classification_rules")
-                    .select("medication_name_or_keyword,rule_type")
-                    .eq("is_active", True)
-                    .range(offset, offset + page_size - 1)
-                    .execute()
-                )
-                data = res.data or []
-                if not data:
-                    break
-                all_rows.extend(data)
-                if len(data) < page_size:
-                    break
-                offset += len(data)
+            # One request serves both the classifier (active rules) and the rules screen (all rules)
+            fresh_list = _RULES_LIST_CACHE and (now - _RULES_LIST_CACHE_TIMESTAMP) < _RULES_LIST_CACHE_TTL
+            rows = _RULES_LIST_CACHE if fresh_list else _fetch_all_rule_rows(client, now)
+            all_rows = [r for r in rows if r.get("is_active", True) not in (False, "false", 0)]
 
             if all_rows:
                 excl_set = set()
@@ -537,7 +555,7 @@ def add_classification_rule(
 ) -> Dict[str, Any]:
     """Add or update a classification rule in Supabase."""
     global _CACHED_RULES_TIMESTAMP
-    client = get_supabase_client()
+    client = get_supabase_client(write=True)
     if not client:
         return {"status": "error", "message": "Supabase client not configured or unreachable."}
 
@@ -568,49 +586,78 @@ def add_classification_rule(
         return {"status": "error", "message": str(e)}
 
 
+_RULES_LIST_CACHE: List[Dict[str, Any]] = []
+_RULES_LIST_CACHE_TIMESTAMP: float = 0.0
+_RULES_LIST_CACHE_TTL: float = 300.0  # 5 minutes
+
+
+def _fetch_all_rule_rows(client, now: float) -> List[Dict[str, Any]]:
+    """Every rule row (active and inactive), paginated; refreshes the rules-screen cache too."""
+    global _RULES_LIST_CACHE, _RULES_LIST_CACHE_TIMESTAMP
+    all_rules: List[Dict[str, Any]] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        page_q = client.table("medication_classification_rules").select("*").order("created_at", desc=True)
+        res = page_q.range(offset, offset + page_size - 1).execute()
+        data = res.data or []
+        if not data:
+            break
+        all_rules.extend(data)
+        if len(data) < page_size:
+            break
+        offset += len(data)
+    if all_rules:
+        _RULES_LIST_CACHE = all_rules
+        _RULES_LIST_CACHE_TIMESTAMP = now
+    return all_rules
+
+
 def list_classification_rules(
     search_query: str = "",
     rule_type_filter: str = "All",
     limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Retrieve classification rules from Supabase (paginated when limit is None to return all records)."""
-    client = get_supabase_client()
-    if not client:
-        return []
-    try:
-        q = client.table("medication_classification_rules").select("*").order("created_at", desc=True)
+    """Retrieve classification rules from Supabase (paginated and cached in memory to prevent repeated HTTP requests)."""
+    global _RULES_LIST_CACHE, _RULES_LIST_CACHE_TIMESTAMP
+    now = time.time()
+
+    # If cached rules are fresh, filter instantly in memory (<1ms)
+    if _RULES_LIST_CACHE and (now - _RULES_LIST_CACHE_TIMESTAMP) < _RULES_LIST_CACHE_TTL:
+        rules = _RULES_LIST_CACHE
         if rule_type_filter in ("CHRONIC", "EXCLUDE"):
-            q = q.eq("rule_type", rule_type_filter)
+            rules = [r for r in rules if r.get("rule_type") == rule_type_filter]
         if search_query.strip():
             clean_s = search_query.strip().upper()
-            q = q.ilike("medication_name_or_keyword", f"%{clean_s}%")
-        
+            rules = [r for r in rules if clean_s in str(r.get("medication_name_or_keyword", "")).upper()]
         if limit is not None and limit > 0:
-            res = q.limit(limit).execute()
-            return res.data or []
-        
-        # Paginated retrieval to ensure complete list is returned
-        all_rules: List[Dict[str, Any]] = []
-        page_size = 1000
-        offset = 0
-        while True:
-            res = q.range(offset, offset + page_size - 1).execute()
-            data = res.data or []
-            if not data:
-                break
-            all_rules.extend(data)
-            if len(data) < page_size:
-                break
-            offset += len(data)
-        return all_rules
+            return rules[:limit]
+        return rules
+
+    client = get_supabase_client()
+    if not client:
+        return _RULES_LIST_CACHE if _RULES_LIST_CACHE else []
+    try:
+        with _RULES_FETCH_LOCK:  # a classifier fetch may be filling the same cache right now
+            fresh = _RULES_LIST_CACHE and (time.time() - _RULES_LIST_CACHE_TIMESTAMP) < _RULES_LIST_CACHE_TTL
+            all_rules = _RULES_LIST_CACHE if fresh else _fetch_all_rule_rows(client, now)
+        rules = all_rules
+        if rule_type_filter in ("CHRONIC", "EXCLUDE"):
+            rules = [r for r in rules if r.get("rule_type") == rule_type_filter]
+        if search_query.strip():
+            clean_s = search_query.strip().upper()
+            rules = [r for r in rules if clean_s in str(r.get("medication_name_or_keyword", "")).upper()]
+        if limit is not None and limit > 0:
+            return rules[:limit]
+        return rules
     except Exception:
-        return []
+        return _RULES_LIST_CACHE if _RULES_LIST_CACHE else []
 
 
 def delete_classification_rule(rule_id: str) -> Dict[str, Any]:
     """Delete a classification rule from Supabase."""
     global _CACHED_RULES_TIMESTAMP
-    client = get_supabase_client()
+    client = get_supabase_client(write=True)
     if not client:
         return {"status": "error", "message": "Supabase client not configured."}
     try:

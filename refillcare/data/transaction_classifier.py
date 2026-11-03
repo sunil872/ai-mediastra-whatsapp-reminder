@@ -43,6 +43,18 @@ class ExclusionReason:
 # Normalization Prefixes
 PREFIX_CUSTOMER_SALE = "S0/"
 PREFIX_B2B_INTER_STORE = "SB/"
+EXCLUSION_REASON_NON_SALE = "NON_SALE_DOCUMENT"
+
+
+def non_sale_prefixes() -> Tuple[str, ...]:
+    """Invoice prefixes that are never a customer sale (credit notes, sales returns, debit notes).
+
+    Configurable per deployment with ``REFILLCARE_NON_SALE_PREFIXES`` (comma separated).
+    """
+    import os
+
+    raw = os.getenv("REFILLCARE_NON_SALE_PREFIXES", "CN/,SR/,CR/,DN/,RT/,RET/,CRN/")
+    return tuple(p.strip().upper() for p in raw.split(",") if p.strip())
 
 
 def normalize_transaction_number(val: Any) -> str:
@@ -145,9 +157,12 @@ def classify_transactions_df(
     is_b2b = norm_series.str.startswith(PREFIX_B2B_INTER_STORE)
 
     if allow_generic_customer:
-        types = np.where(is_b2b, TRANSACTION_TYPE_B2B_INTER_STORE, TRANSACTION_TYPE_CUSTOMER_SALE)
-        eligible = (~is_b2b).values
-        reasons = np.where(is_b2b, EXCLUSION_REASON_INTER_STORE, EXCLUSION_REASON_NONE)
+        # Stores with their own invoice formats: anything that is not a B2B transfer or a known
+        # non-sale document (credit note, return) is a customer sale
+        is_non_sale = norm_series.str.startswith(non_sale_prefixes()) & ~is_b2b
+        types = np.where(is_b2b, TRANSACTION_TYPE_B2B_INTER_STORE, np.where(is_non_sale, TRANSACTION_TYPE_UNKNOWN, TRANSACTION_TYPE_CUSTOMER_SALE))
+        eligible = (~is_b2b & ~is_non_sale).values
+        reasons = np.where(is_b2b, EXCLUSION_REASON_INTER_STORE, np.where(is_non_sale, EXCLUSION_REASON_NON_SALE, EXCLUSION_REASON_NONE))
     else:
         types = np.where(is_cust, TRANSACTION_TYPE_CUSTOMER_SALE, np.where(is_b2b, TRANSACTION_TYPE_B2B_INTER_STORE, TRANSACTION_TYPE_UNKNOWN))
         eligible = is_cust.values

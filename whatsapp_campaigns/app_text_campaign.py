@@ -152,13 +152,13 @@ if uploaded_file is not None:
     if preview_df.empty:
         st.warning("No customer records found in the uploaded file.")
     else:
-        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.dataframe(preview_df, width="stretch", hide_index=True)
 
     if not invalid_df.empty:
         with st.expander("Invalid records", expanded=False):
             st.dataframe(
                 invalid_df[["Row", "Name", "Original Phone", "Reason", "Status"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -168,7 +168,7 @@ if uploaded_file is not None:
                 duplicate_df[["Name", "Original Phone", "Normalized Phone", "Status"]].rename(
                     columns={"Normalized Phone": NORMALIZED_PHONE_LABEL}
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -210,7 +210,7 @@ if uploaded_file is not None:
             "Name": "Customer Name",
             "Normalized Phone": NORMALIZED_PHONE_LABEL,
         })
-        st.dataframe(eligible_display, use_container_width=True, hide_index=True)
+        st.dataframe(eligible_display, width="stretch", hide_index=True)
 
         st.markdown("##### Message preview")
         st.caption("Samples use each customer's name from the uploaded file.")
@@ -269,7 +269,7 @@ if uploaded_file is not None:
                 disabled=not bulk_ready,
                 key="bulk_send_btn",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if send_clicked:
@@ -344,7 +344,7 @@ if uploaded_file is not None:
         c4.metric("Failed", s["failed"])
         c5.metric("Skipped", s["skipped"])
         results_df = bulk_results_table(s["records"], mask_phones=True)
-        st.dataframe(results_df, use_container_width=True, hide_index=True)
+        st.dataframe(results_df, width="stretch", hide_index=True)
         if s["records"]:
             st.download_button(
                 label="Download send results",
@@ -360,7 +360,7 @@ if uploaded_file is not None:
     if history_df.empty:
         st.info("No send attempts recorded in this session yet.")
     else:
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.dataframe(history_df, width="stretch", hide_index=True)
         csv_bytes = history_to_csv_bytes(st.session_state.send_history, mask_phones=True)
         st.download_button(
             label="Download session history",
@@ -377,7 +377,7 @@ else:
     if history_df.empty:
         st.info("No send attempts recorded in this session yet.")
     else:
-        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        st.dataframe(history_df, width="stretch", hide_index=True)
         csv_bytes = history_to_csv_bytes(st.session_state.send_history, mask_phones=True)
         st.download_button(
             label="Download session history",

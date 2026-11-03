@@ -201,12 +201,24 @@ def validate_monthly_sales_data(
         qty_num = pd.to_numeric(renamed["quantity"], errors="coerce")
         valid_mask &= qty_num.notna() & (qty_num > 0)
 
+    # Implausible dates (typos like 2062, or far past) never enter the history: one future date would
+    # move the "as of" date forward and expire real pending reminders
+    bad_date = pd.Series(False, index=renamed.index)
+    if "invoice_date" in renamed.columns:
+        dts = pd.to_datetime(renamed["invoice_date"], errors="coerce")
+        latest_ok = pd.Timestamp(date.today() + timedelta(days=1))
+        bad_date = dts.notna() & ((dts > latest_ok) | (dts < pd.Timestamp("2000-01-01")))
+        valid_mask &= ~bad_date
+
     # Channel exclusion gate: SB/ and UNKNOWN transactions are NEVER valid for customer refillcare
     if "refillcare_eligible" in renamed.columns:
         valid_mask &= (renamed["refillcare_eligible"] == True)
 
     valid_df = renamed[valid_mask].copy().reset_index(drop=True)
     review_df = renamed[~valid_mask].copy().reset_index(drop=True)
+
+    if bad_date.any():
+        review_df.loc[bad_date[~valid_mask].values, "exclusion_reason"] = "IMPLAUSIBLE_DATE"
 
     # For review records without an explicit exclusion reason, assign validation failure reason
     if "exclusion_reason" in review_df.columns:
@@ -251,6 +263,7 @@ def validate_monthly_sales_data(
         "existing_customers": existing_customers,
         "unique_customers": unique_customers,
         "date_diagnostics": date_diagnostics,
+        "implausible_dates": int(bad_date.sum()),
         "column_mapping": mapping_result.to_dict() if mapping_result is not None else {"mapping": mapping},
         "ignored_columns": [c for c in df.columns if c not in set(v for v in mapping.values() if v)],
     }
@@ -313,8 +326,8 @@ def _is_protected_live_dir(data_dir: Path) -> bool:
 
 
 def prune_old_backups(backup_dir: Path, keep: Optional[int] = None) -> int:
-    """Keep only the newest ``REFILLCARE_MAX_BACKUPS`` (default 5) master CSV pre-image backups."""
-    keep = keep if keep is not None else int(os.getenv("REFILLCARE_MAX_BACKUPS", "5"))
+    """Keep only the newest ``REFILLCARE_MAX_BACKUPS`` (default 1) master CSV pre-image backups (legacy CLI path; uploads now append to the database instead)."""
+    keep = keep if keep is not None else int(os.getenv("REFILLCARE_MAX_BACKUPS", "1"))
     files = sorted(Path(backup_dir).glob("customer_data_fields_pre_*.csv"), key=lambda f: f.stat().st_mtime, reverse=True)
     removed = 0
     for f in files[keep:]:

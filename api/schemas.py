@@ -59,6 +59,7 @@ class SalesIngestionResponse(BaseModel):
     ml_retrain_queued: bool = False
     column_mapping: Optional[Dict[str, Any]] = None
     ignored_columns: List[str] = Field(default_factory=list)  # store columns not stored (price, tax, batch, ...)
+    data_warnings: Dict[str, Any] = Field(default_factory=dict)  # gaps, back-dated file, returns netted, placeholders
     message: str
 
 
@@ -80,6 +81,9 @@ class ImportBatchResponse(BaseModel):
     records_requiring_review: int = 0
     processing_status: str = "ACTIVE"
     is_active: Optional[bool] = True
+    sync_status: Optional[str] = None      # PENDING | SYNCED | SYNC_FAILED
+    sync_error: Optional[str] = None
+    data_warnings: Optional[Dict[str, Any]] = None
 
 
 class RollbackResponse(BaseModel):
@@ -203,6 +207,8 @@ class WhatsAppBatchDispatchRequest(BaseModel):
     tier_filter: Optional[str] = Field("ALL", description="ALL, DUE, FOLLOWUP, LAPSED")
     dry_run: bool = True
     batch_size: int = Field(50, ge=1, le=500)
+    override_stale_data: bool = Field(False, description="Send live although the sales data is stale (needs override_reason; recorded)")
+    override_reason: Optional[str] = None
 
 
 class WhatsAppDispatchResponse(BaseModel):
@@ -567,3 +573,12 @@ class WhatsAppWebhookResponse(BaseModel):
     customer_id: Optional[str] = None
     phone_number: Optional[str] = None
 
+
+
+class StoreRegisterRequest(BaseModel):
+    """A Mediastra store served by this deployment (its data lives in its own database schema)."""
+    store_id: str = Field(..., description="1-40 chars: lowercase letters, digits, '-' or '_'")
+    tenant_id: Optional[str] = None
+    store_name: Optional[str] = None
+    store_contact: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = Field(None, description="Per-store overrides, e.g. {'REFILLCARE_PATIENT_IDENTITY': 'name_mobile'}")

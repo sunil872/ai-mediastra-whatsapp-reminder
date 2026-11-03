@@ -190,7 +190,13 @@ def run_pipeline(
     print(f"      Target Prediction Month: {target_month_label} ({target_month})")
     print(f"      Rolling 30-Day Outreach Horizon: {rolling_horizon[0].isoformat()} to {rolling_horizon[1].isoformat()}")
 
-    engine = UnifiedRefillDecisionEngine()
+    # Serve with the registry's production model (never the unvalidated legacy file)
+    from database.connection import SessionLocal as _RegSession
+    from refillcare.ml.model_provider import ModelProvider
+
+    with _RegSession() as _reg_db:
+        _provider = ModelProvider.from_registry(_reg_db)
+    engine = UnifiedRefillDecisionEngine(model_provider=_provider)
     decisions_df, decisions_list = engine.evaluate_all_customer_items(purchase_history_df, as_of_date=as_of_date)
     print(f"      Total Evaluated Decisions: {len(decisions_list):,}")
 

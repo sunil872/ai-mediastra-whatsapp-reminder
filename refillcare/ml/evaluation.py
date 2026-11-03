@@ -175,7 +175,22 @@ def predict_engine(ev: Dict[str, Any], engine, context: Optional[Dict[str, Any]]
 
 
 # ----------------------------------------------------------------------------- metrics
-def _metrics(pred: np.ndarray, actual: np.ndarray, rng: Optional[np.random.Generator] = None, n_boot: int = 300) -> Dict[str, Any]:
+def _boot_indices(n: int, rng: np.random.Generator, n_boot: int, groups: Optional[np.ndarray]) -> List[np.ndarray]:
+    """Bootstrap resamples. With ``groups`` (patient ids) whole patients are resampled: one patient
+    contributes many refills, so resampling single events makes the intervals too narrow."""
+    if groups is None:
+        return list(rng.integers(0, n, size=(n_boot, n)))
+    uniq, inv = np.unique(groups, return_inverse=True)
+    members = [np.flatnonzero(inv == k) for k in range(len(uniq))]
+    out = []
+    for _ in range(n_boot):
+        pick = rng.integers(0, len(uniq), size=len(uniq))
+        out.append(np.concatenate([members[k] for k in pick]))
+    return out
+
+
+def _metrics(pred: np.ndarray, actual: np.ndarray, rng: Optional[np.random.Generator] = None, n_boot: int = 300,
+             groups: Optional[np.ndarray] = None) -> Dict[str, Any]:
     n = int(len(pred))
     if n == 0:
         return {"n": 0}
@@ -194,25 +209,26 @@ def _metrics(pred: np.ndarray, actual: np.ndarray, rng: Optional[np.random.Gener
         "late_pct": round(float((err > 7).mean() * 100), 2),
     }
     if rng is not None and n >= 20:
-        idx = rng.integers(0, n, size=(n_boot, n))
-        w7_b = w7[idx].mean(axis=1) * 100
-        mae_b = ae[idx].mean(axis=1)
+        idx = _boot_indices(n, rng, n_boot, groups)
+        w7_b = np.array([w7[i].mean() for i in idx]) * 100
+        mae_b = np.array([ae[i].mean() for i in idx])
         out["within_7_days_ci95"] = [round(float(np.percentile(w7_b, 2.5)), 2), round(float(np.percentile(w7_b, 97.5)), 2)]
         out["mae_days_ci95"] = [round(float(np.percentile(mae_b, 2.5)), 2), round(float(np.percentile(mae_b, 97.5)), 2)]
     return out
 
 
-def _paired_diff(pred_a: np.ndarray, pred_b: np.ndarray, actual: np.ndarray, rng: np.random.Generator, n_boot: int = 500) -> Dict[str, Any]:
-    """Bootstrap CI of (A - B) for within-7 (pp) and MAE (days) on paired events."""
+def _paired_diff(pred_a: np.ndarray, pred_b: np.ndarray, actual: np.ndarray, rng: np.random.Generator, n_boot: int = 500,
+                 groups: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    """Bootstrap CI of (A - B) for within-7 (pp) and MAE (days) on paired events (patient clusters)."""
     n = len(actual)
     if n < 20:
         return {"n": n}
     w_a = (np.abs(pred_a - actual) <= 7).astype(float)
     w_b = (np.abs(pred_b - actual) <= 7).astype(float)
     ae_a, ae_b = np.abs(pred_a - actual), np.abs(pred_b - actual)
-    idx = rng.integers(0, n, size=(n_boot, n))
-    dw = (w_a[idx].mean(axis=1) - w_b[idx].mean(axis=1)) * 100
-    dm = ae_a[idx].mean(axis=1) - ae_b[idx].mean(axis=1)
+    idx = _boot_indices(n, rng, n_boot, groups)
+    dw = np.array([(w_a[i].mean() - w_b[i].mean()) for i in idx]) * 100
+    dm = np.array([(ae_a[i].mean() - ae_b[i].mean()) for i in idx])
     return {
         "n": n,
         "within_7_days_diff_pp": round(float((w_a.mean() - w_b.mean()) * 100), 2),
@@ -238,12 +254,15 @@ def run_backtest(
     eval_end: date,
     candidate_method: Optional[str] = None,
     min_prior_purchases: int = 2,
-    max_target_days: int = 180,
+    max_target_days: Optional[int] = None,
     max_events: Optional[int] = 3000,
     seed: int = 42,
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score reference methods and engine variants on identical future events.
+
+    ``max_target_days`` defaults to the censor buffer (ML_CENSOR_BUFFER_DAYS, 90): with the test
+    window ending that many days before the last sale, every counted refill is fully observable.
 
     Args:
         engine_variants: {method_name: UnifiedRefillDecisionEngine} (one per registry version).
@@ -254,6 +273,10 @@ def run_backtest(
     from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
     from refillcare.features.context import PopulationStats, VisitIndex, build_context
 
+    import os
+
+    if max_target_days is None:
+        max_target_days = int(os.getenv("ML_CENSOR_BUFFER_DAYS", "90"))
     rng = np.random.default_rng(seed)
     pe = prepare_purchase_events(history_df)
     data_end = pe["date"].max().date() if not pe.empty else None
@@ -272,6 +295,7 @@ def run_backtest(
         ctx = build_context(visit_index, salt_stats, ev["customer_id"], ev["item_id"], ev["dates"][-1], ev.get("salt"), ev["item_name"])
         row: Dict[str, Any] = {
             "actual": ev["actual_days"],
+            "patient": ev["customer_id"],
             "depth": _depth_bucket(ev["history_len"]),
             "therapy": "insulin" if is_insulin_product(ev["item_name"], ev["packings"][-1], ev.get("salt")) else "other",
             BASELINE_METHOD: predict_historical_median(ev),
@@ -297,18 +321,19 @@ def run_backtest(
     # Paired set: events where every method produced a prediction
     paired = df.dropna(subset=methods) if not df.empty else df
     actual = paired["actual"].to_numpy(dtype=float) if not paired.empty else np.array([])
-    paired_methods = {m: _metrics(paired[m].to_numpy(dtype=float), actual, rng) for m in methods} if len(actual) else {}
+    groups = paired["patient"].astype(str).to_numpy() if not paired.empty else None
+    paired_methods = {m: _metrics(paired[m].to_numpy(dtype=float), actual, rng, groups=groups) for m in methods} if len(actual) else {}
     diffs = {}
     if len(actual):
         for m in methods:
             if m == BASELINE_METHOD:
                 continue
-            diffs[f"{m} vs {BASELINE_METHOD}"] = _paired_diff(paired[m].to_numpy(float), paired[BASELINE_METHOD].to_numpy(float), actual, rng)
+            diffs[f"{m} vs {BASELINE_METHOD}"] = _paired_diff(paired[m].to_numpy(float), paired[BASELINE_METHOD].to_numpy(float), actual, rng, groups=groups)
         engine_names = list(engine_variants.keys())
         for other in engine_names:
             if other != candidate_method and candidate_method in engine_variants:
                 diffs[f"{candidate_method} vs {other}"] = _paired_diff(
-                    paired[candidate_method].to_numpy(float), paired[other].to_numpy(float), actual, rng
+                    paired[candidate_method].to_numpy(float), paired[other].to_numpy(float), actual, rng, groups=groups
                 )
 
     # Segments on the paired set (per candidate engine's own path / stability / source)

@@ -1,0 +1,79 @@
+# Local / QA stack that mirrors AWS: PostgreSQL (stands in for RDS), API, worker, Streamlit.
+#   docker compose up --build
+#   API      http://localhost:8000   (X-API-Key + X-Store-Id on every /api call)
+#   Streamlit http://localhost:8501  (internal ops tool: no login of its own - keep it private)
+# Secrets come from .env (never committed). On AWS use ECS + RDS + S3 instead of this file.
+
+x-app: &app
+  build: .
+  image: refillcare:latest
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://refillcare:${POSTGRES_PASSWORD:-refillcare-local}@db:5432/refillcare
+    REFILLCARE_ENV: ${REFILLCARE_ENV:-production}
+    REFILLCARE_DATA_DIR: /data/refillcare
+  volumes:
+    - refillcare_data:/data
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: refillcare
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-refillcare-local}
+      POSTGRES_DB: refillcare
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U refillcare -d refillcare"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["python", "-m", "database.migrations", "--all-stores"]
+    restart: "no"
+
+  api:
+    <<: *app
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "refillcare.jobs.worker"]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  streamlit:
+    <<: *app
+    command: ["streamlit", "run", "app_refillcare.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
+    ports:
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pg_data:
+  refillcare_data:

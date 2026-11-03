@@ -16,6 +16,7 @@ as-of date, and ``PopulationStats`` is built from purchases up to an explicit cu
 from __future__ import annotations
 
 import bisect
+import statistics
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -124,7 +125,7 @@ class VisitIndex:
             gaps = [b - a for a, b in zip(seen[:-1], seen[1:]) if INTERVAL_MIN_DAYS <= b - a <= INTERVAL_MAX_DAYS]
             if not gaps:
                 continue
-            due = seen[-1] + float(np.median(gaps)) - t
+            due = seen[-1] + float(statistics.median(gaps)) - t  # pure Python: np.median costs ~25 us per tiny list
             if -30 <= due <= 120:
                 due_in.append(due)
                 if 0 <= due <= 30:

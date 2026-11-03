@@ -29,15 +29,27 @@ REKEY_REASON = "IDENTITY_REKEY: patient / therapy key changed (name+mobile, salt
 
 
 def backup_sqlite_db() -> Optional[str]:
-    """Copy enterprise.db next to itself before a re-key (SQLite only; returns the backup path)."""
-    import shutil
+    """Consistent copy of the current store's SQLite database before a re-key (online backup API).
 
-    from database.connection import DATABASE_URL, DEFAULT_SQLITE_PATH
+    PostgreSQL / RDS: returns None - rely on the automated snapshots (point-in-time restore).
+    """
+    import sqlite3
 
-    if not DATABASE_URL.startswith("sqlite") or not DEFAULT_SQLITE_PATH.is_file():
+    from database.connection import IS_SQLITE, _sqlite_path_for
+    from refillcare.tenancy import current_store_id
+
+    if not IS_SQLITE:
         return None
-    backup = DEFAULT_SQLITE_PATH.with_name(f"enterprise_backup_rekey_{datetime.now():%Y%m%d_%H%M%S}.db")
-    shutil.copy2(DEFAULT_SQLITE_PATH, backup)
+    src_path = _sqlite_path_for(current_store_id())
+    if not src_path.is_file():
+        return None
+    backup = src_path.with_name(f"{src_path.stem}_backup_rekey_{datetime.now():%Y%m%d_%H%M%S}.db")
+    src, dst = sqlite3.connect(str(src_path)), sqlite3.connect(str(backup))
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
     return str(backup)
 
 

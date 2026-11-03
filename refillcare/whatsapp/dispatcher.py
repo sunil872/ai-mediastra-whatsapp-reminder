@@ -54,11 +54,36 @@ def live_attempts(db: Session, reminder_id: str) -> int:
     )
 
 
-class RefillWhatsAppDispatcher:
-    """Enterprise batch and individual dispatcher for RefillCare WhatsApp reminders."""
+class StaleSalesData(PermissionError):
+    """Live sends are blocked: the store's sales data is not current (a patient may already have bought)."""
 
-    def __init__(self, client: Optional[RefillWhatsAppClient] = None):
+
+def check_live_send_allowed(db: Session, allow_stale: bool = False) -> Dict[str, Any]:
+    """Raise StaleSalesData unless the sales data is current and every upload has been re-scored."""
+    import os
+
+    from refillcare.data.incremental_ingest import data_status
+
+    if os.getenv("REFILLCARE_STALE_DATA_GUARD", "true").strip().lower() in ("0", "false", "no", "off"):
+        return {"guard": "disabled"}
+    st = data_status(db)
+    if not st["ok_to_send"] and not allow_stale:
+        why = (f"latest sales {st['latest_sales_date'] or 'none'} is {st['days_behind']} day(s) behind (max {st['max_allowed_lag_days']})"
+               if st["stale"] else f"{st['batches_failed_to_sync']} upload(s) failed to re-score")
+        raise StaleSalesData(f"Live WhatsApp sending is blocked: {why}. Upload the missing sales (or retry the failed sync) first.")
+    return st
+
+
+class RefillWhatsAppDispatcher:
+    """Enterprise batch and individual dispatcher for RefillCare WhatsApp reminders.
+
+    Live sends first check that the store's sales data is current (``check_live_send_allowed``);
+    ``allow_stale_data=True`` is an explicit, logged override.
+    """
+
+    def __init__(self, client: Optional[RefillWhatsAppClient] = None, allow_stale_data: bool = False):
         self.client = client or RefillWhatsAppClient()
+        self.allow_stale_data = allow_stale_data
 
     def dispatch_stage_record(
         self,
@@ -71,6 +96,8 @@ class RefillWhatsAppDispatcher:
         dry_run: bool = True,
     ) -> Dict[str, Any]:
         """Dispatch a single database stage record and commit audit logs."""
+        if not dry_run:
+            check_live_send_allowed(db, self.allow_stale_data)
         tier = get_tier_for_stage_offset(stage.stage_offset)
 
         res = self.client.send_refill_reminder(
@@ -138,6 +165,8 @@ class RefillWhatsAppDispatcher:
             batch_limit: Maximum records to process in single batch.
             rate_limit_delay_sec: Throttle delay between live requests.
         """
+        if not dry_run:
+            check_live_send_allowed(db, self.allow_stale_data)
         # Query active scheduled stages
         if dry_run:
             allowed_status = ["PENDING", "DUE", "APPROVED"]
@@ -275,6 +304,7 @@ class RefillWhatsAppDispatcher:
         """
         stage_ids = list(getattr(bundle, "stage_reminder_ids", []) or [])
         if not dry_run:
+            check_live_send_allowed(db, self.allow_stale_data)
             if not stage_ids:
                 return {"success": False, "status_code": None, "message": "Live bundle send refused: bundle carries no reminder stage ids."}
             if already_delivered_live(db, bundle.bundle_id) or any(already_delivered_live(db, sid) for sid in stage_ids):
@@ -343,6 +373,8 @@ class RefillWhatsAppDispatcher:
         rate_limit_delay_sec: float = 0.05,
     ) -> Dict[str, Any]:
         """Dispatch a batch of Med-Sync synchronized bundles."""
+        if not dry_run:
+            check_live_send_allowed(db, self.allow_stale_data)  # once, before the first bundle
         opt_outs = load_opt_out_index(db)
         valid_bundles = []
         for b in bundles:

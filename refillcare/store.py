@@ -25,15 +25,29 @@ class StoreConfig:
 
     @classmethod
     def from_env(cls) -> "StoreConfig":
-        data_dir = Path(os.getenv("REFILLCARE_DATA_DIR", "") or (PROJECT_ROOT / "data" / "refillcare"))
-        if not data_dir.is_absolute():
-            data_dir = PROJECT_ROOT / data_dir
-        return cls(
-            data_dir=data_dir,
-            store_name=(os.getenv("MEDICAL_STORE_NAME", "") or "Pharmacy").strip(),
-            store_contact=os.getenv("MEDICAL_STORE_CONTACT", "").strip(),
-            store_id=(os.getenv("REFILLCARE_STORE_ID", "") or "store-1").strip(),
-        )
+        """The current store (request / job / Streamlit sidebar; default ``REFILLCARE_STORE_ID``).
+
+        The default store keeps ``REFILLCARE_DATA_DIR``; any other store gets ``<data dir>/stores/<id>``.
+        Name and contact come from the store registry when set there, else from ``.env``.
+        """
+        from refillcare.tenancy import current_store_id, default_store_id
+
+        base = Path(os.getenv("REFILLCARE_DATA_DIR", "") or (PROJECT_ROOT / "data" / "refillcare"))
+        if not base.is_absolute():
+            base = PROJECT_ROOT / base
+        sid = current_store_id()
+        data_dir = base if sid == default_store_id() else base / "stores" / sid
+        name = (os.getenv("MEDICAL_STORE_NAME", "") or "Pharmacy").strip()
+        contact = os.getenv("MEDICAL_STORE_CONTACT", "").strip()
+        try:
+            from refillcare.stores import get_store
+
+            row = get_store(sid) or {}
+            name = row.get("store_name") or name
+            contact = row.get("store_contact") or contact
+        except Exception:  # registry not reachable: .env values
+            pass
+        return cls(data_dir=data_dir, store_name=name, store_contact=contact, store_id=sid)
 
     @property
     def raw_backup_dir(self) -> Path:
