@@ -238,8 +238,10 @@ def send_template_message(
         template_name = "Your template name here"
     elif os.getenv("XINNO_TEXT_TEMPLATE_NAME", "").strip():
         template_name = os.getenv("XINNO_TEXT_TEMPLATE_NAME", "").strip()
-    else:
+    elif raw_wa_template:
         template_name = raw_wa_template
+    else:
+        template_name = "reminder_refill_followup_v3" 
 
     template_language = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE", "en").strip() or "en"
     default_store_name = os.getenv("MEDICAL_STORE_NAME", "PHARMA HUBB").strip() or "PHARMA HUBB"

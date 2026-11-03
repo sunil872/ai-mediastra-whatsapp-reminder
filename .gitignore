@@ -84,6 +84,12 @@ data/*.csv
 data/*.xlsx
 data/*.parquet
 
+# Whitelist public formulary catalogue and mock test fixtures (zero patient PII)
+!data/refillcare/SALT ITEMS LIST.csv
+!data/image_campaign_sample.csv
+!data/sample_customers.csv
+!data/phase8_sample_customers.csv
+
 # Patient Export Lists & Campaign Samples (Contain phone numbers & personal health data)
 exports/*.csv
 exports/*.xlsx

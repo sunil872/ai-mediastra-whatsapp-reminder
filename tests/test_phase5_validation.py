@@ -35,6 +35,8 @@ SAMPLE_CSV = PROJECT_ROOT / "data" / "sample_customers.csv"
 # 1. Valid customer CSV
 # ---------------------------------------------------------------------------
 def test_valid_customer_csv():
+    if not SAMPLE_CSV.exists():
+        pytest.skip("sample_customers.csv not found")
     df = pd.read_csv(SAMPLE_CSV, dtype=str)
     assert check_required_columns(df) == []
     valid_df, invalid_df, duplicate_df = validate_customers(df)

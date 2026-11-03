@@ -91,6 +91,8 @@ INVALIDS = [
 # 1. CSV verification
 # ---------------------------------------------------------------------------
 def test_phase8_realistic_csv_normalization():
+    if not PHASE8_CSV.exists():
+        pytest.skip("phase8_sample_customers.csv not found")
     df = pd.read_csv(PHASE8_CSV, dtype=str)
     assert check_required_columns(df) == []
     valid_df, invalid_df, duplicate_df = validate_customers(df)
@@ -232,6 +234,8 @@ def test_phase8_missing_data_messages():
 # 8. Bulk safety gates (no real send)
 # ---------------------------------------------------------------------------
 def test_phase8_bulk_safety_gates():
+    if not PHASE8_CSV.exists():
+        pytest.skip("phase8_sample_customers.csv not found")
     df = pd.read_csv(PHASE8_CSV, dtype=str)
     valid_df, invalid_df, duplicate_df = validate_customers(df)
     eligible = get_eligible_customers(valid_df)

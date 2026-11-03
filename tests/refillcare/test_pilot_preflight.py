@@ -59,6 +59,9 @@ def temp_storage():
 
 def test_pilot_preflight_passes_on_valid_system(temp_storage):
     """Verify 19-point preflight passes completely on a valid system."""
+    from config.config import PROJECT_ROOT
+    if not (PROJECT_ROOT / "data/refillcare/processed/test.parquet").exists() and not (PROJECT_ROOT / "data/refillcare/processed/training_dataset.parquet").exists():
+        pytest.skip("Test parquet dataset not present in CI environment")
     report = run_comprehensive_pilot_preflight(storage=temp_storage)
 
     assert report.total_checks == 19
