@@ -271,12 +271,29 @@ def test_model_rollback_restores_previous_validated_version(store_db):
     from refillcare.ml import registry as reg
 
     reg.ensure_bootstrap_versions(store_db)
-    reg.register_version(store_db, version_id="hgb-old", model_family=reg.FAMILY_PATH_A_INTERVAL, model_type=reg.TYPE_HIST_GB)
-    reg.register_version(store_db, version_id="hgb-new", model_family=reg.FAMILY_PATH_A_INTERVAL, model_type=reg.TYPE_HIST_GB)
+    reg.register_version(store_db, version_id="hgb-old", model_family=reg.FAMILY_PATH_A_INTERVAL, model_type=reg.TYPE_HIST_GB,
+                         artifact_uri="hgb-old.joblib")
+    reg.register_version(store_db, version_id="hgb-new", model_family=reg.FAMILY_PATH_A_INTERVAL, model_type=reg.TYPE_HIST_GB,
+                         artifact_uri="hgb-new.joblib")
     reg.promote_version(store_db, "hgb-old", "t", {"approved": True})
     reg.promote_version(store_db, "hgb-new", "t", {"approved": True})
     assert reg.rollback_production(store_db, "tester").version_id == "hgb-old"
     assert reg.get_by_status(store_db, reg.FAMILY_PATH_A_INTERVAL, reg.STATUS_PRODUCTION).version_id == "hgb-old"
+
+
+def test_model_rollback_skips_version_whose_artifact_was_deleted(store_db):
+    from refillcare.ml import registry as reg
+
+    reg.ensure_bootstrap_versions(store_db)
+    reg.register_version(store_db, version_id="hgb-old", model_family=reg.FAMILY_PATH_A_INTERVAL, model_type=reg.TYPE_HIST_GB,
+                         artifact_uri="hgb-old.joblib")
+    reg.register_version(store_db, version_id="hgb-new", model_family=reg.FAMILY_PATH_A_INTERVAL, model_type=reg.TYPE_HIST_GB,
+                         artifact_uri="hgb-new.joblib")
+    reg.promote_version(store_db, "hgb-old", "t", {"approved": True})
+    reg.promote_version(store_db, "hgb-new", "t", {"approved": True})
+    store_db.get(reg.MLModelVersionModel, "hgb-old").artifact_uri = None  # file pruned / deleted
+    store_db.commit()
+    assert reg.rollback_production(store_db, "tester").version_id == reg.BASELINE_VERSION_ID
 
 
 # ----------------------------------------------------------------------------- evaluation & gate

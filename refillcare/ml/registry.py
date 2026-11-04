@@ -224,7 +224,9 @@ def rollback_production(db: Session, rolled_back_by: str, family: str = FAMILY_P
     current = get_by_status(db, family, STATUS_PRODUCTION)
     q = (db.query(MLModelVersionModel)
          .filter(MLModelVersionModel.model_family == family, MLModelVersionModel.status == STATUS_RETIRED,
-                 MLModelVersionModel.promoted_at.isnot(None), MLModelVersionModel.is_validated.is_(True)))
+                 MLModelVersionModel.promoted_at.isnot(None), MLModelVersionModel.is_validated.is_(True),
+                 # a retired model whose artifact was pruned / deleted cannot serve - skip it
+                 MLModelVersionModel.artifact_uri.isnot(None)))
     if current is not None:
         q = q.filter(MLModelVersionModel.version_id != current.version_id)
     previous = q.order_by(MLModelVersionModel.promoted_at.desc()).first()

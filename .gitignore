@@ -70,7 +70,7 @@ data/refillcare/stores/
 
 # Model weights & serialized artifacts (production models go to S3 / artifact store, not git).
 # The two legacy models below are still loaded by app_refillcare.py / supply_hybrid.py / registry
-# (legacy-human-hgb); untrack them only once deploys fetch artifacts from S3 (GO_LIVE_CHECKLIST B1).
+# (legacy-human-hgb); untrack them only once deploys fetch artifacts from S3 (future_implementation/GO_LIVE_CHECKLIST C1.3).
 *.joblib
 *.pkl
 *.pickle
@@ -93,11 +93,8 @@ data/*.parquet
 # Patient Export Lists & Campaign Samples (Contain phone numbers & personal health data)
 exports/*.csv
 exports/*.xlsx
-# experiments/identity_audit/*.py is imported by tests/test_customer_item_identity_audit.py - keep the code,
-# never the generated audit reports / data (may contain patient identifiers)
-experiments/**/*_report.*
-experiments/**/*.csv
-experiments/**/*.xlsx
+experiments/
+notebooks/
 sample folder/
 whatsapp_campaigns/sample_data/*.csv
 

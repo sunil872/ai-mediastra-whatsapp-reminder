@@ -7,8 +7,9 @@ comes through the Mediastra web application, built by the backend team.
 | Document | For |
 |---|---|
 | [implementation_plan.md](implementation_plan.md) | what is built, measured results, next steps |
-| [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md) | everything still needed for live mode — part A store / operations, part B backend team |
-| [docs/PLAN_BACKEND_DEVOPS_TENANCY.md](docs/PLAN_BACKEND_DEVOPS_TENANCY.md) | multi-tenant architecture and AWS deployment (backend team) |
+| [future_implementation/GO_LIVE_CHECKLIST.md](future_implementation/GO_LIVE_CHECKLIST.md) | everything still needed for live mode — part A store / operations, part B RefillCare code, part C backend team |
+| [future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md](future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md) | multi-tenant architecture and AWS deployment (backend team) |
+| [future_implementation/PRODUCTION_READINESS_SCENARIO_1.md](future_implementation/PRODUCTION_READINESS_SCENARIO_1.md) | every code change needed to move from one local store to multi-tenant AWS (tenants → stores, RDS, S3, Docker) |
 
 What it does, end to end:
 
@@ -234,13 +235,11 @@ reminder/                   scheduler, dispatch, storage used by ingestion and t
 database/                   SQLAlchemy models, control_models.py (stores), connection, additive migrations
 services/, utils/           Xinno / Cloudinary clients, phone validation, bulk-send helpers
 whatsapp_campaigns/         standalone text / image broadcast apps
-model/, preprocessing/      legacy Path B predictor + feature table (kept as a tested benchmark)
-experiments/identity_audit/ identity-normalisation audit code (used by its test; reports are git-ignored)
 config/                     config.py, column_aliases.json
 assets/, frontend/assets/   logos / favicon (Streamlit, web app)
 scripts/                    see below
 tests/                      pytest suite
-docs/, notebooks/           deployment options (client), WhatsApp template, backend/tenancy plan, phase reports (history)
+docs/                       DEPLOYMENT_OPTIONS_LOCAL_VS_CLOUD.md (client), WHATSAPP_TEMPLATE_REFILLCARE.md, Xinno Postman collection
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml   container + CI (operated by the backend team)
 run_streamlit.bat, run_api.bat                              Windows launchers that always use .venv
 ```
@@ -279,4 +278,4 @@ Tests never touch live data: they use temporary folders and isolated databases, 
 Patient data (sales files, backups, parquets, `enterprise.db`, exports, logs, audit reports), trained model files
 and `.env` are git-ignored. Do not commit them. Only 4 legacy model files that code still loads are versioned.
 Phone numbers are masked in logs and in identity-conflict messages. Older commits still contain patient data —
-purge the history before the repository leaves the team (GO_LIVE_CHECKLIST A9).
+purge the history before the repository leaves the team (future_implementation/GO_LIVE_CHECKLIST A8).

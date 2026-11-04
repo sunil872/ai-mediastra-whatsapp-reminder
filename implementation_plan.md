@@ -3,8 +3,8 @@
 Single store (NGOs Colony, `store-1`, sales Dec 2020 – 15 Oct 2026) in v1; multi-store through the cloud-hosted
 Mediastra web application in v2 (built by the backend team).
 How to run and use the system: [README.md](README.md). What is still needed for live mode (store + backend team):
-[GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md). Architecture for the backend team:
-[docs/PLAN_BACKEND_DEVOPS_TENANCY.md](docs/PLAN_BACKEND_DEVOPS_TENANCY.md). Client-facing deployment options:
+[future_implementation/GO_LIVE_CHECKLIST.md](future_implementation/GO_LIVE_CHECKLIST.md). Architecture for the backend team:
+[future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md](future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md). Client-facing deployment options:
 [docs/DEPLOYMENT_OPTIONS_LOCAL_VS_CLOUD.md](docs/DEPLOYMENT_OPTIONS_LOCAL_VS_CLOUD.md).
 
 *Last updated: 3 Nov 2026.*
@@ -95,11 +95,11 @@ Earlier sandbox results (test month 18 Jul – 16 Aug 2026, 1,740 refills):
 | # | Item | Status |
 |---|---|---|
 | 6.1 | Removed: prototype CLI scripts `run_train.py`, `run_prediction.py`, `run_reminder.py`, `run_message.py` (replaced by `scripts/ml_cli.py`, `scripts/retrain_production.py` and the apps); `scratch/`, `file_to_markdown_converter/`, `conversation_history/`, duplicate root `PLAN_BACKEND_DEVOPS.md` (kept in `docs/`). Archived locally to `Documents\refillcare_archive_20261103.zip` | Done |
-| 6.2 | Untracked (kept on disk): retired model `hgb-20260617-20261016062117.joblib`, unused `refill_model_v2.0.0.pkl`, identity-audit reports (may contain patient identifiers) | Done |
-| 6.3 | Kept on purpose: `model/` + `preprocessing/` (legacy Path B benchmark, tested), `experiments/identity_audit/*.py` (imported by `tests/test_customer_item_identity_audit.py`), `docs/` phase reports and `notebooks/` (project history) | Done |
+| 6.2 | Retired model `hgb-20260617-20261016062117.joblib` and unused `refill_model_v2.0.0.pkl` deleted 4 Nov (registry row kept, `artifact_uri` cleared; rollback now skips versions without an artifact). Untracked: identity-audit reports (may contain patient identifiers) | Done |
+| 6.3 | **Repo audit (4 Nov 2026)** — removed from git (history keeps them): legacy `model/`, `preprocessing/`, Path B benchmark (`refillcare/models/path_b_*`), one-off identity audit `experiments/`, dead modules `refillcare/features/pipeline.py`, `reminder/send_message.py`, `reminder/message_logs.py`; one-off scripts `audit_channel_impact`, `backtest_*`, `run_offline_validation`, `build_refillcare_notebooks`, outdated `scripts/README.md`; `notebooks/`; 48 phase reports / old plans in `docs/` (kept: deployment options, WhatsApp template, Postman collection); 7 September phase-report JSONs in `data/refillcare/processed/`. 25 tests of the removed modules went with them (suite: 860 passed, 1 skipped). Every removal checked with an import-reachability scan from the Streamlit, API, worker, campaign and script entry points | Done |
 | 6.4 | `.gitignore`: all `*.joblib` / `*.pkl` / `*.parquet` / Office lock files / store DBs ignored; exceptions only for the 4 legacy models still loaded by code (`refill_model.joblib`, `human_ml_refill_model.joblib`, `chronic_refill_model.joblib`, `refill_model.pkl`); `.env.example`, `.agents/rules/` and `logs/.gitkeep` stay versioned | Done |
-| 6.5 | Production model files are **not** in git (they come from the registry / S3 artifact store) — the backend team must provide them to deployed containers (GO_LIVE_CHECKLIST B1). Untrack the 4 legacy models once deploys fetch artifacts from S3 | Backend team |
-| 6.6 | Patient data in git history (old commits) — purge before the repository is shared outside the team (GO_LIVE_CHECKLIST A9) | ⏳ |
+| 6.5 | Production model files are **not** in git (they come from the registry / S3 artifact store) — the backend team must provide them to deployed containers (future_implementation/GO_LIVE_CHECKLIST C1). Untrack the 4 legacy models once deploys fetch artifacts from S3 | Backend team |
+| 6.6 | Patient data in git history (old commits) — purge before the repository is shared outside the team (future_implementation/GO_LIVE_CHECKLIST A8) | ⏳ |
 
 ---
 
@@ -130,7 +130,7 @@ The cloud-hosted Mediastra web application handles tenant / store logins and orc
 | 8.11 | **Streamlit aligned with FastAPI**: incremental upload, shared rollback, data-status panel + sync retry, stale-data guard on live sends, model rollback; no login / store picker (Mediastra handles tenant > store logins) | Done | Works on `REFILLCARE_STORE_ID`; keep it on a private network |
 | 8.12 | **Scoring speed-ups**: engine row loop reads plain arrays (pandas 3 Arrow strings were ~10 s per upload), rows loaded as column tuples, MIN/MAX date queries split, pure-Python medians in visit features | Done | 1-day upload 63 s -> 7.4 s |
 | 8.13 | **Streamlit start-up**: prediction overview read from the stored engine decisions (one query, as FastAPI) instead of re-predicting every history on each load; history cache kept per view; parquet fast path only while it matches the database's legacy rows; one Supabase rules fetch shared by the classifier and the rules screen | Done | First load 251 s -> 35-47 s on the real 835k-line copy (overview 223 s -> 0.2 s); eligible list 0 -> 3,957 (the old on-the-fly path lacked the interval columns) |
-| 8.14 | **Audit fixes (3 Nov)**: model-fallback warning (Streamlit banner + `/health` `degraded`); a retrain never reuses a model that cannot load; one-command retrain `scripts/retrain_production.py` (backup + gate); Supabase rules fetched once and loaded at API start-up (lock: no request classifies without rules); KPI totals from SQL; `scripts/db_maintenance.py` (WAL / VACUUM) | Done | `/reminders/daily` cold 12.5 -> 6.8 s, `/analytics/kpi` 18.4 -> 7.7 s, both 0.9 s warm. Go-live tasks for the store and the backend team: [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md) |
+| 8.14 | **Audit fixes (3 Nov)**: model-fallback warning (Streamlit banner + `/health` `degraded`); a retrain never reuses a model that cannot load; one-command retrain `scripts/retrain_production.py` (backup + gate); Supabase rules fetched once and loaded at API start-up (lock: no request classifies without rules); KPI totals from SQL; `scripts/db_maintenance.py` (WAL / VACUUM) | Done | `/reminders/daily` cold 12.5 -> 6.8 s, `/analytics/kpi` 18.4 -> 7.7 s, both 0.9 s warm. Go-live tasks for the store and the backend team: [future_implementation/GO_LIVE_CHECKLIST.md](future_implementation/GO_LIVE_CHECKLIST.md) |
 | 8.15 | **Python environment guard**: the model must be loaded by the scikit-learn it was trained with (1.7.2, needs Python ≥ 3.10). The fallback warning now names the exact cause (trained vs running versions); Streamlit shows a red banner when started from another Python (e.g. a system 3.9); `run_streamlit.bat` / `run_api.bat` always use `.venv`; VS Code terminals activate `.venv` | Done | Root cause of the 3 Nov "ML model warning": Streamlit started from the system Python 3.9 |
 | 8.16 | **UI deprecations**: `use_container_width` → `width="stretch"` in Streamlit and the campaign apps | Done | No Streamlit deprecation warnings |
 
@@ -140,7 +140,10 @@ The cloud-hosted Mediastra web application handles tenant / store logins and orc
 
 Store / operations (this team): upload 16 Oct – today, retrain, decide the switches (section 7), pilot sign-off
 and dry run — GO_LIVE_CHECKLIST part A.
-Backend team (v2 cloud): everything in GO_LIVE_CHECKLIST part B — RDS / Docker / S3, network and secrets,
+RefillCare team (code for multi-tenant live): GO_LIVE_CHECKLIST part B = the flaws and work plan in
+[future_implementation/PRODUCTION_READINESS_SCENARIO_1.md](future_implementation/PRODUCTION_READINESS_SCENARIO_1.md)
+(tenant isolation, no local files / legacy models, async upload, per-tenant WhatsApp, IST time zone, job queue).
+Backend team (v2 cloud): everything in GO_LIVE_CHECKLIST part C — RDS / Docker / S3, network and secrets,
 multi-store onboarding and migration of `store-1`, daily data push, WhatsApp webhook, monitoring, DPDP.
 
 | # | Item | Why |

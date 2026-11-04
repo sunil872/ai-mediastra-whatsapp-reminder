@@ -1,0 +1,39 @@
+# RefillCare — production dependencies for the core image (API, worker, ml-worker, scheduler, migrate).
+# Python 3.13. Pins = the versions verified by the test suite on 3–4 Nov 2026 (repo requirements.txt).
+#
+# Rules:
+# - scikit-learn / numpy / joblib changes = retrain every store's model before deploying (models are loaded
+#   only by the library versions they were trained with; see PRODUCTION_READINESS_SCENARIO_1.md M10).
+# - Upgrade deliberately: bump, run pytest (SQLite + PostgreSQL), run an ML evaluation, then deploy.
+# - Not in this image: Streamlit / matplotlib (ops-UI image only), xgboost (offline benchmark only),
+#   cloudinary (image campaigns, not shipped — O6), pytest / httpx / pip-audit (requirements-dev.txt).
+
+# Web / API
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.5
+python-multipart==0.0.32      # multipart sales upload
+PyJWT[crypto]==2.10.1         # NEW: verify Mediastra service JWT via JWKS (Part B2)
+
+# Data / ML
+pandas==3.0.5
+numpy==2.5.2
+scipy==1.18.1                 # scikit-learn dependency, pinned for reproducible models
+scikit-learn==1.7.2
+joblib==1.6.0
+openpyxl==3.1.5               # Excel (.xlsx) uploads
+pyarrow==25.0.1               # pandas Arrow strings; one-off history import (parquet) — drop once no parquet input remains
+
+# Storage / AWS / integrations
+SQLAlchemy==2.0.54
+psycopg[binary]==3.2.13       # PostgreSQL / RDS (DATABASE_URL=postgresql+psycopg://...)
+boto3==1.40.76                # S3 uploads + model artifacts, Secrets Manager (per-tenant Xinno keys)
+requests==2.34.2              # Xinno WhatsApp API
+supabase==2.32.0              # medication rules — remove when rules move to Postgres (Part B11)
+python-dotenv==1.2.3          # local development only; production reads env from the task definition
+tzdata==2025.2                # IANA time zones for zoneinfo (Asia/Kolkata) in slim images (Part B8)
+psutil==7.2.2                 # memory checks in the ml-worker (training guard)
+
+# --- Ops-UI image only (internal Streamlit; install with: -r requirements.txt plus these) ---
+# streamlit==1.63.0
+# matplotlib==3.11.2
