@@ -510,3 +510,23 @@ def test_multi_stage_schedule_filtering_and_active_date():
 
 
 
+
+
+def test_store_cache_data_never_shares_cached_values_between_stores():
+    from refillcare.tenancy import use_store
+
+    calls = []
+
+    @app.store_cache_data(ttl=60, show_spinner=False)
+    def _store_numbers(x):
+        from refillcare.tenancy import current_store_id
+
+        calls.append(current_store_id())
+        return f"{current_store_id()}:{x}"
+
+    with use_store("store-a"):
+        assert _store_numbers(1) == "store-a:1"
+        assert _store_numbers(1) == "store-a:1"  # cached
+    with use_store("store-b"):
+        assert _store_numbers(1) == "store-b:1"  # NOT store-a's cached value
+    assert calls == ["store-a", "store-b"]

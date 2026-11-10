@@ -13,6 +13,7 @@ in the master CSV, the processed parquets and (v2) the cloud database:
 | packing | units per pack -> days of supply | expected (filled from the catalogue if absent) |
 | quantity | days of supply | yes |
 | freeQuantity | free strips extend days of supply | optional |
+| daysSupply | days the sale should last (prescribed duration / dose) - the strongest refill signal | optional (stored; used as a model feature once stores send it) |
 | MOBILE_NO | WhatsApp, opt-out, name+mobile identity | yes |
 | customerId | patient key (party code if the store has one, else the name) | derived |
 | itemId | item key (= itemCode) | derived |
@@ -31,18 +32,18 @@ import pandas as pd
 
 CANONICAL_COLUMNS: Tuple[str, ...] = (
     "invoice_date", "invoice_number", "customerName", "itemCode", "itemName", "packing",
-    "quantity", "freeQuantity", "MOBILE_NO", "customerId", "itemId",
+    "quantity", "freeQuantity", "MOBILE_NO", "customerId", "itemId", "daysSupply",
 )
 # Fields a store's file is mapped onto (customerId may come from a party code; itemId is always derived)
 MAPPABLE_FIELDS: Tuple[str, ...] = (
     "invoice_date", "invoice_number", "customerName", "customerId", "itemCode", "itemName",
-    "packing", "quantity", "freeQuantity", "MOBILE_NO",
+    "packing", "quantity", "freeQuantity", "MOBILE_NO", "daysSupply",
 )
 REQUIRED_FIELDS: Tuple[str, ...] = ("invoice_date", "quantity", "MOBILE_NO")
 # Required, but one may stand in for the other (name <- code / code <- name)
 REQUIRED_ONE_OF: Tuple[Tuple[str, str], ...] = (("customerName", "customerId"), ("itemName", "itemCode"))
 EXPECTED_FIELDS: Tuple[str, ...] = ("invoice_number", "itemCode", "packing")
-OPTIONAL_FIELDS: Tuple[str, ...] = ("freeQuantity", "customerId")
+OPTIONAL_FIELDS: Tuple[str, ...] = ("freeQuantity", "customerId", "daysSupply")
 FIELD_LABELS: Dict[str, str] = {
     "invoice_date": "Invoice / bill date",
     "invoice_number": "Invoice / bill number",
@@ -53,6 +54,7 @@ FIELD_LABELS: Dict[str, str] = {
     "packing": "Packing (e.g. 1X15, 3ML)",
     "quantity": "Quantity sold",
     "freeQuantity": "Free quantity",
+    "daysSupply": "Days supply / prescribed days (optional)",
     "MOBILE_NO": "Mobile number",
 }
 # Columns of the old 23-column export that nothing uses any more (dropped from stored data)
@@ -105,9 +107,12 @@ def apply_column_mapping(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) ->
     for f in _TEXT_FIELDS:
         if f in out.columns:
             out[f] = clean_text(out[f])
-    for f in ("quantity", "freeQuantity"):
+    for f in ("quantity", "freeQuantity", "daysSupply"):
         if f in out.columns:
             out[f] = pd.to_numeric(out[f], errors="coerce")
+    if "daysSupply" in out.columns:
+        # 1-365 days is a plausible prescription; anything else is a typo / another number
+        out["daysSupply"] = out["daysSupply"].where(out["daysSupply"].between(1, 365))
 
     if "customerId" not in out.columns and "customerName" in out.columns:
         out["customerId"] = out["customerName"]
@@ -123,6 +128,8 @@ def apply_column_mapping(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) ->
         out["packing"] = out["itemCode"].map(_catalog_pack_for_code)
     if "freeQuantity" not in out.columns:
         out["freeQuantity"] = np.nan
+    if "daysSupply" not in out.columns:
+        out["daysSupply"] = np.nan
     if "invoice_number" not in out.columns:
         # No invoice column: deterministic placeholders (channel filtering is not possible -> warned)
         out["invoice_number"] = [f"INV_{i + 1:06d}" for i in range(len(out))]

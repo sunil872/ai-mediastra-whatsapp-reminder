@@ -112,11 +112,25 @@ def test_quantity_archetypes_are_never_routed_to_median():
     assert not is_normal_quantity({"quantity_ratio_vs_typical": 2.0})
 
 
-def test_rules_ship_off_by_default(monkeypatch):
+def test_rules_ship_off_by_default_except_evidence_backed_quantity_scaling(monkeypatch):
     for k in ("REFILLCARE_RULE_HIGH_STABILITY_MEDIAN", "REFILLCARE_RULE_INSULIN_MEDIAN", "REFILLCARE_RULE_DOM_ANCHOR",
-              "REFILLCARE_RULE_PATH_B_MODE", "REFILLCARE_RULE_DEVICE_CAP_MODE"):
+              "REFILLCARE_RULE_PATH_B_MODE", "REFILLCARE_RULE_DEVICE_CAP_MODE", "REFILLCARE_RULE_QUANTITY_SCALING"):
         monkeypatch.delenv(k, raising=False)
+    from dataclasses import replace
+
+    # quantity scaling is on: measured 37.4% -> 47.1% within 7 days on 20,702 smaller-than-usual purchases
+    assert EngineRules.from_env() == replace(EngineRules.legacy(), quantity_scaling=True)
+    monkeypatch.setenv("REFILLCARE_RULE_QUANTITY_SCALING", "false")
     assert EngineRules.from_env() == EngineRules.legacy()
+
+
+def test_quantity_scaling_only_for_smaller_than_usual_purchases():
+    from refillcare.engine.prediction_rules import quantity_scaled_interval
+
+    assert quantity_scaled_interval(30, 0.25) == (8, True)     # 1 strip instead of 4
+    assert quantity_scaled_interval(30, 0.75) == (30, False)   # close to usual
+    assert quantity_scaled_interval(30, 2.0) == (30, False)    # buying more keeps the rhythm (evidence)
+    assert quantity_scaled_interval(30, 0.05) == (5, True)     # never below 5 days
 
 
 def test_device_ceiling_observed_never_below_own_median():

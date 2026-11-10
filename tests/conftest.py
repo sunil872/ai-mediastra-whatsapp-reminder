@@ -27,5 +27,6 @@ os.environ["REFILLCARE_ENV"] = "test"
 os.environ.setdefault("REFILLCARE_STORE_ID", "store-1")
 # Fixtures use past sales dates; the stale-data send guard has its own tests that switch it on
 os.environ["REFILLCARE_STALE_DATA_GUARD"] = "false"
+os.environ.setdefault("REFILLCARE_HOLDOUT_PCT", "0")  # control group off unless a test enables it
 for _k in ("REFILLCARE_API_KEY", "WHATSAPP_WEBHOOK_SECRET", "REFILLCARE_UI_PASSWORD", "REFILLCARE_MODEL_BUCKET"):
     os.environ.pop(_k, None)

@@ -25,7 +25,7 @@ def create_purchase_history(events_df: pd.DataFrame) -> pd.DataFrame:
        - days_since_previous_purchase = (current invoice_date - previous_purchase_date).
        - For the first purchase in a history: previous_purchase_date is NaT, interval is NaN.
     4. Same-Day Purchases:
-       - Lines within the same invoice were already aggregated in step 2.
+       - Lines within the same invoice (batches, repeat scans) are added up by ``merge_bill_lines``.
        - Different invoices on the same date for the same (customerId, itemId) result in interval = 0 days.
     5. Data Leakage Prevention:
        - No forward-looking features (e.g., next_purchase_date, days_until_next_purchase) are added.
@@ -51,6 +51,11 @@ def create_purchase_history(events_df: pd.DataFrame) -> pd.DataFrame:
     df = events_df.copy()
     if not pd.api.types.is_datetime64_any_dtype(df["invoice_date"]):
         df["invoice_date"] = pd.to_datetime(df["invoice_date"], dayfirst=True)
+
+    # Lines of one bill + date + medicine are one purchase (strips added up); no-op on aggregated frames
+    from refillcare.data.cleaning import merge_bill_lines
+
+    df = merge_bill_lines(df)
 
     # Sort strictly chronologically
     df = df.sort_values(by=SORT_ORDER, ascending=True).reset_index(drop=True)

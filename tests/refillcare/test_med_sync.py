@@ -287,3 +287,141 @@ def test_med_sync_customer_phone_composite_key():
     assert kiran_b.total_items_count == 2
     assert kiran_b.message_reduction_count == 1
 
+
+def test_med_sync_same_send_date_different_due_stages():
+    """Verify that reminders firing on the same send date with different DUE stages
+    (-7d, -3d, -1d, 0d) are bundled into 1 single message with all medications listed."""
+    engine = MedSyncEngine(sync_window_days=0)
+    send_dt = date(2026, 11, 9)
+
+    records = [
+        {
+            "customer_id": "SURYA",
+            "customer_name": "SURYA NARAYANA",
+            "mobile_no": "9491226008",
+            "item_id": "M1",
+            "item_name": "MET XL 50MG TAB",
+            "expected_refill_date": date(2026, 11, 10),
+            "target_send_date": send_dt,
+            "stage_offset": -1,
+            "reminder_id": "REM-1",
+        },
+        {
+            "customer_id": "SURYA",
+            "customer_name": "SURYA NARAYANA",
+            "mobile_no": "9491226008",
+            "item_id": "M2",
+            "item_name": "RAZO 20MG TAB",
+            "expected_refill_date": date(2026, 11, 16),
+            "target_send_date": send_dt,
+            "stage_offset": -7,
+            "reminder_id": "REM-2",
+        },
+        {
+            "customer_id": "SURYA",
+            "customer_name": "SURYA NARAYANA",
+            "mobile_no": "9491226008",
+            "item_id": "M3",
+            "item_name": "AZULIX SM IR 50/1000/2 TAB",
+            "expected_refill_date": date(2026, 11, 9),
+            "target_send_date": send_dt,
+            "stage_offset": 0,
+            "reminder_id": "REM-3",
+        },
+        {
+            "customer_id": "SURYA",
+            "customer_name": "SURYA NARAYANA",
+            "mobile_no": "9491226008",
+            "item_id": "M4",
+            "item_name": "EMPAGREAT 25MG TABS",
+            "expected_refill_date": date(2026, 11, 12),
+            "target_send_date": send_dt,
+            "stage_offset": -3,
+            "reminder_id": "REM-4",
+        },
+    ]
+
+    bundles = engine.cluster_patient_decisions(records, sync_window_days=0)
+
+    # All 4 DUE items scheduled for 2026-11-09 must form exactly 1 bundle
+    assert len(bundles) == 1
+    b = bundles[0]
+    assert b.customer_name == "SURYA NARAYANA"
+    assert b.total_items_count == 4
+    assert b.message_reduction_count == 3
+    assert b.lifecycle_tier == "DUE"
+    assert b.refill_function == "DUE_REFILL"
+    assert b.target_send_date == send_dt
+    med_names = [it.item_name for it in b.synced_items]
+    assert set(med_names) == {
+        "MET XL 50MG TAB",
+        "RAZO 20MG TAB",
+        "AZULIX SM IR 50/1000/2 TAB",
+        "EMPAGREAT 25MG TABS",
+    }
+    assert set(b.stage_reminder_ids) == {"REM-1", "REM-2", "REM-3", "REM-4"}
+
+
+def test_med_sync_same_send_date_followup_and_tier_isolation():
+    """Verify that follow-up stages (+2d and +5d) on the same send date bundle together,
+    while remaining isolated from DUE stages."""
+    engine = MedSyncEngine(sync_window_days=0)
+    send_dt = date(2026, 11, 9)
+
+    records = [
+        # 2 DUE items
+        {
+            "customer_id": "C1",
+            "customer_name": "Patient One",
+            "mobile_no": "9848011111",
+            "item_id": "M1",
+            "item_name": "TELMA 40",
+            "expected_refill_date": date(2026, 11, 9),
+            "target_send_date": send_dt,
+            "stage_offset": 0,
+        },
+        {
+            "customer_id": "C1",
+            "customer_name": "Patient One",
+            "mobile_no": "9848011111",
+            "item_id": "M2",
+            "item_name": "GLIMY M2",
+            "expected_refill_date": date(2026, 11, 10),
+            "target_send_date": send_dt,
+            "stage_offset": -1,
+        },
+        # 2 FOLLOW-UP items (+2d and +5d) on same send date
+        {
+            "customer_id": "C1",
+            "customer_name": "Patient One",
+            "mobile_no": "9848011111",
+            "item_id": "M3",
+            "item_name": "ATORVA 10",
+            "expected_refill_date": date(2026, 11, 7),
+            "target_send_date": send_dt,
+            "stage_offset": 2,
+        },
+        {
+            "customer_id": "C1",
+            "customer_name": "Patient One",
+            "mobile_no": "9848011111",
+            "item_id": "M4",
+            "item_name": "ECOSPRIN 75",
+            "expected_refill_date": date(2026, 11, 4),
+            "target_send_date": send_dt,
+            "stage_offset": 5,
+        },
+    ]
+
+    bundles = engine.cluster_patient_decisions(records, sync_window_days=0)
+
+    # Must produce 2 bundles: 1 DUE bundle (2 meds), 1 FOLLOWUP bundle (2 meds)
+    assert len(bundles) == 2
+    due_b = [b for b in bundles if b.lifecycle_tier == "DUE"][0]
+    follow_b = [b for b in bundles if b.lifecycle_tier == "FOLLOWUP"][0]
+
+    assert due_b.total_items_count == 2
+    assert follow_b.total_items_count == 2
+    assert due_b.refill_function == "DUE_REFILL"
+    assert follow_b.refill_function == "REFILL_FOLLOW_UP"
+

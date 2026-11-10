@@ -70,6 +70,86 @@ from refillcare.data.monthly_ingestion import (
 
 # Constants & Default Paths
 DEFAULT_MODEL_PATH = "data/refillcare/processed/models/refill_model.joblib"
+
+# Pharmacist-facing tabs (7 Nov 2026): technical tabs hidden from the store app. True = shown.
+TAB_VISIBILITY = {
+    "results": False,  # "Upcoming Refills" (forecast explorer + accuracy panel)
+    "ml": False,       # "AI Accuracy & Settings" (retrain / promote / rollback - admin only, via API / scripts)
+}
+
+
+def _visible_tab(tab):
+    """Run a tab's block only when the tab is shown: ``for _ in _visible_tab(tab): ...``."""
+    if tab is not None:
+        with tab:
+            yield
+
+
+def store_cache_data(**cache_kwargs):
+    """``st.cache_data`` whose cache key also includes the current store.
+
+    Each store has its own database; without the store in the key, switching between two stores of
+    the same tenant would show the first store's cached numbers for up to the TTL.
+    """
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def _keyed(store_key: str, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        cached = st.cache_data(**cache_kwargs)(_keyed)
+
+        @functools.wraps(fn)
+        def call(*args, **kwargs):
+            from refillcare.tenancy import current_store_id
+
+            return cached(current_store_id(), *args, **kwargs)
+
+        call.clear = cached.clear
+        return call
+
+    return deco
+
+
+def _is_default_store() -> bool:
+    """Legacy parquet / CSV files on disk belong to the original store only."""
+    from refillcare.tenancy import current_store_id, default_store_id
+
+    return current_store_id() == default_store_id()
+
+
+STORE_SCOPED_SESSION_KEYS = ("active_sales_data", "active_history_data", "active_eligible_df", "active_ineligible_df",
+                             "wa_last_send", "bulk_add_msg")
+
+
+def apply_store_from_request() -> str:
+    """Store of this browser session: ``?store_id=`` in the link Mediastra opens (else REFILLCARE_STORE_ID).
+
+    In production only ids listed in REFILLCARE_ALLOWED_STORES are accepted (Mediastra handles the
+    login; this stops a typed URL from opening / creating another store). When the store changes,
+    the previous store's in-session data is dropped.
+    """
+    from refillcare.tenancy import InvalidStoreId, default_store_id, is_production, normalise_store_id, set_current_store
+
+    requested = st.query_params.get("store_id") or st.session_state.get("_store_id") or default_store_id()
+    tenant = st.query_params.get("tenant_id") or st.session_state.get("_tenant_id")
+    try:
+        sid = normalise_store_id(requested)
+    except InvalidStoreId:
+        st.error("Invalid store link. Please open RefillCare again from Mediastra.")
+        st.stop()
+    allowed = {s.strip().lower() for s in os.getenv("REFILLCARE_ALLOWED_STORES", "").split(",") if s.strip()}
+    if (allowed and sid not in allowed) or (not allowed and is_production() and sid != default_store_id()):
+        st.error("This store is not enabled for RefillCare. Please contact Mediastra support.")
+        st.stop()
+    if st.session_state.get("_store_id") not in (None, sid):
+        for k in STORE_SCOPED_SESSION_KEYS:
+            st.session_state.pop(k, None)
+    st.session_state["_store_id"], st.session_state["_tenant_id"] = sid, tenant
+    return set_current_store(sid, tenant)
+
+
 DEFAULT_HUMAN_MODEL_PATH = "data/refillcare/processed/models/human_ml_refill_model.joblib"
 DEFAULT_TEST_DATA_PATH = "data/refillcare/processed/test.parquet"
 DEFAULT_HISTORY_DATA_PATH = "data/refillcare/processed/purchase_history.parquet"
@@ -282,9 +362,13 @@ def _read_clean_channel_metrics_cached(file_path: str, mtime: float, size: int) 
     }
 
 
-@st.cache_data(show_spinner=False, ttl=15)
+@store_cache_data(show_spinner=False, ttl=15)
 def get_enterprise_channel_distribution_cached() -> Dict[str, int]:
-    """Dynamically compute master raw, cleaned, and channel breakdown from enterprise.db (live updates on upload)."""
+    """Sales-line counts of the CURRENT store, from its own database (updates on every upload / rollback).
+
+    raw_tx_cnt = lines received in the store's active uploads; tot_clean = lines stored after removing
+    duplicates; the store's legacy parquet is used only for the original store before any DB import.
+    """
     try:
         from database.connection import SessionLocal
         from database.models import SalesTransactionModel as Line, ImportBatchModel
@@ -293,59 +377,65 @@ def get_enterprise_channel_distribution_cached() -> Dict[str, int]:
 
         with SessionLocal() as db:
             if hs.history_count(db) > 0:
-                cust_sales = db.execute(
-                    select(func.count(Line.id)).where(Line.transaction_type == "CUSTOMER_SALE")
-                ).scalar() or 0
-
-                b2b_db = db.execute(
-                    select(func.count(Line.id)).where(Line.transaction_type == "B2B_INTER_STORE")
-                ).scalar() or 0
-                b2b_sales = b2b_db if b2b_db > 0 else 2264
-
-                refill_el = db.execute(
-                    select(func.count(Line.id)).where(Line.refillcare_eligible.is_(True))
-                ).scalar() or cust_sales
-
-                tot_clean = cust_sales + b2b_sales
-
-                new_batches_raw = db.execute(
-                    select(func.sum(ImportBatchModel.record_count)).where(
-                        ImportBatchModel.import_batch_id != "LEGACY_HISTORY",
-                        ImportBatchModel.processing_status == "ACTIVE",
-                    )
-                ).scalar() or 0
-
-                raw_total = 909657 + int(new_batches_raw)
-                purged_cnt = max(0, raw_total - tot_clean)
-
+                c = hs.channel_counts(db)  # same function as the API
                 return {
-                    "raw_tx_cnt": raw_total,
-                    "tot_clean": tot_clean,
-                    "cust_sales": cust_sales,
-                    "b2b_sales": b2b_sales,
-                    "refill_el": refill_el,
-                    "purged_cnt": purged_cnt,
+                    "raw_tx_cnt": c["received"],
+                    "tot_clean": c["stored"],
+                    "cust_sales": c["customer_sales"],
+                    "b2b_sales": c["b2b_inter_store"],
+                    "refill_el": c["refillcare_eligible"],
+                    "purged_cnt": c["not_stored"],
                 }
     except Exception:
         pass
 
-    clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
-    if clean_tx_file.exists():
-        try:
-            stat = clean_tx_file.stat()
-            m = _read_clean_channel_metrics_cached(str(clean_tx_file), stat.st_mtime, stat.st_size)
-            raw = get_master_raw_transaction_count() or m["tot_clean"]
-            return {
-                "raw_tx_cnt": raw,
-                "tot_clean": m["tot_clean"],
-                "cust_sales": m["cust_sales"],
-                "b2b_sales": m["b2b_sales"],
-                "refill_el": m["refill_el"],
-                "purged_cnt": max(0, raw - m["tot_clean"]),
-            }
-        except Exception:
-            pass
+    if _is_default_store():
+        clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
+        if clean_tx_file.exists():
+            try:
+                stat = clean_tx_file.stat()
+                m = _read_clean_channel_metrics_cached(str(clean_tx_file), stat.st_mtime, stat.st_size)
+                raw = max(get_master_raw_transaction_count() or 0, m["tot_clean"])
+                return {
+                    "raw_tx_cnt": raw,
+                    "tot_clean": m["tot_clean"],
+                    "cust_sales": m["cust_sales"],
+                    "b2b_sales": m["b2b_sales"],
+                    "refill_el": m["refill_el"],
+                    "purged_cnt": raw - m["tot_clean"],
+                }
+            except Exception:
+                pass
     return {"raw_tx_cnt": 0, "tot_clean": 0, "cust_sales": 0, "b2b_sales": 0, "refill_el": 0, "purged_cnt": 0}
+
+
+@store_cache_data(show_spinner=False, ttl=60)
+def load_store_b2b_lines(limit: int = 200) -> Tuple[int, pd.DataFrame]:
+    """(total, latest rows) of the CURRENT store's B2B / inter-store lines (excluded from reminders)."""
+    cols = ["invoice_number", "invoice_date", "customerId", "customerName", "MOBILE_NO", "itemId", "itemName",
+            "quantity", "transaction_type", "refillcare_eligible", "exclusion_reason"]
+    try:
+        from database.connection import SessionLocal
+        from database.models import SalesTransactionModel as Line
+        from refillcare.data import history_store as hs
+
+        with SessionLocal() as db:
+            if hs.history_count(db) > 0:
+                q = db.query(Line).filter(Line.transaction_type == "B2B_INTER_STORE")
+                total = q.count()
+                rows = q.order_by(Line.invoice_date.desc()).limit(limit).all()
+                return total, pd.DataFrame([[r.invoice_number, r.invoice_date, r.customer_id, r.customer_name, r.mobile_no,
+                                             r.item_id, r.item_name, r.quantity, r.transaction_type, r.refillcare_eligible,
+                                             r.exclusion_reason] for r in rows], columns=cols)
+    except Exception:
+        pass
+    if _is_default_store():
+        clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
+        if clean_tx_file.exists():
+            all_tx = pd.read_parquet(clean_tx_file)
+            b2b = all_tx[all_tx["transaction_type"] == "B2B_INTER_STORE"]
+            return len(b2b), pd.DataFrame(b2b.head(limit)).reindex(columns=cols)
+    return 0, pd.DataFrame(columns=cols)
 
 
 def get_clean_transaction_channel_metrics() -> Dict[str, int]:
@@ -832,7 +922,7 @@ def prepare_overview_from_decisions(store_id: str, version: tuple, ineligible_li
     return el.reset_index(drop=True), inel.reset_index(drop=True), metrics
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@store_cache_data(show_spinner=False, ttl=300)
 def serving_model_status() -> Dict[str, Any]:
     """Which model serves predictions (same as /health). Cached 5 min; cleared by every mutation."""
     try:
@@ -1546,7 +1636,7 @@ def parse_and_validate_uploaded_sales_file(
     return renamed_df, metrics
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@store_cache_data(ttl=60, show_spinner=False)
 def get_available_reminder_dates() -> List[date]:
     """Get list of distinct scheduled reminder dates from persistent enterprise.db."""
     try:
@@ -1564,7 +1654,7 @@ def get_available_reminder_dates() -> List[date]:
         return []
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@store_cache_data(ttl=60, show_spinner=False)
 def get_available_reminder_months() -> List[str]:
     """Get list of distinct scheduled reminder months (YYYY-MM) from enterprise.db."""
     try:
@@ -1590,7 +1680,7 @@ def get_available_reminder_months() -> List[str]:
     return [cur_m]
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@store_cache_data(ttl=60, show_spinner=False)
 def load_v1_reminder_queue_df(
     target_date: Optional[date] = None,
     target_month: Optional[str] = None,
@@ -1651,6 +1741,7 @@ def load_v1_reminder_queue_df(
                 def _fmt_path(p):
                     if p == "PATH_A": return "Path A (Adherence)"
                     elif p == "PATH_B": return "Path B (Developing)"
+                    elif p == "PHARMACIST_ADDED": return "Added by pharmacist"
                     return str(p)
 
                 df["Clinical Path"] = df["path"].apply(_fmt_path)
@@ -1675,18 +1766,15 @@ def load_v1_reminder_queue_df(
                 df["estimated_days_of_supply"] = df["Estimated Days of Supply"]
                 df["mobile_status"] = df["Mobile Status"]
 
-                # Clinical Chronic Safety Gate: filter out non-chronic formulations, syrups, drops, eye drops, and acute OTC items
-                from refillcare.data.medication_classifier import is_chronic_medication
-                is_chr_mask = df["Medication"].apply(lambda m: is_chronic_medication(str(m)))
-                df = df[is_chr_mask].reset_index(drop=True)
-
+                # The send rule (rules-chronic or pharmacist-added) is applied once, inside the shared
+                # queue (refillcare.engine.persistence.medicine_can_be_sent) - same rows as the API.
                 return df
     except Exception:
         pass
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@store_cache_data(ttl=5, show_spinner=False)
 def get_forecast_anchor_month() -> str:
     """Active forecast month = current calendar month or latest purchase + 1 day, whichever is newer."""
     try:
@@ -1716,109 +1804,25 @@ def month_label(month_key: str) -> str:
     return f"{date(y, m, 1).strftime('%B %Y')} ({month_key})"
 
 
+@store_cache_data(ttl=60, show_spinner=False)
+def load_overview_kpis(today: date) -> Dict[str, Any]:
+    """Pharmacy Overview numbers of the current store for this month (same function as the API)."""
+    from database.connection import SessionLocal
+    from refillcare.engine.overview_kpis import overview_kpis
+
+    with SessionLocal() as db:
+        return overview_kpis(db, today)
+
+
 def get_enterprise_dashboard_kpis(history_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
-    """Retrieve live operations KPIs and monthly forecast distribution dynamically from enterprise.db."""
-    cust_count = 0
-    if history_df is not None and not history_df.empty and "customerId" in history_df.columns:
-        cust_count = int(pd.Series(history_df["customerId"]).nunique())
-
-    kpis = {
-        "customers_monitored": cust_count,
-        "upcoming_reminders": 0,
-        "reminders_due_today": 0,
-        "customers_needing_review": 0,
-        "target_month": get_forecast_anchor_month(),
-        "target_month_reminders": 0,
-        "monthly_stage_distribution": {},
-    }
-    try:
-        from database.connection import SessionLocal
-        from database.models import ReminderCycleModel, ReminderStageModel, RefillDecisionModel
-        from sqlalchemy import func
-        with SessionLocal() as db:
-            # 1. Monthly Stage Distribution - strictly active, eligible, chronic stages
-            stage_rows = (
-                db.query(
-                    func.substr(ReminderStageModel.target_send_date, 1, 7).label("m"),
-                    func.count().label("cnt")
-                )
-                .join(ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id)
-                .join(RefillDecisionModel, ReminderCycleModel.decision_id == RefillDecisionModel.decision_id)
-                .filter(
-                    ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED"]),
-                    ReminderCycleModel.is_active == True,
-                    RefillDecisionModel.is_eligible == True,
-                )
-                .group_by(func.substr(ReminderStageModel.target_send_date, 1, 7))
-                .order_by(func.substr(ReminderStageModel.target_send_date, 1, 7).asc())
-                .all()
-            )
-            dist = {r[0]: int(r[1]) for r in stage_rows if r[0]}
-            kpis["monthly_stage_distribution"] = dist
-
-            if kpis["target_month"] not in dist and dist:
-                future = [k for k in dist if k >= kpis["target_month"]]
-                kpis["target_month"] = future[0] if future else list(dist.keys())[-1]
-
-            target_m = kpis["target_month"]
-            target_stage_cnt = dist.get(target_m, 0)
-            kpis["upcoming_reminders"] = target_stage_cnt
-            kpis["target_month_reminders"] = target_stage_cnt
-
-            target_unique = (
-                db.query(ReminderStageModel.customer_id, ReminderStageModel.item_id)
-                .join(ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id)
-                .join(RefillDecisionModel, ReminderCycleModel.decision_id == RefillDecisionModel.decision_id)
-                .filter(
-                    ReminderStageModel.target_send_date.like(f"{target_m}%"),
-                    ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED"]),
-                    ReminderCycleModel.is_active == True,
-                    RefillDecisionModel.is_eligible == True,
-                )
-                .distinct()
-                .count()
-            )
-            kpis["target_month_unique_meds"] = target_unique
-
-            # Reminders due today (target_send_date == today)
-            today_cnt = (
-                db.query(ReminderStageModel)
-                .join(ReminderCycleModel, ReminderStageModel.cycle_id == ReminderCycleModel.cycle_id)
-                .join(RefillDecisionModel, ReminderCycleModel.decision_id == RefillDecisionModel.decision_id)
-                .filter(
-                    ReminderStageModel.target_send_date == date.today(),
-                    ReminderStageModel.status.in_(["PENDING", "DUE", "APPROVED"]),
-                    ReminderCycleModel.is_active == True,
-                    RefillDecisionModel.is_eligible == True,
-                )
-                .count()
-            )
-            kpis["reminders_due_today"] = today_cnt
-
-            # Customers monitored
-            db_cust_cnt = db.query(RefillDecisionModel.customer_id).distinct().count()
-            if db_cust_cnt > 0:
-                kpis["customers_monitored"] = db_cust_cnt
-
-            # Customers needing review in active operational period (ineligible latest-month sales + missing mobile numbers)
-            latest_p_date = db.query(func.max(RefillDecisionModel.last_purchase_date)).scalar()
-            prev_m = str(latest_p_date)[:7] if latest_p_date else date.today().strftime("%Y-%m")
-            cold_cnt = db.query(RefillDecisionModel.customer_id).filter(
-                RefillDecisionModel.last_purchase_date.like(f"{prev_m}%"),
-                RefillDecisionModel.is_eligible == False,
-            ).distinct().count()
-            missing_mob_cnt = db.query(RefillDecisionModel.customer_id).filter(
-                RefillDecisionModel.is_eligible == True,
-                RefillDecisionModel.expected_refill_date.like(f"{target_m}%"),
-                (RefillDecisionModel.mobile_no == None) | (RefillDecisionModel.mobile_no == "") | (RefillDecisionModel.mobile_no == "nan")
-            ).distinct().count()
-            kpis["customers_needing_review"] = cold_cnt + missing_mob_cnt
-    except Exception:
-        pass
-    return kpis
+    """Backwards-compatible wrapper around :func:`load_overview_kpis` (this store, this month)."""
+    k = dict(load_overview_kpis(date.today()))
+    k.update({"upcoming_reminders": k["reminder_messages_month"], "customers_needing_review": k["patients_needing_review_today"],
+              "target_month": k["month"], "target_month_reminders": k["reminder_messages_month"]})
+    return k
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@store_cache_data(ttl=15, show_spinner=False)
 def load_v1_customers_needing_review_df(target_month: Optional[str] = None) -> pd.DataFrame:
     """Load live review candidates from enterprise.db."""
     try:
@@ -1904,7 +1908,7 @@ def load_v1_customers_needing_review_df(target_month: Optional[str] = None) -> p
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@store_cache_data(ttl=15, show_spinner=False)
 def load_v1_refill_decisions_df(target_month: Optional[str] = None) -> pd.DataFrame:
     """Load persistent refill decisions from enterprise.db for interactive forecast exploration."""
     try:
@@ -1991,9 +1995,11 @@ def render_app():
 
     from refillcare.logging_setup import configure_logging
 
-    # No login / store picker here: the Mediastra application handles tenant > store logins;
-    # this app works on the configured store (REFILLCARE_STORE_ID).
+    # No login / store picker here: the Mediastra application handles tenant > store logins and
+    # opens this app with ?store_id=<store> (default: REFILLCARE_STORE_ID). Every database session,
+    # cache and file below follows this store.
     configure_logging()
+    apply_store_from_request()
 
     # Clean Pharmacy Branding & Enterprise Hospital Styles
     st.markdown("""
@@ -2152,8 +2158,13 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             recent_data = st.session_state.active_sales_data
         elif history_data is not None and not history_data.empty:
             recent_data = history_data
-        else:
+        elif _is_default_store():
             recent_data = load_refill_data()
+        else:
+            # New store with no uploads yet: never fall back to another store's files
+            recent_data = history_data = pd.DataFrame(columns=["invoice_date", "customerId", "customerName", "itemId",
+                                                               "itemName", "quantity", "MOBILE_NO"])
+            st.info("No sales data has been uploaded for this store yet. Open **Upload Sales Data** to add the first file.")
 
     if model_bundle is None or recent_data is None:
         st.error("RefillCare System Telemetry Offline")
@@ -2196,13 +2207,12 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
     sales_coverage_str = "N/A"
     latest_sales_date_str = "N/A"
     eval_data_for_dates = history_data if (history_data is not None and not history_data.empty) else recent_data
-    if eval_data_for_dates is not None and not eval_data_for_dates.empty and "invoice_date" in eval_data_for_dates.columns:
-        parsed_dts = pd.to_datetime(eval_data_for_dates["invoice_date"], errors="coerce").dropna()
-        if not parsed_dts.empty:
-            min_d = parsed_dts.min()
-            max_d = parsed_dts.max()
-            sales_coverage_str = f"{min_d.strftime('%b %Y')} – {max_d.strftime('%b %Y')}"
-            latest_sales_date_str = max_d.strftime("%d-%m-%Y")
+    # Store summary from the database (same function as the API and every tab)
+    store_sum = load_overview_kpis(date.today())
+    if store_sum.get("latest_sales_date"):
+        _lo, _hi = pd.Timestamp(store_sum["first_sales_date"]), pd.Timestamp(store_sum["latest_sales_date"])
+        sales_coverage_str = f"{_lo.strftime('%b %Y')} – {_hi.strftime('%b %Y')}"
+        latest_sales_date_str = _hi.strftime("%d-%m-%Y")
 
     # Top Status Bar
     col_status1, col_status2, col_status3 = st.columns([2, 2, 1])
@@ -2219,17 +2229,24 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                     del st.session_state[k]
             st.rerun()
 
-    # Main Client Tabs
-    tab_dash, tab_upload, tab_results, tab_reminders, tab_medsync, tab_review, tab_whatsapp, tab_ml = st.tabs([
-        "**Pharmacy Overview**",
-        "**Upload Sales Data**",
-        "**Upcoming Refills**",
-        "**Patient Reminders**",
-        "**Combined Prescriptions (Med-Sync)**",
-        "**Patients Needing Review**",
-        "**WhatsApp Messages**",
-        "**AI Accuracy & Settings**",
-    ])
+    # Main Client Tabs. Pharmacist-facing app: tabs switched off in TAB_VISIBILITY are not shown and
+    # their code does not run (set True to bring one back). ML lifecycle stays available through the
+    # API (/api/v1/ml/*), scripts/retrain_production.py and the worker's monthly retrain.
+    tab_specs = [
+        ("dash", "**Pharmacy Overview**"),
+        ("upload", "**Upload Sales Data**"),
+        ("results", "**Upcoming Refills**"),
+        ("reminders", "**Patient Reminders**"),
+        ("medsync", "**Combined Prescriptions (Med-Sync)**"),
+        ("review", "**Patients Needing Review**"),
+        ("whatsapp", "**WhatsApp Messages**"),
+        ("ml", "**AI Accuracy & Settings**"),
+    ]
+    shown = [(key, label) for key, label in tab_specs if TAB_VISIBILITY.get(key, True)]
+    tab_objs = dict(zip([k for k, _ in shown], st.tabs([label for _, label in shown])))
+    tab_dash, tab_upload, tab_results, tab_reminders, tab_medsync, tab_review, tab_whatsapp, tab_ml = (
+        tab_objs.get(k) for k, _ in tab_specs
+    )
 
     # --------------------------------------------------------------------------
     # TAB 1: OPERATIONS DASHBOARD
@@ -2237,71 +2254,50 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
     with tab_dash:
         st.markdown("### Pharmacy Overview Summary")
 
-        dash_kpis = get_enterprise_dashboard_kpis(history_data)
-        m1, m2, m3, m4, m5 = st.columns(5)
+        dash_kpis = load_overview_kpis(date.today())
+        st.caption(f"This store · this month: **{dash_kpis['month_label']}** · numbers update after every sales upload.")
+        m1, m3, m4, m5, m6 = st.columns(5)
         with m1:
-            st.metric("Customers Monitored", f"{dash_kpis['customers_monitored']:,}")
-        with m2:
-            st.metric("Upcoming Reminders", f"{dash_kpis['upcoming_reminders']:,}")
+            active_lbl = dash_kpis.get("active_patients_label", "Active patients (last 12 months)")
+            active_cnt = dash_kpis.get("active_patients", dash_kpis.get("customers_monitored", 0))
+            all_time_cnt = dash_kpis.get("all_time_customers", dash_kpis.get("customers_monitored", 0))
+            has_12m = dash_kpis.get("has_12m_history", True)
+            span_mos = dash_kpis.get("history_span_months", 0)
+
+            help_text = (
+                f"Active patients with at least one customer sale in the last 12 months. All-time total on file: {all_time_cnt:,}."
+                if has_12m else
+                f"Store has {span_mos} months of sales data on file. All-time total: {all_time_cnt:,}."
+            )
+            st.metric(
+                active_lbl,
+                f"{active_cnt:,}",
+                delta=f"All-time: {all_time_cnt:,}",
+                delta_color="off",
+                help=help_text,
+            )
         with m3:
-            st.metric("Reminders Due Today", f"{dash_kpis['reminders_due_today']:,}")
+            st.metric(f"Reminder Messages ({dash_kpis['month_label'].split()[0]})", f"{dash_kpis['reminder_messages_month']:,}",
+                      help="WhatsApp messages scheduled this month. Each patient-medicine gets up to 7 messages "
+                           "(7, 3 and 1 day before, due day, 2 and 5 days after, 45 days after).")
         with m4:
-            st.metric("Customers Needing Review", f"{dash_kpis['customers_needing_review']:,}")
+            st.metric("Reminders Due Today", f"{dash_kpis['reminders_due_today']:,}",
+                      help="Reminder messages scheduled for today.")
         with m5:
+            st.metric("Patients Needing Review Today", f"{dash_kpis['patients_needing_review_today']:,}",
+                      help="Patients not getting reminders (chronic / not classified medicine) whose refill is due today. "
+                           "See the Patients Needing Review tab.")
+        with m6:
             st.metric("Latest Sales Date", latest_sales_date_str)
 
-        # Monthly Forecast Pipeline - Dynamically computed from active eligible chronic stages
-        dist = dash_kpis.get("monthly_stage_distribution", {})
-        default_target_m = dash_kpis.get("target_month") or get_forecast_anchor_month()
-        cur_cal_m = date.today().strftime("%Y-%m")
-
-        avail_fc_months = [m for m in sorted(dist.keys()) if m >= "2026-09"]
-        if not avail_fc_months:
-            avail_fc_months = [default_target_m]
-
-        def_fc_idx = avail_fc_months.index(default_target_m) if default_target_m in avail_fc_months else 0
-
-        col_fc_hdr, col_fc_sel = st.columns([2.6, 1.4])
-        with col_fc_hdr:
-            st.markdown(f"#### Active Refill Forecast Horizon")
-            st.caption(f"Refill forecast models trained on verified historical sales up to **{latest_sales_date_str}**.")
-        with col_fc_sel:
-            target_m_str = st.selectbox(
-                "Forecast Month",
-                options=avail_fc_months,
-                index=def_fc_idx,
-                format_func=lambda m: f"{month_label(m)} {'(Current Horizon)' if m == cur_cal_m else '(Data Horizon)' if m == '2026-10' else ''}",
-                key="dashboard_forecast_month_selector",
-                help="Select target operational month to inspect forecast stages."
-            )
-
         try:
-            t_y, t_m = map(int, target_m_str.split("-"))
-            target_label = f"{date(t_y, t_m, 1).strftime('%B %Y')} ({target_m_str})"
-            n_y, n_m = (t_y, t_m + 1) if t_m < 12 else (t_y + 1, 1)
-            next_m_str = f"{n_y:04d}-{n_m:02d}"
-            next_label = f"{date(n_y, n_m, 1).strftime('%B %Y')} ({next_m_str})"
-        except Exception:
-            target_label = month_label(target_m_str)
-            next_m_str = shift_month(target_m_str, 1)
-            next_label = month_label(next_m_str)
-
-        target_stage_cnt = dist.get(target_m_str, 0)
-        next_stage_cnt = dist.get(next_m_str, 0)
-
-        c_fc1, c_fc2 = st.columns(2)
-        with c_fc1:
-            st.metric(f"{target_label.split('(')[0].strip()} (Primary Refill Horizon)", f"{target_stage_cnt:,} stages", f"{target_stage_cnt:,} Active Scheduled Reminders", delta_color="normal")
-        with c_fc2:
-            st.metric(f"{next_label.split('(')[0].strip()} (Secondary Refill Horizon)", f"{next_stage_cnt:,} stages", "Extended Cycle Pipeline", delta_color="normal")
-
-        if target_m_str == cur_cal_m and latest_sales_date_str != "N/A":
-            if "10-2026" in latest_sales_date_str or "2026-10" in latest_sales_date_str:
-                st.info(f"Showing **{month_label(cur_cal_m)}** operational pipeline ({target_stage_cnt:,} active refills). Refill predictions reflect verified sales through **{latest_sales_date_str}**.")
-            else:
-                st.info(f"Showing **{month_label(cur_cal_m)}** operational pipeline ({target_stage_cnt:,} active refills). Latest verified sales file on record is **{latest_sales_date_str}**. Ingest October sales to refresh the 30-day cohort into November.")
-
-        st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+            _latest_dt = datetime.strptime(latest_sales_date_str, "%d-%m-%Y").date()
+            _lag = (date.today() - _latest_dt).days
+        except ValueError:
+            _lag = None
+        if _lag is not None and _lag > 2:
+            st.warning(f"Latest sales uploaded are from **{latest_sales_date_str}** ({_lag} days ago). "
+                       "Upload the newer sales so reminders and review lists are up to date.")
 
         st.markdown("---")
         st.markdown("### Transaction Channel Distribution")
@@ -2323,19 +2319,21 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
         tc1, tc2, tc3, tc4, tc5 = st.columns(5)
         with tc1:
             st.metric(
-                "Total Master Transactions",
+                "Sales Lines Received",
                 f"{raw_tx_cnt:,}",
-                f"{clean_tx_cnt:,} Cleaned",
+                f"{clean_tx_cnt:,} Stored",
                 delta_color="normal",
-                help=f"Master transaction records in enterprise database ({raw_tx_cnt:,} rows across verified batches). Updates dynamically whenever new sales data is ingested."
+                help=f"Bill lines received in this store's uploads ({raw_tx_cnt:,}). Every line is kept, including the same "
+                     "medicine billed on several lines of one bill (batches / repeat scans) - their strips are added up per bill."
             )
         with tc2:
             st.metric(
-                "Total Cleaned Transactions",
+                "Sales Lines Stored",
                 f"{clean_tx_cnt:,}",
-                f"-{purged_cnt:,} Duplicates Filtered",
+                f"-{purged_cnt:,} returns / invalid rows",
                 delta_color="off",
-                help=f"Cleaned unique transactions ({clean_tx_cnt:,}) after filtering out {purged_cnt:,} exact duplicate sales slips and invalid rows."
+                help=f"Lines stored ({clean_tx_cnt:,}). Not stored: {purged_cnt:,} return lines (netted against the sale), "
+                     "rows without a date / customer / medicine, and lines already uploaded before."
             )
         with tc3:
             st.metric(
@@ -2357,90 +2355,10 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             )
 
         st.caption(
-            f"**Transaction Reconciliation Audit:** Master dataset contains **{raw_tx_cnt:,}** total records (through **{latest_sales_date_str}**). "
-            f"The data hygiene pipeline safely purged **{purged_cnt:,}** exact duplicate rows (98.1% data retention), yielding **{clean_tx_cnt:,}** verified transactions "
+            f"**Transaction Reconciliation Audit:** This store's uploads contain **{raw_tx_cnt:,}** bill lines (through **{latest_sales_date_str}**). "
+            f"**{purged_cnt:,}** rows were not stored (returns netted against their sale, invalid rows, lines already uploaded) - {(clean_tx_cnt / raw_tx_cnt * 100) if raw_tx_cnt else 100:.1f}% kept, giving **{clean_tx_cnt:,}** stored lines "
             f"(**{cust_sales:,}** Retail Patient Sales + **{b2b_sales:,}** B2B Wholesale Transfers)."
         )
-
-        st.markdown("---")
-        st.markdown("### Statistical Uncertainty Bounds & Model Calibration ($P_{10}, P_{50}, P_{90}$)")
-        st.caption("3-Head Gradient Boosted Quantile Regressors dynamically bound patient refill intervals to catch early runouts and adherence lapses.")
-
-        # Dynamically load Quantile Uncertainty Benchmark Report if present
-        bench_report_path = find_artifact_path("data/refillcare/processed/chronic_model_benchmark_report.json")
-        p50_mae_str = "9.73 days"
-        p50_delta_str = "-15.98d vs Baseline (-62%)"
-        high_stab_mae_str = "7.36 days"
-        high_stab_delta_str = "85.0% within ±14d"
-        p10_p90_cov_str = "80.66%"
-        p10_p90_span_str = "48.4d Avg Span"
-        if bench_report_path.exists():
-            try:
-                import json
-                with open(bench_report_path, "r", encoding="utf-8") as bf:
-                    bdata = json.load(bf)
-                comp = bdata.get("overall_test_comparison", {})
-                xgb_m = comp.get("ChronicSpecializedXGBoost", {})
-                base_m = comp.get("HistoricalMedianBaseline", {})
-                if "mae" in xgb_m:
-                    p50_mae_str = f"{xgb_m['mae']:.2f} days"
-                    if "mae" in base_m:
-                        diff = xgb_m['mae'] - base_m['mae']
-                        pct_red = abs(diff / base_m['mae']) * 100
-                        p50_delta_str = f"{diff:+.2f}d vs Baseline (-{pct_red:.0f}%)"
-                q_env = bdata.get("quantile_uncertainty_envelope", {})
-                if "p10_p90_coverage_pct" in q_env:
-                    p10_p90_cov_str = f"{q_env['p10_p90_coverage_pct']:.2f}%"
-                if "avg_uncertainty_span_days" in q_env:
-                    p10_p90_span_str = f"{q_env['avg_uncertainty_span_days']:.1f}d Avg Span"
-                strat = bdata.get("stratified_by_history_depth", {})
-                high_s = strat.get(">10 Purchases (High-Stability Chronic)", {}).get("model_metrics", {})
-                if "mae" in high_s:
-                    high_stab_mae_str = f"{high_s['mae']:.2f} days"
-                if "within_14_days_pct" in high_s:
-                    high_stab_delta_str = f"{high_s['within_14_days_pct']:.1f}% within ±14d"
-            except Exception:
-                pass
-
-        qm1, qm2, qm3, qm4 = st.columns(4)
-        with qm1:
-            st.metric("P50 Median Regressor MAE", p50_mae_str, p50_delta_str, delta_color="normal", help="Median-loss optimized point prediction on clean chronic maintenance records")
-        with qm2:
-            st.metric("High-Stability Chronic MAE", high_stab_mae_str, high_stab_delta_str, delta_color="normal", help="High-frequency patients (>10 purchases) achieve sub-7.5 day precision")
-        with qm3:
-            st.metric("P10 → P90 Empirical Coverage", p10_p90_cov_str, p10_p90_span_str, delta_color="normal", help="Holdout refills falling strictly within [P10, P90] confidence bounds")
-        with qm4:
-            st.metric("Med-Sync Friction Reduction", "50.0%+", "Saved Multi-SMS Noise", delta_color="normal", help="Prescription synchronization reduces patient notification spam by half")
-
-        st.markdown("---")
-        st.markdown("### Clinical Dosage Regimen & Prediction Architecture")
-        st.caption("The consensus engine analyzes prescription dosage frequencies, pack sizes, and historical adherence to calculate precise refill schedules.")
-
-        tot_hist_events = len(history_data) if (history_data is not None and not history_data.empty) else 827955
-        od_cnt = int(tot_hist_events * 0.371)
-        qod_cnt = int(tot_hist_events * 0.288)
-        bd_cnt = int(tot_hist_events * 0.131)
-        tid_cnt = int(tot_hist_events * 0.091)
-
-        dr1, dr2, dr3, dr4 = st.columns(4)
-        with dr1:
-            st.metric("Once Daily (OD ~1.0/day)", "37.1%", f"{od_cnt:,} patient cycles", help="Chronic maintenance therapy: Statins, Antihypertensives, OD Antidiabetics")
-        with dr2:
-            st.metric("Alternate Day (QOD ~0.5/day)", "28.8%", f"{qod_cnt:,} patient cycles", help="Alternate-day dosing, tapering regimens, or intermittent therapy")
-        with dr3:
-            st.metric("Twice Daily (BD ~2.0/day)", "13.1%", f"{bd_cnt:,} patient cycles", help="Morning and evening regimens: Metformin BD, Phosphate binders")
-        with dr4:
-            st.metric("Thrice Daily (TID ~3.0/day)", "9.1%", f"{tid_cnt:,} patient cycles", help="High frequency dosing: Revlamer TID, Digestive enzymes")
-
-        with st.expander("Patient Adherence Scenarios Managed by Engine", expanded=False):
-            st.markdown(
-                "- **Med-Sync Multi-Prescription Bundling:** Groups multiple chronic medications due around the same time into a single coordinated WhatsApp reminder.\n"
-                "- **Quantile Bounds ($P_{10} \\to P_{90}$):** Binds predictions with lower and upper confidence intervals to catch early runouts before churn.\n"
-                "- **Multi-Pack Purchases:** Automatically scales refill intervals when patients buy multiple strips or boxes (e.g. 60 tablets $\\to$ 60 days).\n"
-                "- **Early Refill Carryover:** When patients refill before running out, remaining pills are factored in to avoid sending premature alerts.\n"
-                "- **Travel / Emergency Strips:** Short-term partial purchases (e.g. 10 tabs) are scheduled proportionally for early follow-up.\n"
-                "- **Return After Gap:** Resets cadence immediately to new purchase quantity when a lapsed patient resumes therapy."
-            )
 
         st.markdown("---")
 
@@ -2755,21 +2673,28 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
 
             # Display current active file summary if available
             st.markdown("#### Current Active File Status")
-            if eval_data_for_dates is not None and not eval_data_for_dates.empty:
-                d_col = "invoice_date" if "invoice_date" in eval_data_for_dates.columns else None
-                if d_col:
-                    d_parsed = pd.to_datetime(eval_data_for_dates[d_col], errors="coerce").dropna()
-                    curr_range = f"{d_parsed.min().strftime(UI_DATE_FORMAT)} to {d_parsed.max().strftime(UI_DATE_FORMAT)}" if not d_parsed.empty else "N/A"
-                else:
-                    curr_range = "N/A"
-
+            if store_sum.get("latest_sales_date"):
+                curr_range = (f"{pd.Timestamp(store_sum['first_sales_date']).strftime(UI_DATE_FORMAT)} to "
+                              f"{pd.Timestamp(store_sum['latest_sales_date']).strftime(UI_DATE_FORMAT)}")
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.metric("Sales Date Range (DD-MM-YYYY)", curr_range)
                 with c2:
-                    st.metric("Total Transactions", f"{len(eval_data_for_dates):,}")
+                    st.metric("Sales Lines Stored", f"{store_sum['sales_lines_stored']:,}",
+                              help="Every bill line kept (several lines of one medicine on one bill are added up per bill).")
                 with c3:
-                    st.metric("Monitored Customers", f"{eval_data_for_dates['customerId'].nunique():,}" if "customerId" in eval_data_for_dates.columns else f"{dash_kpis['customers_monitored']:,}")
+                    active_lbl = store_sum.get("active_patients_label", "Active patients (last 12 months)")
+                    active_cnt = store_sum.get("active_patients", store_sum.get("customers_monitored", 0))
+                    all_time_cnt = store_sum.get("all_time_customers", store_sum.get("customers_monitored", 0))
+                    st.metric(
+                        active_lbl,
+                        f"{active_cnt:,}",
+                        delta=f"All-time: {all_time_cnt:,}",
+                        delta_color="off",
+                        help=f"Same number as the Pharmacy Overview. All-time: {all_time_cnt:,}.",
+                    )
+            else:
+                st.info("No sales data stored for this store yet.")
 
             # Refill Prediction Updates for active history
             st.markdown("---")
@@ -2867,7 +2792,11 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                             notes=rule_notes.strip(),
                         )
                         if save_res["status"] == "success":
-                            st.success(f"{save_res['message']} RefillCare predictions will immediately respect this rule.")
+                            sync_info = save_res.get("sync") or {}
+                            dec_cnt = sync_info.get("decisions_saved", 0)
+                            cyc_cnt = sync_info.get("cycles_created", 0)
+                            sync_msg = f" ({dec_cnt} customer decisions updated, {cyc_cnt} reminder cycles synced in real time)" if dec_cnt else ""
+                            st.success(f"{save_res['message']}{sync_msg}")
                             st.cache_data.clear()
                             st.rerun()
                         else:
@@ -2883,8 +2812,9 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                 with col_s3:
                     st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
                     if st.button("Sync Rules", key="btn_refresh_rules"):
-                        get_dynamic_classification_rules()
-                        st.success("Rules refreshed!")
+                        get_dynamic_classification_rules(force_refresh=True)
+                        st.cache_data.clear()
+                        st.success("Rules refreshed and cache synchronized from Supabase Cloud!")
                         st.rerun()
 
                 existing_rules = list_classification_rules(search_query=search_rules_txt, rule_type_filter=filter_rules_type, limit=None)
@@ -2982,7 +2912,7 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
     # --------------------------------------------------------------------------
     # TAB: PREDICTION RESULTS (INTERNAL EVALUATION & OUTCOME ACCURACY)
     # --------------------------------------------------------------------------
-    with tab_results:
+    for _ in _visible_tab(tab_results):  # skipped when the tab is hidden (TAB_VISIBILITY)
         st.markdown("### Upcoming Refills & Predictions")
         st.write("Comparison between calculated expected refill dates and actual customer purchase dates from subsequent sales.")
 
@@ -3073,33 +3003,80 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             st.info(f"No eligible refill forecasts found for `{sel_pred_month_label}`.")
 
         st.markdown("---")
-        # Section 2: Historical Holdout Accuracy & Benchmarks
-        st.markdown("#### Historical Holdout Accuracy & Benchmarks")
-        r1, r2, r3, r4 = st.columns(4)
-        with r1:
-            st.metric("Holdout Cycles Evaluated", f"{eval_results.get('predictions_evaluated', 7126):,}")
-        with r2:
-            st.metric(
-                "Predictions within 3 Days",
-                f"{eval_results.get('within_3_days_count', 4280):,}",
-                f"{eval_results.get('within_3_days_pct', 60.1):.1f}%",
+        # Section 2: Measured accuracy of the production model (latest out-of-time evaluation).
+        # Every number comes from the evaluation report - no typed-in fallbacks.
+        st.markdown("#### Prediction Accuracy (measured on real refills)")
+        from database.connection import SessionLocal
+        from refillcare.ml.service import production_accuracy
+
+        with SessionLocal() as acc_db:
+            acc = production_accuracy(acc_db)
+        acc_ev = acc.get("evaluation") or {}
+        prod_m = acc_ev.get("production") or {}
+        if not prod_m:
+            st.info("No measured evaluation yet for the production model. Run a retrain or evaluation in the ML tab.")
+        else:
+            win = acc_ev.get("window") or {}
+
+            def _pct(d, k):
+                v = (d or {}).get(k)
+                return f"{float(v):.1f}%" if v is not None else "-"
+
+            st.caption(
+                f"Model `{acc.get('production_model_version')}` · test month {win.get('start', '?')} to {win.get('end', '?')} · "
+                f"{acc_ev.get('n_paired_events') or 0:,} real refills the model had never seen."
             )
-        with r3:
-            st.metric(
-                "Predictions within 7 Days",
-                f"{eval_results.get('within_7_days_count', 6050):,}",
-                f"{eval_results.get('within_7_days_pct', 84.9):.1f}%",
-            )
-        with r4:
-            st.metric(
-                "Mean Absolute Error",
-                f"{eval_results.get('mean_absolute_error', 9.73):.2f} days",
-                help="Average difference between expected and actual refill (Mean Absolute Error)",
-            )
+            a1, a2, a3, a4 = st.columns(4)
+            a1.metric("Reminder reached patient before buying", _pct(prod_m, "reminder_before_purchase_pct"),
+                      help="At least one reminder went out on or before the day the patient bought.")
+            a2.metric("Reminder 0-7 days before buying", _pct(prod_m, "reminder_0_7_days_before_pct"),
+                      help="A reminder went out in the week before the purchase (well-timed).")
+            a3.metric("Within ±14 days", _pct(prod_m, "within_14_days_pct"))
+            a4.metric("Within ±7 days", _pct(prod_m, "within_7_days_pct"),
+                      help="Strict point-date accuracy: predicted date within 7 days of the actual purchase.")
+
+            comp_rows = []
+            for label, key in (("RefillCare ML model (production)", "production"), ("Baseline (personal median engine)", "baseline_engine"),
+                               ("Fixed interval / days of supply", "fixed_interval_days_of_supply")):
+                m = acc_ev.get(key) or {}
+                if m:
+                    comp_rows.append({"Method": label, "Within ±7 days": _pct(m, "within_7_days_pct"),
+                                      "Within ±14 days": _pct(m, "within_14_days_pct"),
+                                      "Reminder 0-7 days before buying": _pct(m, "reminder_0_7_days_before_pct"),
+                                      "Avg error (days)": f"{float(m['mae_days']):.1f}" if m.get("mae_days") is not None else "-"})
+            if comp_rows:
+                st.markdown("##### Compared with simpler methods (same refills)")
+                st.dataframe(pd.DataFrame(comp_rows), width="stretch", hide_index=True)
+
+            bv = acc_ev.get("business_view") or {}
+            if bv:
+                st.markdown("##### By patient group")
+                grp_labels = {
+                    "all_refills": "All refills",
+                    "regular_refills": "Regular refills (lapses and early top-ups counted separately)",
+                    "patients_12_plus_purchases": "Regular patients (12+ purchases)",
+                    "ml_served": "Predicted by the ML model",
+                    "short_history_path_b": "New patients (3-5 purchases, rule-based)",
+                }
+                st.dataframe(pd.DataFrame([{
+                    "Group": lbl, "Refills": f"{int(bv[k].get('n', 0)):,}",
+                    "Within ±7 days": _pct(bv[k], "within_7_days_pct"), "Within ±14 days": _pct(bv[k], "within_14_days_pct"),
+                    "Reminder 0-7 days before buying": _pct(bv[k], "reminder_0_7_days_before_pct"),
+                } for k, lbl in grp_labels.items() if isinstance(bv.get(k), dict) and bv[k].get("n")]), width="stretch", hide_index=True)
+                kinds = bv.get("purchase_kinds_pct") or {}
+                if kinds:
+                    st.caption(
+                        f"Of all refills, {kinds.get('lapse_or_gap', 0):.1f}% were long gaps (more than twice the usual interval: "
+                        f"bought elsewhere, hospital stay or stopped - handled by the +45-day win-back message) and "
+                        f"{kinds.get('early_top_up', 0):.1f}% were early top-ups (less than half the usual interval). "
+                        "They are shown, not hidden; the promotion gate always uses all refills."
+                    )
+            else:
+                st.caption("Group breakdown appears after the next evaluation (retrain or 'Run evaluation' in the ML tab).")
 
         if eval_results.get("predictions_evaluated", 0) > 0 and not eval_results["evaluated_df"].empty:
-            st.markdown("##### Completed Cycle Evaluation Details")
-            st.dataframe(eval_results["evaluated_df"], width="stretch", hide_index=True)
+            with st.expander("Completed refill cycles (tracked outcomes)"):
+                st.dataframe(eval_results["evaluated_df"], width="stretch", hide_index=True)
 
     # --------------------------------------------------------------------------
     # TAB 4: REMINDER LIST (DATE / MONTH SELECTOR & CSV/JSON EXPORTS)
@@ -3322,18 +3299,16 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
         # Handle B2B Audit View
         if channel_filter == "B2B / Inter-Store (Audit)":
             st.warning("**B2B / Inter-Store Audit View:** Displaying excluded inter-store transactions (SB/...). These records do not participate in patient reminder delivery.")
-            clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
-            if clean_tx_file.exists():
-                all_clean_df = pd.read_parquet(clean_tx_file)
-                b2b_df = pd.DataFrame(all_clean_df[all_clean_df["transaction_type"] == "B2B_INTER_STORE"].copy())
-                st.info(f"Total B2B Inter-Store Transactions in Master Store: **{len(b2b_df):,}** (RefillCare Eligible: **NO**, Exclusion Reason: **INTER_STORE_TRANSACTION**)")
+            b2b_total, b2b_df = load_store_b2b_lines(100)
+            if b2b_total:
+                st.info(f"Total B2B Inter-Store Transactions in this store: **{b2b_total:,}** (RefillCare Eligible: **NO**, Exclusion Reason: **INTER_STORE_TRANSACTION**)")
                 st.dataframe(
-                    b2b_df[["invoice_number", "invoice_date", "customerName", "itemName", "quantity", "transaction_type", "refillcare_eligible", "exclusion_reason"]].head(100),
+                    b2b_df[["invoice_number", "invoice_date", "customerName", "itemName", "quantity", "transaction_type", "refillcare_eligible", "exclusion_reason"]],
                     width="stretch",
                     hide_index=True,
                 )
             else:
-                st.info("No clean_transactions.parquet artifact found.")
+                st.info("No B2B / inter-store transactions in this store's sales data.")
             filtered_reminders = pd.DataFrame()
         elif channel_filter == "Unknown":
             st.warning("**Unknown Transactions Audit View:** No unknown transaction types detected in source dataset.")
@@ -3823,234 +3798,236 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
     # TAB 6: CUSTOMERS NEEDING REVIEW
     # --------------------------------------------------------------------------
     with tab_review:
-        st.markdown("### Patients Needing Review")
-        st.caption(
-            "Patients requiring purchase history review, clinical verification, stability risk evaluation, or missing phone number updates."
+        from database.connection import SessionLocal
+        from refillcare.engine.pharmacist_overrides import (
+            MAX_INTERVAL,
+            MIN_INTERVAL,
+            add_to_reminders,
+            add_many_to_reminders,
+            list_pharmacist_added,
+            remove_from_reminders,
+            review_candidates,
         )
 
-        # Determine latest sales date to establish next-month prediction horizon
-        latest_sales_dt = None
-        eval_ds = history_data if (history_data is not None and not history_data.empty) else recent_data
-        if eval_ds is not None and not eval_ds.empty and "invoice_date" in eval_ds.columns:
-            dts = pd.to_datetime(eval_ds["invoice_date"], errors="coerce").dropna()
-            if not dts.empty:
-                latest_sales_dt = dts.max().date()
+        st.markdown("### Patients Needing Review")
+        st.caption(
+            "Check patients who are not getting automatic reminders. If a patient on a regular (chronic) medicine "
+            "should be reminded, click the row and add them. Medicines the medication rules mark as non-chronic "
+            "(acute, OTC, FMCG) are never listed."
+        )
 
-        if latest_sales_dt is None:
-            try:
-                from database.connection import SessionLocal
-                from sqlalchemy import text
-                with SessionLocal() as db_temp:
-                    latest_lpd = db_temp.execute(text("SELECT MAX(last_purchase_date) FROM refill_decisions")).scalar()
-                    if latest_lpd:
-                        latest_sales_dt = datetime.strptime(str(latest_lpd)[:10], "%Y-%m-%d").date()
-            except Exception:
-                pass
+        today_rev = date.today()
+        # Controls row 1: one review date (default today) + search by customer name / mobile number
+        rc1, rc2 = st.columns([1.0, 2.0])
+        with rc1:
+            rev_date = st.date_input("Prediction / Review Target Date", value=today_rev, key="review_target_date", format="DD/MM/YYYY")
+        with rc2:
+            search_rev_cust = st.text_input("🔍 Search customer name / mobile number", key="review_search_cust",
+                                            placeholder="e.g. Ramesh or 98765 43210")
+        # Only the selected day — no ± window
+        rev_start = rev_end = rev_date
+        rev_label = f"refill due on {rev_date.strftime('%d %b %Y')}"
 
-        if latest_sales_dt:
-            if latest_sales_dt.month == 12:
-                target_next_year = latest_sales_dt.year + 1
-                target_next_month = 1
-            else:
-                target_next_year = latest_sales_dt.year
-                target_next_month = latest_sales_dt.month + 1
-            last_sales_month_str = latest_sales_dt.strftime("%B %Y")
-            active_year = latest_sales_dt.year
-        else:
-            now_dt = date.today()
-            target_next_year = now_dt.year
-            target_next_month = now_dt.month
-            last_month_dt = (now_dt.replace(day=1) - timedelta(days=1))
-            last_sales_month_str = last_month_dt.strftime("%B %Y")
-            active_year = now_dt.year
-
-        target_next_month_str = date(target_next_year, target_next_month, 1).strftime("%B %Y")
-
-        # Build list of 12 calendar months with Next Month as primary default
-        target_tuple = (target_next_year, target_next_month)
-        calendar_12_months = [(active_year, m) for m in range(1, 13)]
-        if target_tuple not in calendar_12_months:
-            calendar_12_months.append(target_tuple)
-
-        ordered_tuples = [target_tuple] + [t for t in calendar_12_months if t != target_tuple]
-
-        month_display_map = {}
-        for y, m in ordered_tuples:
-            m_name = date(y, m, 1).strftime("%B %Y")
-            if (y, m) == target_tuple:
-                month_display_map[f"{y}-{m:02d}"] = f"{m_name} (Secondary Target — Default)"
-            else:
-                month_display_map[f"{y}-{m:02d}"] = f"{m_name}"
-
-        month_display_map["ALL"] = "All Months (Full Review Database)"
-        month_keys = list(month_display_map.keys())
-
-        # Controls Row 1: Target Month, Review Category, Mobile Status
-        c_rmonth, c_rcat, c_rstat = st.columns([2.5, 2.0, 1.5])
-        with c_rmonth:
-            selected_rev_month = st.selectbox(
-                "Prediction / Review Target Month",
-                options=month_keys,
-                index=0,
-                format_func=lambda k: month_display_map.get(k, k),
-                key="review_month_selector",
-                help=f"Select target month. RefillCare defaults to {target_next_month_str} (the next predicted refill month following uploaded sales up to {last_sales_month_str}).",
-            )
-
-        with c_rcat:
-            rev_filter = st.selectbox(
-                "Filter Review Category",
+        # Controls row 2: category, mobile status, medicine search
+        rk1, rk2, rk4 = st.columns([2.2, 1.0, 1.3])
+        with rk1:
+            rev_cat = st.selectbox(
+                "Review Category",
                 [
-                    "All Records",
-                    "Missing Mobile Numbers",
-                    "History Review Required",
-                    "Cold-Start / Single Purchase",
-                    "B2B / Inter-Store Excluded Records (Audit)",
+                    "Not getting reminders (chronic / not classified)",
+                    "Missing mobile number (in reminders)",
+                    "Unstable refill pattern (in reminders)",
+                    "B2B / Inter-Store excluded (audit)",
                 ],
                 key="review_cat_filter",
             )
+        with rk2:
+            rev_mobile_filter = st.selectbox("Mobile Status", ["All", "Valid", "Missing", "Invalid"], key="review_mobile_status_filter")
+        with rk4:
+            search_rev_med = st.text_input("Search medicine", key="review_search_med")
 
-        with c_rstat:
-            rev_mobile_filter = st.selectbox(
-                "Mobile Status",
-                ["All", "Valid", "Missing", "Invalid"],
-                key="review_mobile_status_filter",
-            )
-
-        # Controls Row 2: Customer Name, Medication Search
-        c_rcust, c_rmed = st.columns([1, 1])
-        with c_rcust:
-            search_rev_cust = st.text_input("Search Customer Name", key="review_search_cust")
-        with c_rmed:
-            search_rev_med = st.text_input("Search Medication", key="review_search_med")
-
-        # Collect review candidates dynamically from enterprise database
-        combined_review_df = load_v1_customers_needing_review_df(selected_rev_month)
-
-        if combined_review_df.empty:
-            # Sourcing fallback from in-memory predictions
-            review_rows = []
-            if not ineligible_df.empty:
-                for _, r in ineligible_df.iterrows():
-                    review_rows.append({
-                        "customerId": str(r.get("customerId", "")),
-                        "Customer Name": str(r.get("Customer Name", r.get("customerName", "Unknown"))),
-                        "Mobile Number": str(r.get("Mobile Number", r.get("MOBILE_NO", ""))).strip(),
-                        "Mobile Status": str(r.get("Mobile Status", determine_mobile_status(r.get("Mobile Number", "")))),
-                        "Medication": str(r.get("Medication", r.get("Medicine", r.get("itemName", "Unknown")))),
-                        "Last Purchase Date": str(r.get("Last Purchase Date", r.get("last_purchase_date", "-"))),
-                        "Expected Refill Date": str(r.get("Expected Refill Date", r.get("expected_refill_date", "-"))),
-                        "Review Reason": map_reason_client_friendly(str(r.get("Reason for Ineligibility", "Review Required"))),
-                    })
-            if review_rows:
-                combined_review_df = pd.DataFrame(review_rows)
-
-        if not combined_review_df.empty:
-            month_review_df = combined_review_df.copy()
-
-            # Active month label
-            if selected_rev_month == "ALL":
-                active_rev_label = "All Months (Full Database)"
-            else:
-                sel_y_int, sel_m_int = map(int, selected_rev_month.split("-"))
-                active_rev_label = date(sel_y_int, sel_m_int, 1).strftime("%B %Y")
-
-            # Month Banner & KPI Row
-            st.info(
-                f"**Active Prediction & Review Month: {active_rev_label}** — Showing records requiring pharmacist review, "
-                f"manual verification, or missing phone number updates (predicted from sales up to **{last_sales_month_str}**)."
-            )
-
-            total_rev_cnt = len(month_review_df)
-            missing_mob_cnt = len(month_review_df[month_review_df["Mobile Status"] != "Valid"])
-            stab_risk_cnt = len(month_review_df[month_review_df["Review Reason"].astype(str).str.contains("Review|verification|variance|Refill interval|Stability|risk", case=False, na=False)])
-            cold_start_cnt = len(month_review_df[month_review_df["Review Reason"].astype(str).str.contains("single|cold-start|< 2|insufficient|recurrence", case=False, na=False)])
-
-            rk1, rk2, rk3, rk4 = st.columns(4)
-            with rk1:
-                st.metric("Total In Review Queue", f"{total_rev_cnt:,}")
-            with rk2:
-                st.metric("Missing Mobile Numbers", f"{missing_mob_cnt:,}")
-            with rk3:
-                st.metric("Stability / Variance Risk", f"{stab_risk_cnt:,}")
-            with rk4:
-                st.metric("Cold-Start (Single Purchase)", f"{cold_start_cnt:,}")
-
-            st.markdown("---")
-
-            # Apply Category, Mobile, Customer, and Medication filters
-            filtered_review_df = month_review_df.copy()
-
-            if rev_filter == "Missing Mobile Numbers":
-                filtered_review_df = filtered_review_df[filtered_review_df["Mobile Status"] != "Valid"]
-            elif rev_filter == "History Review Required":
-                filtered_review_df = filtered_review_df[filtered_review_df["Review Reason"].astype(str).str.contains("Review|verification|variance|Refill interval|Stability|risk", case=False, na=False)]
-            elif rev_filter == "Cold-Start / Single Purchase":
-                filtered_review_df = filtered_review_df[filtered_review_df["Review Reason"].astype(str).str.contains("single|cold-start|< 2|insufficient|recurrence", case=False, na=False)]
-            elif rev_filter == "B2B / Inter-Store Excluded Records (Audit)":
-                clean_tx_file = find_artifact_path("data/refillcare/processed/clean_transactions.parquet")
-                if clean_tx_file.exists():
-                    all_tx = pd.read_parquet(clean_tx_file)
-                    b2b_sub = pd.DataFrame(all_tx[all_tx["transaction_type"] == "B2B_INTER_STORE"].head(200))
-                    filtered_review_df = pd.DataFrame({
-                        "Customer Name": pd.Series(b2b_sub.get("customerName", b2b_sub.get("customerId", ""))).astype(str),
-                        "Mobile Number": pd.Series(b2b_sub.get("MOBILE_NO", "-")).astype(str),
-                        "Mobile Status": pd.Series(b2b_sub.get("MOBILE_NO", "")).fillna("").apply(determine_mobile_status),
-                        "Medication": pd.Series(b2b_sub.get("itemName", b2b_sub.get("itemId", ""))).astype(str),
-                        "Last Purchase Date": pd.Series(b2b_sub.get("invoice_date", "-")).astype(str),
-                        "Expected Refill Date": "-",
-                        "Review Reason": "Excluded from RefillCare (B2B Inter-Store Transaction SB/...)",
-                    })
-                else:
-                    filtered_review_df = pd.DataFrame(columns=["Customer Name", "Mobile Number", "Mobile Status", "Medication", "Last Purchase Date", "Expected Refill Date", "Review Reason"])
-
-            if rev_mobile_filter != "All":
-                filtered_review_df = filtered_review_df[filtered_review_df["Mobile Status"] == rev_mobile_filter]
-
+        def _search_filter(df: pd.DataFrame) -> pd.DataFrame:
+            if df.empty:
+                return df
+            if rev_mobile_filter != "All" and "Mobile Status" in df.columns:
+                df = df[df["Mobile Status"] == rev_mobile_filter]
             if search_rev_cust.strip():
-                c_query = search_rev_cust.strip().lower()
-                c_clean = "".join(filter(str.isdigit, search_rev_cust))
-                m1 = filtered_review_df["Customer Name"].astype(str).str.lower().str.contains(c_query, regex=False, na=False)
-                m2 = pd.Series(False, index=filtered_review_df.index)
-                if "Mobile Number" in filtered_review_df.columns:
-                    m2 = filtered_review_df["Mobile Number"].astype(str).str.contains(search_rev_cust.strip(), regex=False, na=False)
-                    if c_clean:
-                        m2 = m2 | filtered_review_df["Mobile Number"].astype(str).str.replace(r"\D", "", regex=True).str.contains(c_clean, regex=False, na=False)
-                filtered_review_df = filtered_review_df[m1 | m2]
+                q_txt = search_rev_cust.strip().lower()
+                q_dig = "".join(filter(str.isdigit, search_rev_cust))
+                m_name = df["Customer Name"].astype(str).str.lower().str.contains(q_txt, regex=False, na=False)
+                m_mob = (df["Mobile Number"].astype(str).str.replace(r"\D", "", regex=True).str.contains(q_dig, regex=False, na=False)
+                         if q_dig else pd.Series(False, index=df.index))
+                df = df[m_name | m_mob]
+            if search_rev_med.strip():
+                df = df[df["Medication"].astype(str).str.lower().str.contains(search_rev_med.strip().lower(), regex=False, na=False)]
+            return df
 
-            if search_rev_med.strip() and "Medication" in filtered_review_df.columns:
-                filtered_review_df = filtered_review_df[
-                    filtered_review_df["Medication"].astype(str).str.lower().str.contains(search_rev_med.strip().lower(), regex=False, na=False)
-                ]
+        if rev_cat.startswith("Not getting reminders"):
+            with SessionLocal() as rev_db:
+                cand_rows = review_candidates(rev_db, rev_start, rev_end)
+            cand_df = pd.DataFrame([{
+                "customer_item_key": r["customer_item_key"],
+                "Customer Name": r["customer_name"],
+                "Mobile Number": format_display_phone_10digits(r["mobile_number"]) if r["mobile_number"] else "-",
+                "Mobile Status": r["mobile_status"],
+                "Medication": r["medicine"],
+                "Medicine Type": r["medicine_class"],
+                "Purchases": r["purchase_count"],
+                "Last Purchase": datetime.strptime(r["last_purchase_date"], "%Y-%m-%d").strftime("%d-%m-%Y"),
+                "Usual Gap (days)": r["usual_gap_days"],
+                "Estimated Due": datetime.strptime(r["estimated_due_date"], "%Y-%m-%d").strftime("%d-%m-%Y"),
+                "Why Not In Reminders": map_reason_client_friendly(r["reason_not_in_reminders"]),
+                "_raw": r,
+            } for r in cand_rows])
+            cand_df = _search_filter(cand_df)
 
-            st.markdown(f"#### Clinical Review Queue ({len(filtered_review_df):,} matching)")
+            kc1, kc2, kc3, kc4 = st.columns(4)
+            kc1.metric("Not getting reminders", f"{len(cand_df):,}")
+            kc2.metric("Chronic medicine", f"{int((cand_df['Medicine Type'] == 'Chronic').sum()) if not cand_df.empty else 0:,}")
+            kc3.metric("Not classified yet", f"{int((cand_df['Medicine Type'] == 'Not classified').sum()) if not cand_df.empty else 0:,}")
+            kc4.metric("No valid mobile", f"{int((cand_df['Mobile Status'] != 'Valid').sum()) if not cand_df.empty else 0:,}")
 
-            display_rev_cols = [
-                "Customer Name",
-                "Mobile Number",
-                "Mobile Status",
-                "Medication",
-                "Last Purchase Date",
-                "Expected Refill Date",
-                "Review Reason",
-            ]
+            if st.session_state.get("bulk_add_msg"):
+                st.success(st.session_state.pop("bulk_add_msg"))
+            if cand_df.empty:
+                st.info(f"No patients missing from reminders for {rev_label}.")
+            else:
+                st.markdown(f"#### Patients not getting reminders ({len(cand_df):,}) · {rev_label}")
+                st.caption("👆 Tick one row to review and edit before adding, or tick several rows "
+                           "(or the header box to select all) to add them all with one click.")
+                show_cols = ["Customer Name", "Mobile Number", "Mobile Status", "Medication", "Medicine Type", "Purchases",
+                             "Last Purchase", "Usual Gap (days)", "Estimated Due", "Why Not In Reminders"]
+                sel = st.dataframe(cand_df[show_cols], width="stretch", hide_index=True, height=360,
+                                   on_select="rerun", selection_mode="multi-row", key="review_candidates_table")
+                sel_rows = list(getattr(getattr(sel, "selection", None), "rows", []) or [])
+                if len(sel_rows) > 1:
+                    picks = cand_df.iloc[sel_rows]
+                    n_pick = len(picks)
+                    with st.container(border=True):
+                        st.markdown(f"##### ➕ Add {n_pick} selected patients to reminders")
+                        st.caption("Each patient keeps their own usual refill gap and estimated due date "
+                                   "(dates in the past move to today).")
+                        n_uncl = int((picks["Medicine Type"] == "Not classified").sum())
+                        n_nomob = int((picks["Mobile Status"] != "Valid").sum())
+                        if n_uncl:
+                            st.info(f"{n_uncl} of these medicines are not classified yet — add them only if they are regular (chronic) medicines.")
+                        if n_nomob:
+                            st.warning(f"{n_nomob} have no valid mobile number: scheduled, but not sent until the number is updated in billing.")
+                        st.dataframe(picks[["Customer Name", "Mobile Number", "Medication", "Usual Gap (days)", "Estimated Due"]],
+                                     width="stretch", hide_index=True, height=min(35 * n_pick + 38, 250))
+                        bulk_note = st.text_input("Note for all (optional)", key="bulk_add_note",
+                                                  placeholder="e.g. reviewed with store pharmacist")
+                        if st.button(f"➕ Add {n_pick} patients to reminders", type="primary", key="btn_bulk_add"):
+                            with st.spinner(f"Adding {n_pick} patients to reminders..."):
+                                with SessionLocal() as add_db:
+                                    res_bulk = add_many_to_reminders(add_db, [r["customer_item_key"] for r in picks["_raw"]],
+                                                                     added_by="pharmacist", note=bulk_note)
+                            st.cache_data.clear()
+                            st.cache_resource.clear()
+                            msg = f"✅ {res_bulk['added']} patients added to reminders."
+                            if res_bulk["already_in_reminders"]:
+                                msg += f" {res_bulk['already_in_reminders']} were already getting reminders."
+                            for f in res_bulk["failed"]:
+                                st.error(f"Not added: {f['reason']}")
+                            if res_bulk["added"] and not res_bulk["failed"]:
+                                st.session_state["bulk_add_msg"] = msg
+                                st.rerun()
+                            st.success(msg)
+                elif sel_rows:
+                    pick = cand_df.iloc[sel_rows[0]]
+                    raw = pick["_raw"]
+                    with st.container(border=True):
+                        st.markdown(f"##### ➕ Add to reminders: **{pick['Customer Name']}** — {pick['Medication']}")
+                        st.caption(
+                            f"📱 {pick['Mobile Number']} ({pick['Mobile Status']}) · {pick['Medicine Type']} · "
+                            f"{pick['Purchases']} purchases · last bought {pick['Last Purchase']}"
+                        )
+                        if pick["Medicine Type"] == "Not classified":
+                            st.info("This medicine is not in the medication rules yet. Add it only if it is a regular (chronic) medicine for this patient.")
+                        if pick["Mobile Status"] != "Valid":
+                            st.warning("No valid mobile number: the reminder is scheduled but cannot be sent until the number is updated in billing.")
+                        est_due = datetime.strptime(raw["estimated_due_date"], "%Y-%m-%d").date()
+                        ac1, ac2 = st.columns(2)
+                        with ac1:
+                            gap_days = st.number_input("Refill every (days)", min_value=MIN_INTERVAL, max_value=MAX_INTERVAL,
+                                                       value=int(raw["usual_gap_days"]), step=1, key=f"add_gap_{raw['customer_item_key']}")
+                        with ac2:
+                            next_due = st.date_input("Next refill due date", value=max(today_rev, est_due), min_value=today_rev,
+                                                     format="DD/MM/YYYY", key=f"add_due_{raw['customer_item_key']}")
+                        add_note = st.text_input("Note (optional)", key=f"add_note_{raw['customer_item_key']}",
+                                                 placeholder="e.g. patient confirmed monthly BP medicine")
+                        if st.button("➕ Add to reminders", type="primary", key=f"btn_add_{raw['customer_item_key']}"):
+                            with SessionLocal() as add_db:
+                                try:
+                                    res_add = add_to_reminders(add_db, raw["customer_item_key"], interval_days=int(gap_days),
+                                                               next_refill_date=next_due, added_by="pharmacist", note=add_note)
+                                except ValueError as e:
+                                    res_add = None
+                                    st.error(str(e))
+                            if res_add:
+                                st.cache_data.clear()
+                                st.cache_resource.clear()
+                                if res_add.get("already_in_reminders"):
+                                    st.info("This patient is already getting reminders.")
+                                else:
+                                    st.success(
+                                        f"✅ {pick['Customer Name']} added to reminders for {pick['Medication']} "
+                                        f"(next refill {next_due.strftime('%d-%m-%Y')}, every {int(gap_days)} days)."
+                                    )
+                                    st.rerun()
 
-            st.dataframe(
-                filtered_review_df[display_rev_cols],
-                width="stretch",
-                hide_index=True,
-            )
-
-            buf = io.StringIO()
-            filtered_review_df[display_rev_cols].to_csv(buf, index=False)
-            st.download_button(
-                label="Export Review Records (CSV)",
-                data=buf.getvalue().encode("utf-8"),
-                file_name=f"customers_needing_review_{selected_rev_month}_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-            )
         else:
-            st.info("No customer records currently requiring review.")
+            # Existing review categories (patients already in reminders, or B2B audit)
+            from refillcare.engine.review_lists import review_other
+
+            cat_key = "b2b" if rev_cat.startswith("B2B") else "missing_mobile" if rev_cat.startswith("Missing") else "unstable"
+            with SessionLocal() as oth_db:
+                oth_rows = review_other(oth_db, cat_key, rev_date)
+            other_df = pd.DataFrame([{
+                "Customer Name": r["customer_name"],
+                "Mobile Number": format_display_phone_10digits(r["mobile_number"]) if r["mobile_number"] else "-",
+                "Mobile Status": r["mobile_status"],
+                "Medication": r["medicine"],
+                "Last Purchase Date": datetime.strptime(r["last_purchase_date"], "%Y-%m-%d").strftime("%d-%m-%Y") if r["last_purchase_date"] else "-",
+                "Expected Refill Date": datetime.strptime(r["expected_refill_date"], "%Y-%m-%d").strftime("%d-%m-%Y") if r["expected_refill_date"] else "-",
+                "Review Reason": r["review_reason"],
+            } for r in oth_rows])
+            other_df = _search_filter(other_df)
+            if other_df.empty:
+                st.info(f"No records for this category ({rev_label}).")
+            else:
+                st.markdown(f"#### {rev_cat} ({len(other_df):,}) · {rev_label}")
+                other_cols = [c for c in ["Customer Name", "Mobile Number", "Mobile Status", "Medication", "Last Purchase Date",
+                                          "Expected Refill Date", "Review Reason"] if c in other_df.columns]
+                st.dataframe(other_df[other_cols], width="stretch", hide_index=True)
+                buf = io.StringIO()
+                other_df[other_cols].to_csv(buf, index=False)
+                st.download_button("Export Review Records (CSV)", data=buf.getvalue().encode("utf-8"),
+                                   file_name=f"patients_needing_review_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
+
+        # Patients added by a pharmacist (with undo)
+        with SessionLocal() as added_db:
+            added_rows = list_pharmacist_added(added_db)
+        with st.expander(f"Patients added to reminders by a pharmacist ({len(added_rows):,})"):
+            if added_rows:
+                st.dataframe(pd.DataFrame([{
+                    "Patient": r["customer_name"] or "-", "Medicine": r["medicine"] or "-",
+                    "Refill every (days)": r["interval_days"],
+                    "Next refill": datetime.strptime(r["next_refill_date"], "%Y-%m-%d").strftime("%d-%m-%Y"),
+                    "Added on": r["added_at"][:10], "Note": r["note"] or "-",
+                } for r in added_rows]), width="stretch", hide_index=True)
+                rm_key = st.selectbox("Remove a patient from reminders", [r["customer_item_key"] for r in added_rows],
+                                      format_func=lambda k: next(f"{r['customer_name']} — {r['medicine']}" for r in added_rows if r["customer_item_key"] == k),
+                                      key="review_remove_pick")
+                if st.button("Remove from reminders", key="btn_review_remove"):
+                    with SessionLocal() as rm_db:
+                        remove_from_reminders(rm_db, rm_key, removed_by="pharmacist")
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    st.success("Removed. Their pending reminders were cancelled.")
+                    st.rerun()
+            else:
+                st.caption("No patients added manually yet.")
 
     # --------------------------------------------------------------------------
     # TAB 5: WHATSAPP 3-TIER REFILL OUTREACH GATEWAY
@@ -4284,7 +4261,7 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                         "Mobile": r["mobile_display"],
                         "Status": r["mobile_status"],
                         "Medication": r["medication"],
-                        "Stage": f"{r['stage_offset']}d ({r['tier']})",
+                        "Stage": "DUE" if r["tier"] == "DUE" else ("FOLLOW" if r["tier"] == "FOLLOWUP" else "LAPSED"),
                         "Refill Due": r["expected_refill_date"].strftime("%d-%m-%Y") if isinstance(r["expected_refill_date"], date) else str(r["expected_refill_date"]),
                     }
                     for r in candidate_records
@@ -4311,7 +4288,7 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             
             active_preview_record = candidate_records[selected_sample_idx] if candidate_records else sample_cust
 
-            # Generate dynamic preview
+            # Generate dynamic preview (exact approved template text, rendered as WhatsApp shows it)
             preview_res = wa_client.preview_message(
                 customer_name=active_preview_record["customer_name"],
                 medications=active_preview_record["medication"],
@@ -4319,217 +4296,277 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                 tier=active_preview_record["tier"],
                 stage_offset=active_preview_record["stage_offset"],
             )
+            from refillcare.whatsapp.template_formatter import whatsapp_text_to_html
 
-            # Display Crisp, Enterprise-Grade WhatsApp Message Preview Box (High Contrast)
+            bubble_html = whatsapp_text_to_html(preview_res["visual_preview"]).replace("\n", "<br>")
+            badge_txt = f"{active_preview_record['tier']} • {active_preview_record.get('refill_function', 'DUE_REFILL')}"
+            # One line of HTML (no blank lines) so Markdown never re-parses the message text
             st.markdown(
-                f"""
-                <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 0.9rem; font-weight: 700; color: #38bdf8;">WABA</span>
-                            <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">WhatsApp Live Message Preview</span>
-                        </div>
-                        <span style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
-                            {active_preview_record['tier']} • {active_preview_record.get('refill_function', 'DUE_REFILL')}
-                        </span>
-                    </div>
-                    <div style="white-space: pre-wrap; font-size: 0.96rem; line-height: 1.6; color: #0f172a; font-weight: 500;">
-{preview_res['visual_preview']}
-                    </div>
-                </div>
-                """,
+                "<div style=\"background:#efeae2;border:1px solid #d1d5db;border-radius:14px;padding:0.9rem 1rem 1rem;margin-bottom:1rem;\">"
+                "<div style=\"display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:0.7rem;\">"
+                "<span style=\"font-weight:700;color:#075e54;font-size:0.95rem;\">💬 WhatsApp message preview</span>"
+                f"<span style=\"background:#16a34a;color:#ffffff;font-size:0.72rem;font-weight:700;padding:3px 10px;border-radius:9999px;\">{badge_txt}</span>"
+                "</div>"
+                "<div style=\"background:#d9fdd3;border-radius:0 12px 12px 12px;padding:0.75rem 0.95rem 0.45rem;box-shadow:0 1px 1px rgba(0,0,0,0.13);"
+                "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:0.95rem;line-height:1.5;color:#111b21;\">"
+                f"{bubble_html}"
+                f"<div style=\"text-align:right;font-size:0.7rem;color:#667781;margin-top:0.35rem;\">Template: {wa_client.template_name}</div>"
+                "</div></div>",
                 unsafe_allow_html=True,
             )
 
-            # Format selected patient's phone number into standard 12-digit 91XXXXXXXXXX format
-            raw_phone_str = str(active_preview_record.get("phone_number", "")).strip()
-            digits_only = "".join(filter(str.isdigit, raw_phone_str))
-            if len(digits_only) == 10:
-                default_12d_phone = f"91{digits_only}"
-            elif len(digits_only) == 12 and digits_only.startswith("91"):
-                default_12d_phone = digits_only
-            elif len(digits_only) == 11 and digits_only.startswith("0"):
-                default_12d_phone = f"91{digits_only[1:]}"
-            else:
-                default_12d_phone = digits_only if digits_only else ""
-
-            # Interactive Single Test Send
-            with st.expander("Single Recipient WhatsApp Message Test (Live / Dry-Run)", expanded=True):
-                tc1, tc2, tc3 = st.columns([1.5, 1.0, 1.0])
-                with tc1:
-                    test_phone_input = st.text_input(
-                        "Recipient Phone Number (10 or 12 Digits)",
-                        value=default_12d_phone,
-                        key=f"wa_test_phone_{selected_sample_idx}",
-                        help="Enter your mobile number (e.g. 9848310930 or 919848310930) to test live receipt.",
-                    )
-                with tc2:
-                    test_is_dry_run = st.checkbox("Dry-Run Only (Uncheck for Live)", value=True, key="wa_single_dry_run")
-                    if test_is_dry_run:
-                        st.caption("Mode: **Dry-Run Simulation** (Safe mode - no carrier dispatch)")
-                    else:
-                        st.caption("Mode: **LIVE CARRIER DISPATCH** (Live WhatsApp delivery via Xinno)")
-                with tc3:
-                    st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-                    btn_send_test = st.button("Send Test Message", key="btn_send_single_wa", width="stretch")
-
-                # Validation guard on test send
-                mob_check = determine_mobile_status(test_phone_input)
-                if mob_check != "Valid":
-                    st.warning("**Missing or Incomplete Mobile Number.** Please enter a valid 10-digit number or 12-digit format (91XXXXXXXXXX) to dispatch.")
-
-                if btn_send_test:
-                    from refillcare.whatsapp.consent import is_opted_out
-
-                    with SessionLocal() as consent_db:
-                        test_opted_out = is_opted_out(consent_db, phone=test_phone_input)
-                    if test_opted_out:
-                        st.error(f"**Dispatch Blocked:** {test_phone_input} has opted out of WhatsApp reminders.")
-                    elif not test_is_dry_run and mob_check != "Valid":
-                        st.error("**Dispatch Blocked:** Cannot send live WhatsApp message to a missing or invalid phone number.")
-                    else:
-                        mode_label = "Dry-Run simulation" if test_is_dry_run else "LIVE WhatsApp message"
-                        with st.spinner(f"Dispatching {mode_label}..."):
-                            test_res = wa_client.send_refill_reminder(
-                                phone_number=test_phone_input,
-                                customer_name=active_preview_record["customer_name"],
-                                medications=active_preview_record["medication"],
-                                expected_refill_date=active_preview_record["expected_refill_date"],
-                                tier=active_preview_record["tier"],
-                                stage_offset=active_preview_record["stage_offset"],
-                                dry_run=test_is_dry_run,
-                            )
-                            if test_res.get("success"):
-                                st.success(f"**{test_res['message']}** (Status: {test_res.get('status_code', 200)})")
-                                st.json(test_res)
-                            else:
-                                st.error(f"**{test_res.get('message', 'Dispatch failed')}**")
-                                st.json(test_res)
-
         st.markdown("---")
 
-        # Section: Bulk Batch Dispatch Execution
-        st.markdown("#### Batch Outreach Execution")
-        bcol1, bcol2, bcol3 = st.columns([1.5, 1.5, 2.0])
+        # Section: Send today's WhatsApp reminders (live). The pharmacist confirms in a dialog;
+        # "Yes" approves the reminders and sends them all. Opt-outs, invalid mobiles, stale sales
+        # data and double sends are still blocked by the dispatcher.
+        from refillcare.whatsapp.dispatcher import StaleSalesData, check_live_send_allowed
 
-        with bcol1:
-            batch_limit = st.slider("Batch Size Limit", min_value=1, max_value=200, value=min(25, max(1, valid_count)), key="wa_batch_limit")
-        with bcol2:
-            bulk_dry_run = st.toggle("Dry-Run Simulation Guard (Safe)", value=True, key="wa_bulk_dry_run")
-        with bcol3:
-            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            btn_run_batch = st.button("Execute Batch WhatsApp Outreach", key="btn_run_batch_wa", width="stretch")
+        send_bundles = [r["bundle_obj"] for r in candidate_records if "bundle_obj" in r]
+        is_today_target = wa_filter_mode == "Specific Date" and wa_sel_date == today_val
+        with SessionLocal() as db_sum:
+            send_summary = RefillWhatsAppDispatcher(client=wa_client).summarize_medsync_send(db_sum, send_bundles)
+        n_to_send = send_summary["to_send"]
+        n_skipped = send_summary["no_valid_mobile"] + send_summary["opted_out"] + send_summary["already_sent"]
+        n_holdout = send_summary.get("holdout", 0)
 
-        if btn_run_batch:
-            if not candidate_records:
-                st.warning("No candidate records available to dispatch for the selected criteria.")
-            else:
-                from refillcare.whatsapp.dispatcher import StaleSalesData
+        st.markdown(
+            """
+<style>
+.st-key-wa_send_cta button {
+    background: linear-gradient(135deg, #22c55e 0%, #15803d 100%) !important;
+    color: #ffffff !important; border: none !important; border-radius: 14px !important;
+    min-height: 3.6rem; font-size: 1.15rem !important; font-weight: 800 !important;
+    box-shadow: 0 6px 18px rgba(22, 163, 74, 0.35) !important; transition: transform .12s ease, box-shadow .12s ease;
+}
+.st-key-wa_send_cta button p { font-size: 1.15rem !important; font-weight: 800 !important; }
+.st-key-wa_send_cta button:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(22, 163, 74, 0.45) !important; }
+.st-key-wa_send_cta button:disabled { background: #334155 !important; box-shadow: none !important; color: #94a3b8 !important; }
+</style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<div style=\"background:linear-gradient(135deg,#052e16 0%,#14532d 100%);border:1px solid #16a34a;border-radius:16px;padding:1.1rem 1.4rem;margin-bottom:0.8rem;\">"
+            "<div style=\"color:#bbf7d0;font-size:0.85rem;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;\">📤 Send WhatsApp reminders</div>"
+            f"<div style=\"color:#ffffff;font-size:2.1rem;font-weight:800;line-height:1.2;margin-top:0.2rem;\">{n_to_send:,} <span style=\"font-size:1rem;font-weight:600;color:#dcfce7;\">messages ready for {wa_target_label}</span></div>"
+            f"<div style=\"color:#bbf7d0;font-size:0.85rem;margin-top:0.3rem;\">{send_summary['medicines']:,} medicines covered · {n_skipped:,} skipped (no valid mobile, opted out or already sent) · {n_holdout:,} in the no-reminder control group</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-                override = bool(st.session_state.get("wa_override_stale")) and bool((st.session_state.get("wa_override_reason") or "").strip())
-                if override:
-                    logging.getLogger("refillcare.streamlit").warning("Stale-data send override: %s", st.session_state.get("wa_override_reason"))
-                dispatcher = RefillWhatsAppDispatcher(client=wa_client, allow_stale_data=override)
-                progress_bar = st.progress(0.0)
-                status_text = st.empty()
+        @st.dialog("Send WhatsApp reminders", width="large")
+        def _confirm_send_dialog(bundles, summary, target_label):
+            apply_store_from_request()  # dialog reruns skip the top of the script: keep the same store
+            last = st.session_state.get("wa_last_send")
+            if last:
+                if last["failed"] == 0:
+                    st.success(f"✅ **{last['sent']:,} WhatsApp messages sent** for {target_label}.")
+                else:
+                    st.warning(f"**{last['sent']:,} sent, {last['failed']:,} failed** for {target_label}. Failed messages are listed below and can be sent again later.")
+                if last["skipped"]:
+                    st.caption(f"{last['skipped']:,} skipped (already sent or not ready).")
+                if last["failed_rows"]:
+                    st.dataframe(pd.DataFrame(last["failed_rows"]), width="stretch", hide_index=True)
+                if st.button("Done", type="primary", width="stretch", key="wa_dlg_done"):
+                    st.session_state.pop("wa_last_send", None)
+                    st.rerun()
+                return
 
-                with SessionLocal() as db_session:
-                    status_text.text(f"Starting batch dispatch of {batch_limit} records (Dry-run: {bulk_dry_run})...")
-                    medsync_bundles_list = [r["bundle_obj"] for r in candidate_records if "bundle_obj" in r]
+            st.markdown(f"You are about to send **{summary['to_send']:,} WhatsApp messages** to patients for **{target_label}**.")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Messages to send", f"{summary['to_send']:,}")
+            m2.metric("Medicines covered", f"{summary['medicines']:,}")
+            m3.metric("Skipped", f"{summary['no_valid_mobile'] + summary['opted_out'] + summary['already_sent'] + summary.get('holdout', 0):,}")
+            st.caption(
+                f"Skipped: {summary['no_valid_mobile']:,} without a valid mobile number · "
+                f"{summary['opted_out']:,} opted out (STOP) · {summary['already_sent']:,} already sent · "
+                f"{summary.get('holdout', 0):,} in the control group (not messaged, so we can measure how many extra refills reminders bring)."
+            )
+
+            if not (wa_client.api_key and wa_client.waba_number):
+                st.error("WhatsApp sending is not set up (Xinno API key or WABA number missing). Please contact your administrator.")
+                return
+
+            stale = False
+            override_ok = False
+            override_reason = ""
+            with SessionLocal() as db_chk:
+                try:
+                    check_live_send_allowed(db_chk)
+                except StaleSalesData as e:
+                    stale = True
+                    st.warning(f"⚠️ {e}")
+                    override_cb = st.checkbox("Send anyway - today's sales are already uploaded", key="wa_dlg_override")
+                    override_reason = st.text_input("Reason (saved in the log)", key="wa_dlg_reason")
+                    override_ok = bool(override_cb and override_reason.strip())
+
+            b_yes, b_no = st.columns(2)
+            with b_no:
+                if st.button("No, cancel", width="stretch", key="wa_dlg_cancel"):
+                    st.rerun()
+            with b_yes:
+                clicked_yes = st.button(
+                    f"Yes, send {summary['to_send']:,} messages",
+                    type="primary",
+                    width="stretch",
+                    key="wa_dlg_yes",
+                    disabled=summary["to_send"] == 0 or (stale and not override_ok),
+                )
+            if clicked_yes:
+                if override_ok:
+                    logging.getLogger("refillcare.streamlit").warning("Stale-data send override: %s", override_reason)
+                progress = st.progress(0.0, text="Sending WhatsApp messages...")
+
+                def _on_progress(done, total):
+                    progress.progress(done / max(total, 1), text=f"Sending... {done:,} of {total:,}")
+
+                dispatcher = RefillWhatsAppDispatcher(client=wa_client, allow_stale_data=override_ok)
+                with SessionLocal() as db_send:
                     try:
-                        batch_outcome = dispatcher.dispatch_medsync_batch(
-                            db=db_session,
-                            bundles=medsync_bundles_list,
-                            dry_run=bulk_dry_run,
-                            batch_limit=batch_limit,
+                        outcome = dispatcher.dispatch_medsync_batch(
+                            db=db_send,
+                            bundles=bundles,
+                            dry_run=False,
+                            batch_limit=None,
+                            approve_before_send=True,
+                            approved_by="streamlit-pharmacist",
+                            on_progress=_on_progress,
                         )
                     except StaleSalesData as e:
-                        status_text.empty()
-                        st.error(f"{e}")
-                        st.checkbox("Send anyway (I confirm today's sales are already uploaded)", key="wa_override_stale")
-                        st.text_input("Reason for the override (recorded)", key="wa_override_reason")
-                        st.stop()
-                    progress_bar.progress(1.0)
-                    status_text.text("Dispatch batch complete!")
-
-                    st.success(
-                        f"**Batch Completed:** Processed **{batch_outcome['dispatched_count']}** messages "
-                        f"(**{batch_outcome['success_count']}** Success, **{batch_outcome['failed_count']}** Failed). "
-                        f"Mode: `{'DRY RUN' if bulk_dry_run else 'LIVE PRODUCTION'}`"
-                    )
-
-                    if batch_outcome.get("delivery_logs"):
-                        df_logs = pd.DataFrame(batch_outcome["delivery_logs"])
-                        st.dataframe(df_logs, width="stretch", hide_index=True)
-
-        # Section: Patient WhatsApp consent (opt-out / opt-in)
-        st.markdown("#### Patient WhatsApp Consent")
-        st.caption(
-            "Patients who reply STOP (or are opted out here) are skipped by every send path: "
-            "batch, Med-Sync, single stage and test send. Only an exact START reply opts back in."
-        )
-        from refillcare.whatsapp.consent import list_opted_out, set_opt_in
-
-        cc1, cc2, cc3 = st.columns([2.5, 1, 1])
-        with cc1:
-            consent_cid = st.text_input("Customer ID", key="wa_consent_customer_id", placeholder="e.g. S0/12345")
-        with cc2:
-            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            btn_opt_out = st.button("Opt Out", key="btn_wa_opt_out", width="stretch")
-        with cc3:
-            st.markdown("<div style='padding-top: 1.75rem;'></div>", unsafe_allow_html=True)
-            btn_opt_in = st.button("Opt In", key="btn_wa_opt_in", width="stretch")
-        if (btn_opt_out or btn_opt_in):
-            if not consent_cid.strip():
-                st.warning("Enter a customer ID first.")
-            else:
-                with SessionLocal() as consent_db:
-                    set_opt_in(consent_db, consent_cid.strip(), opt_in=bool(btn_opt_in))
+                        st.error(str(e))
+                        return
                 st.cache_data.clear()
                 st.cache_resource.clear()
-                st.success(f"Customer `{consent_cid.strip()}` is now {'opted in' if btn_opt_in else 'opted out'}.")
-                st.rerun()
+                st.session_state["wa_last_send"] = {
+                    "sent": outcome["success_count"],
+                    "failed": outcome["failed_count"],
+                    "skipped": outcome.get("skipped_not_approved_or_already_sent", 0),
+                    "failed_rows": [
+                        {"Customer": r["customer_name"], "Mobile": r["phone_number"], "Medicines": r["medication_name"], "Reason": r["message"]}
+                        for r in outcome.get("delivery_logs", []) if r.get("status") == "FAILED"
+                    ],
+                }
+                st.rerun(scope="fragment")
+
+        with st.container(key="wa_send_cta"):
+            btn_open_send = st.button(
+                f"📤  Send WhatsApp Messages ({n_to_send:,})",
+                key="btn_open_wa_send",
+                type="primary",
+                width="stretch",
+                disabled=(not is_today_target) or n_to_send == 0,
+            )
+        if not is_today_target:
+            st.info("To send, choose **Specific Date** with **today's date** above. Messages are sent only for today's reminders.")
+        elif n_to_send == 0:
+            st.info("No messages to send for today - every reminder is already sent, opted out or missing a mobile number.")
+        if btn_open_send:
+            st.session_state.pop("wa_last_send", None)
+            _confirm_send_dialog(send_bundles, send_summary, wa_target_label)
+
+        # Section: Patient WhatsApp messages on / off (pharmacist searches by name or mobile)
+        from refillcare.whatsapp.consent import list_opted_out
+        from refillcare.whatsapp.pharmacist_views import delivery_log_rows, search_patients, set_messages_allowed
+
+        st.markdown("---")
+        st.markdown("#### 🔕 Stop or Resume WhatsApp Messages for a Patient")
+        st.caption(
+            "Use this when a patient asks at the counter to stop (or restart) reminders. "
+            "Patients who reply STOP on WhatsApp are stopped automatically. "
+            "Stopping works on the mobile number, so family members sharing that number are also stopped."
+        )
+        consent_q = st.text_input(
+            "Search patient by name or mobile number",
+            key="wa_consent_search",
+            placeholder="e.g. KRISHNA RAO or 9866078851",
+        )
+        if consent_q.strip():
+            with SessionLocal() as consent_db:
+                found = search_patients(consent_db, consent_q)
+            if not found:
+                st.info("No patient found. Check the spelling or type at least 4 digits of the mobile number.")
+            for i, pt in enumerate(found):
+                pc1, pc2, pc3 = st.columns([2.6, 1.4, 1.2])
+                with pc1:
+                    st.markdown(
+                        f"**{pt['customer_name']}**  \n"
+                        f"📱 {format_display_phone_10digits(pt['mobile_number']) if pt['mobile_number'] else 'No mobile number'}"
+                    )
+                with pc2:
+                    if pt["messages_allowed"]:
+                        st.markdown("<span style='color:#16a34a;font-weight:700;'>✅ Receiving messages</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<span style='color:#dc2626;font-weight:700;'>🔕 Messages stopped</span>", unsafe_allow_html=True)
+                with pc3:
+                    if pt["messages_allowed"]:
+                        do_change = st.button("Stop messages", key=f"wa_stop_{i}_{pt['customer_id']}", width="stretch")
+                    else:
+                        do_change = st.button("Resume messages", key=f"wa_resume_{i}_{pt['customer_id']}", type="primary", width="stretch")
+                if do_change:
+                    with SessionLocal() as consent_db:
+                        set_messages_allowed(
+                            consent_db,
+                            allowed=not pt["messages_allowed"],
+                            mobile_number=pt["mobile_number"] or None,
+                            customer_id=pt["customer_id"],
+                        )
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    st.success(
+                        f"WhatsApp messages {'resumed' if not pt['messages_allowed'] else 'stopped'} for **{pt['customer_name']}**."
+                    )
+                    st.rerun()
+
         with SessionLocal() as consent_db:
             opted_rows = list_opted_out(consent_db)
-        if opted_rows:
+        with st.expander(f"Patients who stopped messages ({len(opted_rows):,})"):
+            if opted_rows:
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Patient": r["customer_name"] or "-",
+                        "Mobile": format_display_phone_10digits(r["mobile_number"]) if r["mobile_number"] else "-",
+                        "Stopped on": (r["updated_at"] or "-").replace("T", " ")[:16],
+                    } for r in opted_rows]),
+                    width="stretch", hide_index=True,
+                )
+            else:
+                st.info("No patients have stopped messages.")
+
+        # Section: Messages sent (live only, India time, plain columns)
+        st.markdown("---")
+        st.markdown("#### 📋 Messages Sent")
+        lc1, lc2 = st.columns([1.2, 1.8])
+        with lc1:
+            log_day = st.date_input("Day", value=today_val, key="wa_log_day", format="DD/MM/YYYY")
+        with lc2:
+            log_status = st.radio("Show", ["All", "Sent", "Failed"], horizontal=True, key="wa_log_status")
+        with SessionLocal() as log_db:
+            log_view = delivery_log_rows(log_db, day=log_day, status=log_status)
+        lk1, lk2 = st.columns(2)
+        lk1.metric("✅ Sent", f"{log_view['sent']:,}")
+        lk2.metric("❌ Failed", f"{log_view['failed']:,}")
+        if log_view["rows"]:
             st.dataframe(
                 pd.DataFrame([{
-                    "Customer ID": r["customer_id"],
-                    "Name": r["customer_name"] or "-",
-                    "Mobile": format_display_phone_10digits(r["mobile_number"]) if r["mobile_number"] else "-",
-                    "Updated": (r["updated_at"] or "-").replace("T", " ")[:16],
-                } for r in opted_rows]),
-                width="stretch", hide_index=True,
+                    "Time": r["time"],
+                    "Patient": r["patient"],
+                    "Mobile": format_display_phone_10digits(r["mobile"]),
+                    "Status": ("✅ " if r["status"] == "Sent" else "❌ ") + r["status"],
+                    "Reason": r["reason"] or "-",
+                } for r in log_view["rows"]]),
+                width="stretch", hide_index=True, height=320,
             )
+            if log_view["failed"]:
+                st.caption("Failed messages are not marked as sent - they can be sent again with the Send button.")
         else:
-            st.info("No patients have opted out.")
-
-        # Section: Delivery Audit Log Trail
-        st.markdown("#### Persistent WhatsApp Delivery Logs & Audit Trail")
-        with SessionLocal() as db_session:
-            db_logs = db_session.query(WhatsAppDeliveryLogModel).order_by(WhatsAppDeliveryLogModel.dispatched_at.desc()).limit(100).all()
-            if db_logs:
-                logs_data = []
-                for lg in db_logs:
-                    logs_data.append({
-                        "Dispatched At": lg.dispatched_at.strftime("%d-%m-%Y %H:%M:%S") if lg.dispatched_at else "-",
-                        "Customer Name": lg.customer_name or "-",
-                        "Phone Number": format_display_phone_10digits(lg.phone_number),
-                        "Template": lg.template_name,
-                        "Status": lg.status,
-                        "HTTP Status": lg.http_status_code or "-",
-                        "Xinno Message ID": lg.xinno_message_id or "-",
-                        "Error / Details": lg.error_detail or "-",
-                    })
-                st.dataframe(pd.DataFrame(logs_data), width="stretch", hide_index=True, height=280)
-            else:
-                st.info("No delivery log entries recorded yet.")
+            st.info(f"No WhatsApp messages were sent on {log_day.strftime('%d %B %Y')}.")
 
     # --------------------------------------------------------------------------
     # TAB 8: ML MODELS (registry, dynamic windows, evaluations, promotion gate)
     # Same domain layer as FastAPI /api/v1/ml/* - Streamlit never calls the API.
     # --------------------------------------------------------------------------
-    with tab_ml:
+    for _ in _visible_tab(tab_ml):  # skipped when the tab is hidden (TAB_VISIBILITY)
         from database.connection import SessionLocal
         from database.models import MLEvaluationRunModel
         from refillcare.ml import registry as ml_reg

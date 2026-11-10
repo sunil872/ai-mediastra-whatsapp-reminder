@@ -14,8 +14,10 @@ WHATSAPP_TEMPLATE_TYPE: str = "text"
 WHATSAPP_TEMPLATE_LANGUAGE: str = "en"
 WHATSAPP_TEMPLATE_POLICY: str = "deterministic"
 
-# Exact Approved WhatsApp Template Body Text
-WHATSAPP_TEMPLATE_BODY: str = """Dear *{{1}}*,
+# Exact Approved WhatsApp Template Body Text (as approved by Meta; "Garu" is fixed template text,
+# not a variable). The UI preview is rendered from this string, so keep it identical to the
+# template approved in the Xinno / Meta console.
+WHATSAPP_TEMPLATE_BODY: str = """Dear *{{1}}* Garu,
 
 This is a friendly reminder from *{{2}}* regarding your regular medicine refill.
 

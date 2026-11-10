@@ -577,6 +577,21 @@ class UnifiedRefillDecisionEngine:
                         predicted_interval = anchored
                         consensus = {**consensus, "predicted_interval_days": anchored}
 
+                # Strips bought clearly differ from the patient's usual quantity -> scale the interval
+                # (only when the consensus has not adjusted for quantity itself: the archetype post-process
+                # does; the registry-trained production model returns its prediction only safety-capped)
+                already_q = any(t in str(consensus.get("consensus_reason", ""))
+                                for t in ("Scaled", "Early Top-Up", "Post-Lapse"))
+                if self.rules.quantity_scaling and quantities and not review_required and not already_q:
+                    from refillcare.engine.prediction_rules import quantity_scaled_interval
+
+                    scaled, moved_q = quantity_scaled_interval(predicted_interval, qty_ratio)
+                    if moved_q:
+                        reason_rule = (f"{reason_rule} [rule: bought {qty_ratio:.2f}x the usual quantity "
+                                       f"({int(latest_u)} vs {int(typical_u)} units) {predicted_interval}d -> {scaled}d]")
+                        predicted_interval = scaled
+                        consensus = {**consensus, "predicted_interval_days": scaled}
+
                 # Check 2: Model-Supply Divergence Guardrail (routes to Pharmacist Review)
                 if review_required:
                     return self._attach_consensus(RefillDecision(
@@ -858,6 +873,7 @@ class UnifiedRefillDecisionEngine:
         if not pd.api.types.is_datetime64_any_dtype(df_clean["invoice_date"]):
             df_clean["invoice_date"] = pd.to_datetime(df_clean["invoice_date"], errors="coerce")
 
+
         if as_of_date:
             df_clean = df_clean.loc[df_clean["invoice_date"].dt.date <= as_of_date]
 
@@ -866,6 +882,25 @@ class UnifiedRefillDecisionEngine:
         from refillcare.data.identity import normalise_trajectory_keys
 
         df_clean = normalise_trajectory_keys(df_clean)
+        # One purchase per PATIENT (name + mobile) + medicine + day: strips of all lines (batches, repeat
+        # scans) and of separate bills that day are added up - same counting as training / evaluation.
+        # Done after the patient keys, so two people with the same name are never merged.
+        from refillcare.data.cleaning import merge_bill_lines
+
+        df_clean = merge_bill_lines(df_clean, by="day")
+        if only_keys is not None:
+            # Callers may pass billing ids (name, item code) or patient keys (name + mobile, therapy):
+            # translate billing ids to the patient keys they belong to, so both work.
+            from refillcare.data.identity import BRAND_ITEM_COL, SOURCE_CUSTOMER_COL
+
+            if SOURCE_CUSTOMER_COL in df_clean.columns:
+                src_c = df_clean[SOURCE_CUSTOMER_COL].astype(str).str.strip()
+                src_i = (df_clean[BRAND_ITEM_COL] if BRAND_ITEM_COL in df_clean.columns else df_clean["itemId"]).astype(str).str.strip()
+                key_c = df_clean["customerId"].astype(str).str.strip()
+                key_i = df_clean["itemId"].astype(str).str.strip()
+                wanted = {(str(c).strip(), str(i).strip()) for c, i in only_keys}
+                hit = [(sc, si) in wanted for sc, si in zip(src_c, src_i)]
+                only_keys = wanted | set(zip(key_c[hit], key_i[hit]))
 
         trajectories = {}
         # Plain numpy arrays for the row loop: pandas 3 keeps text in Arrow arrays, where every

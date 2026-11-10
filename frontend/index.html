@@ -29,17 +29,9 @@
         <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></span>
         <strong>Pharmacy Overview</strong>
       </a>
-      <a class="nav-item" data-tab="tab-medrules">
-        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"></path><path d="m8.5 8.5 7 7"></path></svg></span>
-        <strong>Medication Classifier</strong>
-      </a>
       <a class="nav-item" data-tab="tab-upload">
         <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></span>
         <strong>Upload Sales Data</strong>
-      </a>
-      <a class="nav-item" data-tab="tab-predictions">
-        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg></span>
-        <strong>Upcoming Refills</strong>
       </a>
       <a class="nav-item" data-tab="tab-reminders">
         <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></span>
@@ -54,11 +46,6 @@
         <strong>Patients Needing Review</strong>
       </a>
       
-      <div class="nav-section-label" style="margin-top: 0.5rem;">Infrastructure & Gateway</div>
-      <a class="nav-item" data-tab="tab-models">
-        <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg></span>
-        <strong>AI Accuracy & Settings</strong>
-      </a>
       <a class="nav-item" data-tab="tab-whatsapp">
         <span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>
         <strong>WhatsApp Messages</strong>
@@ -91,7 +78,7 @@
           <span>/</span>
           <a href="#">Dashboard</a>
           <span>/</span>
-          <span class="current" id="breadcrumb-current">Pharmacy</span>
+          <span class="current" id="breadcrumb-current">Pharmacy Overview</span>
         </div>
       </div>
 
@@ -121,236 +108,61 @@
     <div class="content-container">
 
       <!-- ========================================================================
-           TAB 1: PHARMACY DASHBOARD (Enterprise Hospital Layout)
+           TAB: PHARMACY OVERVIEW (same numbers as the Streamlit overview)
            ======================================================================== -->
       <section id="tab-dashboard" class="tab-pane active">
 
-        <!-- 4 Hospital Metric Cards -->
-        <div class="kpi-grid">
-          <!-- Card 1: Patients Monitored -->
-          <div class="kpi-card">
+        <p class="overview-caption">This store · this month: <b id="ov-month-caption">–</b> · numbers update after every sales upload.</p>
+        <div class="alert alert-warning" id="overview-stale-banner" style="display:none;"></div>
+
+        <!-- Five overview cards (same numbers as the Streamlit Pharmacy Overview) -->
+        <div class="kpi-grid kpi-grid-6">
+          <div class="kpi-card" id="kpi-card-customers" title="Active patients in the last 12 months (or available store history).">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
-              <span class="kpi-trend-pill trend-up">Unique patients</span>
             </div>
-            <div class="kpi-title">Monitored Patients</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-customers">–</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 12px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 16px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 14px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 22px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 26px; background: #2563eb;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext">Active longitudinal patient accounts</div>
+            <div class="kpi-title" id="kpi-customers-title">Active patients (last 12 months)</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="kpi-customers">–</div></div>
+            <div class="kpi-subtext" id="kpi-customers-subtext">All-time: –</div>
           </div>
 
-          <!-- Card 2: Upcoming Refills -->
-          <div class="kpi-card">
+          <div class="kpi-card" title="WhatsApp messages scheduled this month. Each patient-medicine gets up to 7 messages (7, 3 and 1 day before, due day, 2 and 5 days after, 45 days after), so this is higher than the patient count.">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-green"><svg viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"></path><path d="m8.5 8.5 7 7"></path></svg></div>
-              <span class="kpi-trend-pill trend-up">Forecast month</span>
+              <div class="kpi-icon-pill kpi-icon-emerald"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></div>
             </div>
-            <div class="kpi-title">Scheduled Refills</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-upcoming">–</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 14px; background: #10b981;"></span>
-                <span class="spark-bar" style="height: 18px; background: #10b981;"></span>
-                <span class="spark-bar" style="height: 20px; background: #10b981;"></span>
-                <span class="spark-bar" style="height: 24px; background: #10b981;"></span>
-                <span class="spark-bar" style="height: 26px; background: #059669;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext" id="kpi-target-month-label">Active forecast pipeline</div>
+            <div class="kpi-title" id="ov-title-messages-month">Reminder Messages</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="kpi-messages-month">–</div></div>
+            <div class="kpi-subtext">Up to 7 messages per patient-medicine.</div>
           </div>
 
-          <!-- Card 3: Due Today -->
-          <div class="kpi-card">
+          <div class="kpi-card" title="Reminder messages scheduled for today.">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></div>
-              <span class="kpi-trend-pill trend-warning">● Urgent Today</span>
             </div>
-            <div class="kpi-title">Refills Due Today</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-due-today" style="color: #d97706;">--</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 24px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 20px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 16px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 22px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 26px; background: #d97706;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext">Immediate patient dispatch candidates</div>
+            <div class="kpi-title">Reminders Due Today</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="kpi-due-today">–</div></div>
+            <div class="kpi-subtext">Reminder messages scheduled for today.</div>
           </div>
 
-          <!-- Card 4: Chronic Portfolio -->
-          <div class="kpi-card">
+          <div class="kpi-card kpi-card-clickable" id="kpi-card-review-today" role="button" tabindex="0" title="Patients not getting reminders (chronic / not classified medicine) whose refill is due today.">
             <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
-              <span class="kpi-trend-pill trend-info">Supabase rules</span>
+              <div class="kpi-icon-pill kpi-icon-red"><svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div>
             </div>
-            <div class="kpi-title">Chronic Therapy Portfolio</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="kpi-chronic-count">–</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 10px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 15px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 18px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 22px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 26px; background: #7c3aed;"></span>
-              </div>
+            <div class="kpi-title">Patients Needing Review Today</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="kpi-review-today">–</div></div>
+            <div class="kpi-subtext">Open Patients Needing Review →</div>
+          </div>
+
+          <div class="kpi-card" title="Date of the newest sale uploaded for this store.">
+            <div class="kpi-card-header">
+              <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></div>
             </div>
-            <div class="kpi-subtext">Supabase-verified active chronic salts</div>
+            <div class="kpi-title">Latest Sales Date</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="kpi-latest-sales-date">–</div></div>
+            <div class="kpi-subtext" id="kpi-sales-coverage"></div>
           </div>
         </div>
 
-        <!-- Purchase & Refill Schedule List Table -->
-        <div class="card table-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <h3>Active Clinical Refill Schedule</h3>
-              <p>Longitudinal prescriptions scheduled for automated pharmacist outreach</p>
-            </div>
-            <button class="btn btn-primary" id="btn-view-all-reminders">View All Reminders</button>
-          </div>
-
-          <div class="table-toolbar">
-            <input type="text" class="table-search-input" id="dash-schedule-search" placeholder="Search Patient, Medication, Invoice #...">
-            <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-outline" id="btn-export-quick-csv">Export CSV</button>
-            </div>
-          </div>
-
-          <div class="table-responsive" style="max-height: 380px;">
-            <table class="data-table" id="table-dash-schedule">
-              <thead>
-                <tr>
-                  <th>RX / Invoice ID</th>
-                  <th>Date</th>
-                  <th>Patient Name</th>
-                  <th>Medication</th>
-                  <th>Expected Refill</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="7" style="text-align:center; color: var(--text-muted);">Live refill activity appears in the Reminder List tab.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Quick Operational Actions Card -->
-        <div class="card" style="margin-top: 1.5rem;">
-          <div class="card-header">
-            <h4 style="font-size: 0.95rem; font-weight: 700;">Quick Operational Actions</h4>
-            <span class="badge badge-info">Pharmacist Toolkit</span>
-          </div>
-          <div class="quick-actions-panel">
-            <button class="btn-quick-action btn-quick-primary" id="qa-add-med-rule">
-              
-              <span>Add Medication Rule</span>
-            </button>
-            <button class="btn-quick-action btn-quick-accent" id="qa-upload-sales">
-              
-              <span>Upload Sales Data</span>
-            </button>
-            <button class="btn-quick-action" id="qa-run-predictions">
-              
-              <span>Generate Predictions</span>
-            </button>
-            <button class="btn-quick-action" id="qa-batch-whatsapp">
-              
-              <span>Dispatch WhatsApp</span>
-            </button>
-          </div>
-          <div style="margin-top: 1rem; font-size: 0.78rem; color: var(--text-muted); text-align: center;">
-            Mediastra Refillcare Enterprise • AI Mediastra WhatsApp Reminder
-          </div>
-        </div>
-
-      </section>
-
-      <!-- ========================================================================
-           TAB 2: MEDICATION CLASSIFIER (LIVE SUPABASE CLOUD)
-           ======================================================================== -->
-      <section id="tab-medrules" class="tab-pane">
-        <div class="card" style="margin-bottom: 1.5rem;">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title"> Medication Classifier & Dynamic Rules (Supabase Cloud)</h3>
-              <p style="color: var(--text-secondary); margin-top: 0.25rem;">
-                Easily classify medications as Chronic Maintenance Therapies vs Non-Chronic/OTC/FMCG/Surgical.
-                Rules sync live to Supabase PostgreSQL without redeploying code.
-              </p>
-            </div>
-            <div style="display: flex; gap: 0.75rem;">
-              <button class="btn btn-primary" id="btn-open-add-rule-modal"> Add New Medication Rule</button>
-              <button class="btn btn-outline" id="btn-refresh-rules">Refresh Rules</button>
-            </div>
-          </div>
-
-          <!-- Live Diagnostic Classifier Test Widget -->
-          <div style="background: var(--bg-card-subtle); border: 1px solid var(--border-main); border-radius: var(--radius-md); padding: 1.25rem; margin-bottom: 1.25rem;">
-            <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.5rem;">
-              Clinical Medication Classification Simulator
-            </h4>
-            <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">
-              Type any medication or OTC product name below to test real-time classification against active Supabase rules and clinical parsing logic.
-            </p>
-            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
-              <input type="text" id="test-med-name-input" placeholder="e.g. TELMA 40, COOL-GEL, DOLO 650, AMARYL 2..." style="flex: 1; min-width: 280px; padding: 0.6rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-              <input type="text" id="test-med-packing-input" placeholder="Packing (e.g. 1X10 TAB)" style="width: 180px; padding: 0.6rem 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-              <button class="btn btn-accent" id="btn-run-med-test">Run Simulation</button>
-            </div>
-
-            <!-- Test Result Banner -->
-            <div id="test-result-box" style="display: none; margin-top: 1rem; padding: 1rem; border-radius: var(--radius-md); background: var(--bg-card); border: 1px solid var(--border-main);">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
-                <span id="test-result-title" style="font-weight: 700; font-size: 1rem;">-</span>
-                <span id="test-result-badge" class="badge badge-success">-</span>
-              </div>
-              <div id="test-result-details" style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.6;">-</div>
-            </div>
-          </div>
-
-          <!-- Rules List Table Toolbar -->
-          <div class="table-toolbar">
-            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
-              <select id="rule-type-filter" style="padding: 0.5rem 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="All" selected>All Rules (Chronic & Exclusion)</option>
-                <option value="CHRONIC">Chronic Only</option>
-                <option value="EXCLUDE">Exclusion Only (OTC/FMCG/Surgical)</option>
-              </select>
-              <input type="text" id="rule-search-input" placeholder="Search keyword, brand, or salt..." class="table-search-input">
-              <button class="btn btn-danger-search" id="btn-search-rules">Search</button>
-            </div>
-            <span class="badge badge-info" id="rules-count-badge">Loading rules...</span>
-          </div>
-
-          <!-- Rules Data Table -->
-          <div class="table-responsive" style="max-height: 520px;">
-            <table class="data-table" id="table-med-rules">
-              <thead>
-                <tr>
-                  <th>Pattern / Medication Keyword</th>
-                  <th>Rule Type</th>
-                  <th>Clinical Category</th>
-                  <th>Brand / Salt</th>
-                  <th>Notes</th>
-                  <th>Created By</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
       </section>
 
       <!-- TAB 3: SALES INGESTION & BATCHES -->
@@ -361,6 +173,12 @@
           </div>
           
           <div id="data-status-banner" style="margin-bottom: 1rem; font-size: 0.9rem;"></div>
+          <!-- Current store data (same numbers as the Streamlit Upload tab and the overview) -->
+          <div class="kpi-grid" id="upload-store-summary" style="margin-bottom: 1rem;">
+            <div class="kpi-card"><div class="kpi-title">Sales Date Range (DD-MM-YYYY)</div><div class="kpi-value-row"><div class="kpi-value" id="up-date-range" style="font-size:1.2rem;">–</div></div></div>
+            <div class="kpi-card" title="Every bill line kept (several lines of one medicine on one bill are added up per bill)."><div class="kpi-title">Sales Lines Stored</div><div class="kpi-value-row"><div class="kpi-value" id="up-lines-stored">–</div></div></div>
+            <div class="kpi-card" title="Same number as the Pharmacy Overview."><div class="kpi-title" id="up-customers-title">Active patients (last 12 months)</div><div class="kpi-value-row"><div class="kpi-value" id="up-customers">–</div></div><div class="kpi-subtext" id="up-customers-subtext">All-time: –</div></div>
+          </div>
           <div class="upload-dropzone" id="sales-dropzone">
             <div class="upload-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg></div>
             <h3>Drag & Drop Excel (.xlsx) or CSV file here</h3>
@@ -457,51 +275,6 @@
         </div>
       </section>
 
-      <!-- TAB 4: PREDICTION & ACCURACY -->
-      <section id="tab-predictions" class="tab-pane">
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Refill Prediction Engine</h3>
-            <button class="btn btn-accent" id="btn-run-predictions"> Generate Updated Predictions</button>
-          </div>
-          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-            Generates immutable prediction snapshots combining Path A (LightGBM) and Path B (Days-of-Supply).
-          </p>
-          <div class="table-responsive" style="max-height: 450px;">
-            <table class="data-table" id="table-prediction-snapshots">
-              <thead>
-                <tr>
-                  <th>Customer ID</th>
-                  <th>Patient Name</th>
-                  <th>Phone</th>
-                  <th>Medicine</th>
-                  <th>Last Purchase</th>
-                  <th>Est. Days of Supply</th>
-                  <th>Expected Refill</th>
-                  <th>Reminder Date</th>
-                  <th>Source</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Outcome Evaluation -->
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title"> Realized Outcome Evaluation (Predictions vs. Actuals)</h3>
-            <button class="btn btn-outline" id="btn-run-evaluation"> Calculate Outcome Accuracy</button>
-          </div>
-          <div class="kpi-grid">
-            <div class="kpi-card"><div class="kpi-title">Predictions Evaluated</div><div class="kpi-value" id="eval-count">-</div></div>
-            <div class="kpi-card"><div class="kpi-title">Within ±3 Days</div><div class="kpi-value" id="eval-within3">-</div></div>
-            <div class="kpi-card"><div class="kpi-title">Within ±7 Days</div><div class="kpi-value" id="eval-within7">-</div></div>
-            <div class="kpi-card"><div class="kpi-title">Mean Error (MAE)</div><div class="kpi-value" id="eval-mae">-</div></div>
-          </div>
-        </div>
-      </section>
-
       <!-- TAB 5: REMINDER LIST (DATE OR MONTH) -->
       <section id="tab-reminders" class="tab-pane">
         <div class="card">
@@ -580,7 +353,7 @@
             <div>
               <h3 class="card-title">Med-Sync: Multi-Prescription Synchronization</h3>
               <p style="color: var(--text-secondary); margin-top: 0.25rem;">
-                Automatically groups active chronic prescriptions due on the exact same date into a single coordinated refill appointment, cutting customer friction by 50%+.
+                Automatically groups active chronic prescriptions due on the exact same date into a single coordinated refill visit.
               </p>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
@@ -659,498 +432,243 @@
         </div>
       </section>
 
-      <!-- TAB 7: CLINICAL REVIEW QUEUE -->
+      <!-- TAB: PATIENTS NEEDING REVIEW (same lists and actions as the Streamlit Review tab) -->
       <section id="tab-review" class="tab-pane">
-        <!-- 4 Hospital Review KPI Cards Synced with Streamlit -->
-        <div class="kpi-grid" style="margin-bottom: 1.5rem;">
-          <!-- Card 1: Total In Review Queue -->
-          <div class="kpi-card">
-            <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div>
-              <span class="kpi-trend-pill trend-warning">Clinical Action</span>
-            </div>
-            <div class="kpi-title">Total In Review Queue</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="review-kpi-total" style="color: #d97706;">2,015</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 18px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 22px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 20px; background: #f59e0b;"></span>
-                <span class="spark-bar" style="height: 24px; background: #d97706;"></span>
-                <span class="spark-bar" style="height: 26px; background: #b45309;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext">Candidates requiring pharmacist verification</div>
-          </div>
-
-          <!-- Card 2: Missing Mobile Numbers -->
-          <div class="kpi-card">
-            <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-red"><svg viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"></path><line x1="23" y1="1" x2="1" y2="23"></line></svg></div>
-              <span class="kpi-trend-pill trend-alert">Zero WhatsApp</span>
-            </div>
-            <div class="kpi-title">Missing Mobile Numbers</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="review-kpi-missing-mobile" style="color: #ef4444;">46</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 12px; background: #ef4444;"></span>
-                <span class="spark-bar" style="height: 14px; background: #ef4444;"></span>
-                <span class="spark-bar" style="height: 10px; background: #ef4444;"></span>
-                <span class="spark-bar" style="height: 16px; background: #ef4444;"></span>
-                <span class="spark-bar" style="height: 18px; background: #dc2626;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext">Blocked from WhatsApp automated dispatch</div>
-          </div>
-
-          <!-- Card 3: Stability / Variance Risk -->
-          <div class="kpi-card">
-            <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg></div>
-              <span class="kpi-trend-pill trend-info">Cadence Check</span>
-            </div>
-            <div class="kpi-title">Stability / Variance Risk</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="review-kpi-stability-risk" style="color: #2563eb;">915</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 16px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 18px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 22px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 20px; background: #3b82f6;"></span>
-                <span class="spark-bar" style="height: 26px; background: #1d4ed8;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext">Unstable intervals or high variance patterns</div>
-          </div>
-
-          <!-- Card 4: Cold-Start (Single Purchase) -->
-          <div class="kpi-card">
-            <div class="kpi-card-header">
-              <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg></div>
-              <span class="kpi-trend-pill trend-up">First-Time</span>
-            </div>
-            <div class="kpi-title">Cold-Start (Single Purchase)</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="review-kpi-cold-start" style="color: #7c3aed;">427</div>
-              <div class="kpi-sparkline">
-                <span class="spark-bar" style="height: 14px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 16px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 20px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 22px; background: #8b5cf6;"></span>
-                <span class="spark-bar" style="height: 24px; background: #6d28d9;"></span>
-              </div>
-            </div>
-            <div class="kpi-subtext">Only 1 verified purchase on record</div>
-          </div>
-        </div>
-
-        <div class="card">
+        <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Pharmacist Clinical Review & Validation Queue</h3>
+              <h3 class="card-title">Patients Needing Review</h3>
               <p style="color: var(--text-secondary); margin-top: 0.25rem;">
-                Review unstable refill predictions, missing contact numbers, and cold-start single purchases before patient outreach.
+                Patients left out of reminders and reminders that need a pharmacist's attention.
               </p>
             </div>
-            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-              <select id="review-target-month" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                                              </select>
-              <select id="review-category-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="All" selected>All Categories</option>
-                <option value="Missing Mobile">Missing Mobile (46)</option>
-                <option value="Stability Risk">Stability / Variance Risk (915)</option>
-                <option value="Cold-Start">Cold-Start (Single Purchase) (427)</option>
-              </select>
-              <select id="review-mobile-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-                <option value="All" selected>All Mobile Status</option>
-                <option value="Missing">Missing Mobile Only</option>
-                <option value="Valid">Valid Mobile Only</option>
-              </select>
-              <input type="text" id="review-search-cust" placeholder="Search Patient / Phone / Reason..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); width: 220px;">
-              <button class="btn btn-danger-search" id="btn-refresh-review-queue"> Filter Queue</button>
-            </div>
           </div>
-          <div class="table-responsive" style="max-height: 520px;">
-            <table class="data-table" id="table-review-queue">
-              <thead>
-                <tr>
-                  <th>Patient Name & ID</th>
-                  <th>Mobile Number</th>
-                  <th>Mobile Status</th>
-                  <th>Medication / Salt</th>
-                  <th>Target Month</th>
-                  <th>Review Category</th>
-                  <th>Clinical Decision Reason</th>
-                  <th>Path & Stability</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div class="filter-row">
+            <label class="form-field"><span>Prediction / Review Target Date</span>
+              <input type="date" id="review-target-date"></label>
+            <label class="form-field form-field-grow"><span>🔍 Search customer name / mobile number</span>
+              <input type="text" id="review-search" placeholder="e.g. Ramesh or 98765 43210"></label>
           </div>
-        </div>
-      </section>
-
-      <!-- TAB 8: MODEL REGISTRY & ML LIFECYCLE -->
-      <section id="tab-models" class="tab-pane">
-        <!-- Data freshness & dynamic train / validation / test windows -->
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Data Freshness & Horizon Calibration</h3>
-              <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
-                Windows are re-derived from the latest sale on every load, so they move forward automatically when a new month is uploaded.
-              </p>
-            </div>
-            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <button class="btn btn-outline" id="btn-ml-retrain">Retrain &amp; Evaluate</button>
-              <button class="btn btn-primary" id="btn-ml-retrain-promote"> Retrain &amp; Promote if Gate Approves</button>
-            </div>
-          </div>
-          <div id="ml-freshness-banner" style="margin: 0.5rem 0 1rem;"></div>
-          <div class="table-responsive">
-            <table class="data-table" id="table-ml-plan">
-              <thead>
-                <tr><th>Window</th><th>From</th><th>To</th><th>Purchases</th><th>Used for</th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div class="filter-row">
+            <label class="form-field"><span>Review Category</span>
+              <select id="review-category">
+                <option value="candidates" selected>Not getting reminders (chronic / not classified)</option>
+                <option value="missing_mobile">Missing mobile number (in reminders)</option>
+                <option value="unstable">Unstable refill pattern (in reminders)</option>
+                <option value="b2b">B2B / Inter-Store excluded (audit)</option>
+              </select></label>
+            <label class="form-field"><span>Mobile Status</span>
+              <select id="review-mobile-status">
+                <option value="All" selected>All</option>
+                <option value="Valid">Valid</option>
+                <option value="Missing">Missing</option>
+                <option value="Invalid">Invalid</option>
+              </select></label>
+            <label class="form-field form-field-grow"><span>Search medicine</span>
+              <input type="text" id="review-medicine-search"></label>
           </div>
         </div>
 
-        <!-- Registry -->
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <div class="card-header">
-            <h3 class="card-title">Model Version Registry</h3>
-            <button class="btn btn-outline" id="btn-ml-rollback" title="Put the previous validated model back">↩ Roll back production model</button>
+        <div class="kpi-grid" id="review-kpis" style="margin-bottom: 1.25rem;">
+          <div class="kpi-card">
+            <div class="kpi-card-header"><div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div></div>
+            <div class="kpi-title">Not getting reminders</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="review-kpi-not-in">–</div></div>
           </div>
-          <div class="table-responsive">
-            <table class="data-table" id="table-models">
-              <thead>
-                <tr>
-                  <th>Version ID</th>
-                  <th>Model Type</th>
-                  <th>Train Cutoff</th>
-                  <th>Train Samples</th>
-                  <th>Within ±7d (measured)</th>
-                  <th>MAE (days)</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div class="kpi-card">
+            <div class="kpi-card-header"><div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"></path><path d="m8.5 8.5 7 7"></path></svg></div></div>
+            <div class="kpi-title">Chronic medicine</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="review-kpi-chronic">–</div></div>
           </div>
-          <div id="ml-gate-result" style="margin-top: 1rem;"></div>
-        </div>
-
-        <!-- Recent evaluations -->
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <div class="card-header">
-            <h3 class="card-title">Recent Out-of-Time Evaluations</h3>
+          <div class="kpi-card">
+            <div class="kpi-card-header"><div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg></div></div>
+            <div class="kpi-title">Not classified yet</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="review-kpi-unclassified">–</div></div>
           </div>
-          <div class="table-responsive">
-            <table class="data-table" id="table-ml-evaluations">
-              <thead>
-                <tr><th>Run</th><th>Status</th><th>Window</th><th>Paired Events</th><th>Candidate</th><th>Candidate ±7d</th><th>Baseline ±7d</th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div class="kpi-card">
+            <div class="kpi-card-header"><div class="kpi-icon-pill kpi-icon-red"><svg viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"></path><line x1="23" y1="1" x2="1" y2="23"></line></svg></div></div>
+            <div class="kpi-title">No valid mobile</div>
+            <div class="kpi-value-row"><div class="kpi-value" id="review-kpi-no-mobile">–</div></div>
           </div>
         </div>
 
-        <!-- Prediction settings (read-only; set in .env) -->
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <div class="card-header">
-            <h3 class="card-title">Prediction Settings</h3>
-          </div>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Rules, patient identity and therapy grouping the engine runs with. Change them in <code>.env</code> and restart; measure a rule first with the A/B test below.</p>
-          <div class="table-responsive">
-            <table class="data-table" id="table-ml-settings">
-              <thead><tr><th>Setting</th><th>Current value</th><th>.env switch</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Rule A/B and rolling test -->
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <div class="card-header">
-            <h3 class="card-title">Rule A/B and Multi-Month Testing</h3>
-            <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-outline" id="btn-ml-rules-ab">Run Rule A/B</button>
-              <button class="btn btn-outline" id="btn-ml-rolling">Run 3-Month Test</button>
-            </div>
-          </div>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Rule A/B scores every rule on the same unseen test month (~3 min). The multi-month test trains one model per month and checks the gain holds in every month (~20 min, needs RAM). Both run in the background; results appear here.</p>
-          <div id="ml-rules-ab-meta" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></div>
-          <div class="table-responsive" style="margin-bottom: 1rem;">
-            <table class="data-table" id="table-ml-rules-ab">
-              <thead><tr><th>Rule variant</th><th>Within ±7d</th><th>Gain vs no rules (pp)</th><th>MAE (days)</th><th>Early %</th><th>Late %</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <div id="ml-rolling-meta" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></div>
-          <div class="table-responsive">
-            <table class="data-table" id="table-ml-rolling">
-              <thead><tr><th>Test month</th><th>Events</th><th>Raw median ±7d</th><th>Baseline engine ±7d</th><th>Model ±7d</th><th>Model + rules ±7d</th><th>Model + rules MAE</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Identity cut-over -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">Patient Identity Cut-over</h3>
-            <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-outline" id="btn-rekey-dry">Dry Run</button>
-              <button class="btn btn-primary" id="btn-rekey-apply">Apply Re-key</button>
-            </div>
+            <h3 class="card-title" id="review-heading">Patients not getting reminders</h3>
+            <button class="btn btn-outline" id="btn-review-export" style="display:none;">Export Review Records (CSV)</button>
           </div>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0 0 0.75rem;">Run once after switching <code>REFILLCARE_PATIENT_IDENTITY=name_mobile</code> or <code>REFILLCARE_ITEM_GROUPING=salt</code>. Old-key reminders are retired, every patient is re-scored, and stages already sent are never sent again. The database is backed up first.</p>
-          <div id="rekey-result" style="font-size: 0.85rem;"></div>
+          <p class="panel-caption" id="review-caption" style="display:none;">Tick one row to review and edit before adding, or tick several rows (or the header box to select all) to add them all with one click.</p>
+          <div id="review-table-wrap"></div>
+          <div class="review-add-panel" id="review-add-panel" style="display:none;"></div>
         </div>
+
+        <details class="card collapsible-card" id="review-added-details" style="margin-top: 1.25rem;">
+          <summary>Patients added to reminders by a pharmacist (<span id="review-added-count">0</span>)</summary>
+          <div id="review-added-wrap" style="margin-top: 0.85rem;"></div>
+        </details>
       </section>
 
-      <!-- TAB 9: WHATSAPP GATEWAY -->
+      <!-- TAB: WHATSAPP MESSAGES -->
       <section id="tab-whatsapp" class="tab-pane">
-        <!-- Gateway Header Card -->
+        <!-- Header + filters -->
         <div class="card" style="margin-bottom: 1.25rem;">
           <div class="card-header">
             <div>
-              <h3 class="card-title">WhatsApp & Xinno Messaging Gateway</h3>
+              <h3 class="card-title">WhatsApp Messages</h3>
               <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
-                Automated WhatsApp reminders remain safely controlled with dry-run simulation mode enabled by default.
+                Refill reminders for this store. Messages are sent only for today's reminders, after you confirm.
               </p>
-            </div>
-            <div style="display: flex; gap: 0.75rem; align-items: center;">
-              <span class="badge badge-warning" id="wa-dry-run-badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid #f59e0b; font-weight: 700;">DRY-RUN SIMULATION ACTIVE</span>
-              <button class="btn btn-primary" id="btn-dispatch-dryrun"> Simulate Batch Send (Dry-Run)</button>
             </div>
           </div>
 
-          <!-- Controls Toolbar -->
-          <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; padding-top: 0.5rem; border-top: 1px solid var(--border-main);">
-            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Target Mode</label>
-              <select id="wa-target-mode" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+          <div class="filter-row" style="padding-top: 0.5rem; border-top: 1px solid var(--border-main);">
+            <label class="form-field"><span>Target Mode</span>
+              <select id="wa-target-mode">
                 <option value="DATE" selected>Specific Date</option>
                 <option value="MONTH">Target Month</option>
-              </select>
-            </div>
+              </select></label>
 
-            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;" id="wa-target-label">Target Date</label>
-              <input type="date" id="wa-target-date" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-              <select id="wa-target-month" style="display: none; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                              </select>
-            </div>
+            <label class="form-field"><span id="wa-target-label">Target Date</span>
+              <input type="date" id="wa-target-date">
+              <select id="wa-target-month" style="display: none;"></select></label>
 
-            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Lifecycle Tier</label>
-              <select id="wa-tier-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
+            <label class="form-field"><span>Lifecycle Tier</span>
+              <select id="wa-tier-filter">
                 <option value="ALL" selected>ALL (3-Tier Lifecycle)</option>
                 <option value="DUE">DUE (Due / Advance)</option>
                 <option value="FOLLOWUP">FOLLOWUP (Follow-up)</option>
                 <option value="LAPSED">LAPSED (+45d Re-engagement)</option>
-              </select>
-            </div>
+              </select></label>
 
-            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Mobile Status</label>
-              <select id="wa-mobile-filter" style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
+            <label class="form-field"><span>Mobile Status</span>
+              <select id="wa-mobile-filter">
                 <option value="All" selected>All Statuses</option>
                 <option value="Valid">Valid Phone (Ready)</option>
                 <option value="Missing">Missing / Review</option>
-              </select>
-            </div>
+              </select></label>
 
-            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
-                Sync Window: <span id="wa-sync-win-val" style="color: var(--primary);">0</span>d
-              </label>
-              <input type="range" id="wa-sync-window" min="0" max="14" value="0" step="1" style="width: 110px; cursor: pointer;">
-            </div>
+            <label class="form-field"><span>Sync Window: <b id="wa-sync-win-val">0</b>d</span>
+              <input type="range" id="wa-sync-window" min="0" max="14" value="0" step="1" style="width: 110px; cursor: pointer;"></label>
 
-            <div style="display: flex; flex-direction: column; gap: 0.25rem; flex-grow: 1; min-width: 180px;">
-              <label style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Filter Search</label>
-              <input type="text" id="wa-search-input" placeholder="Search Customer / Phone / Med..." style="padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-            </div>
+            <label class="form-field form-field-grow"><span>Filter Search</span>
+              <input type="text" id="wa-search-input" placeholder="Search Customer / Phone / Med..."></label>
 
-            <div style="display: flex; align-items: flex-end; padding-top: 1.15rem;">
-              <button class="btn btn-outline" id="btn-refresh-wa" style="padding: 0.45rem 1rem;">Refresh Queue</button>
+            <div class="form-field" style="justify-content: flex-end;">
+              <button class="btn btn-outline" id="btn-refresh-wa">Refresh Queue</button>
             </div>
           </div>
         </div>
 
-        <!-- 4 KPI Summary Cards -->
+        <!-- Send today's reminders -->
+        <div class="wa-send-card">
+          <div class="wa-send-kicker">📤 SEND WHATSAPP REMINDERS</div>
+          <div class="wa-send-headline" id="wa-send-headline">Loading…</div>
+          <div class="wa-send-subline" id="wa-send-subline"></div>
+          <button class="btn-wa-send" id="btn-wa-send-today" disabled>📤  Send WhatsApp Messages (0)</button>
+          <div class="wa-send-note" id="wa-send-note" style="display:none;"></div>
+        </div>
+
+        <!-- KPI Summary Cards -->
         <div class="kpi-grid" style="margin-bottom: 1.25rem;">
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-blue"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
-              <span class="kpi-trend-pill trend-neutral">● Scheduled</span>
             </div>
             <div class="kpi-title">Total Scheduled</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="wa-kpi-total">--</div>
-            </div>
+            <div class="kpi-value-row"><div class="kpi-value" id="wa-kpi-total">--</div></div>
           </div>
-
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-emerald"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg></div>
-              <span class="kpi-trend-pill trend-success">▲ Ready to Send</span>
             </div>
             <div class="kpi-title">Delivery Ready (Valid)</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="wa-kpi-valid" style="color: #10b981;">--</div>
-            </div>
+            <div class="kpi-value-row"><div class="kpi-value" id="wa-kpi-valid" style="color: #10b981;">--</div></div>
           </div>
-
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-amber"><svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div>
-              <span class="kpi-trend-pill trend-warning">● Attention Needed</span>
             </div>
             <div class="kpi-title">Missing Mobile</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="wa-kpi-missing" style="color: #f59e0b;">--</div>
-            </div>
+            <div class="kpi-value-row"><div class="kpi-value" id="wa-kpi-missing" style="color: #f59e0b;">--</div></div>
           </div>
-
           <div class="kpi-card">
             <div class="kpi-card-header">
               <div class="kpi-icon-pill kpi-icon-purple"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></div>
-              <span class="kpi-trend-pill trend-neutral">Horizon Target</span>
             </div>
             <div class="kpi-title">Active Target</div>
-            <div class="kpi-value-row">
-              <div class="kpi-value" id="wa-kpi-target-label" style="font-size: 1.2rem;">--</div>
-            </div>
+            <div class="kpi-value-row"><div class="kpi-value" id="wa-kpi-target-label" style="font-size: 1.2rem;">--</div></div>
           </div>
         </div>
 
-        <!-- Two-Column Layout: Left = Candidate Queue, Right = Live Preview & Single Send -->
-        <div style="display: grid; grid-template-columns: 1.35fr 1.65fr; gap: 1.25rem; align-items: start;">
-          <!-- Left Column: Candidate Table -->
+        <!-- Candidate list + message preview -->
+        <div class="wa-grid">
           <div class="card" style="padding: 1.25rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; gap: 0.5rem; flex-wrap: wrap;">
               <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">
-                Candidate Outreach Queue (<span id="wa-candidate-count">0</span> records)
+                Patients getting a message (<span id="wa-candidate-count">0</span> records)
               </h4>
-              <span style="font-size: 0.75rem; color: var(--text-muted);">Click any row to preview message</span>
+              <span style="font-size: 0.75rem; color: var(--text-muted);">Click any row to preview the message</span>
             </div>
-
             <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
               <table class="data-table" id="table-wa-candidates">
                 <thead>
-                  <tr>
-                    <th>Customer</th>
-                    <th>Mobile</th>
-                    <th>Status</th>
-                    <th>Medication</th>
-                    <th>Stage</th>
-                    <th>Refill Due</th>
-                    <th>Action</th>
-                  </tr>
+                  <tr><th>Customer</th><th>Mobile</th><th>Status</th><th>Medication</th><th>Stage</th><th>Refill Due</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tbody-wa-candidates">
-                  <tr>
-                    <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading WhatsApp candidates...</td>
-                  </tr>
+                  <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading WhatsApp candidates...</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- Right Column: Live Message Preview Box & Single Send Form -->
           <div class="card" style="padding: 1.25rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-              <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">
-                Live Message Preview & Clinical Variable Simulation
-              </h4>
-            </div>
+            <label class="form-field" style="margin-bottom: 1rem;"><span>Select patient to preview the WhatsApp message</span>
+              <select id="wa-preview-patient-select"><option value="">Loading patient list...</option></select></label>
 
-            <!-- Patient Selector for Preview -->
-            <div style="margin-bottom: 1rem;">
-              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 0.35rem;">
-                Select Patient to Preview WhatsApp Text:
-              </label>
-              <select id="wa-preview-patient-select" style="width: 100%; padding: 0.55rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                <option value="">Loading patient candidate list...</option>
-              </select>
-            </div>
-
-            <!-- High-Contrast WhatsApp Message Preview Box -->
-            <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #22c55e; border-radius: 12px; padding: 1.25rem 1.4rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08); margin-bottom: 1rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcfce7; padding-bottom: 0.6rem; margin-bottom: 0.85rem;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 0.85rem; font-weight: 700; color: #38bdf8;">WABA</span>
-                  <span style="font-weight: 700; color: #166534; font-size: 0.95rem;">WhatsApp Live Message Preview</span>
-                </div>
-                <span id="wa-preview-badge" style="background: #16a34a; color: #ffffff; font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 9999px; letter-spacing: 0.5px;">
-                  DUE • DUE_REFILL
-                </span>
+            <div class="wa-preview-card">
+              <div class="wa-preview-header">
+                <span class="wa-preview-title">💬 WhatsApp message preview</span>
+                <span class="wa-preview-badge" id="wa-preview-badge">—</span>
               </div>
-              <div id="wa-preview-body" style="white-space: pre-wrap; font-size: 0.95rem; line-height: 1.6; color: #0f172a; font-weight: 500;">
-                Select a patient candidate to inspect rendered WhatsApp text.
-              </div>
-            </div>
-
-            <!-- Interactive Single Test Dispatch Card -->
-            <div style="background: var(--bg-hover); border: 1px solid var(--border-main); border-radius: 10px; padding: 1rem 1.25rem;">
-              <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 6px;">
-                Send Single Test WhatsApp Message (Live / Dry-Run)
-              </div>
-              <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0.75rem; align-items: flex-end;">
-                <div>
-                  <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">
-                    Recipient Mobile (10 or 12 Digits)
-                  </label>
-                  <input type="text" id="wa-single-test-phone" placeholder="91XXXXXXXXXX" style="width: 100%; padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-                </div>
-                <div style="padding-bottom: 0.4rem;">
-                  <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; color: var(--text-main); cursor: pointer;">
-                    <input type="checkbox" id="wa-single-dryrun-chk" checked>
-                    <span>Dry-Run Simulation</span>
-                  </label>
-                  <div id="wa-mode-caption" style="font-size: 0.7rem; color: #f59e0b; font-weight: 600; margin-top: 2px;">Mode: Dry-Run</div>
-                </div>
-                <div>
-                  <button class="btn btn-primary" id="btn-send-single-wa" style="width: 100%; padding: 0.5rem 0.75rem;">
-                    Send Test Message
-                  </button>
-                </div>
-              </div>
-              <div id="wa-single-send-feedback" style="margin-top: 0.75rem; display: none;"></div>
+              <div class="wa-bubble" id="wa-preview-body">Select a patient to see the WhatsApp message.</div>
+              <div class="wa-preview-footer" id="wa-preview-footer"></div>
             </div>
           </div>
         </div>
 
-        <!-- Patient WhatsApp consent (opt-out / opt-in) -->
-        <div class="card" style="margin-top: 1.25rem;">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Patient Outreach Consent &amp; Opt-Out Management</h3>
-              <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.9rem;">
-                Patients who reply STOP (or are opted out here) are skipped by every send path: batch, Med-Sync, single stage and test send.
-              </p>
+        <!-- Consent & logs -->
+        <div class="wa-grid wa-grid-even" style="margin-top: 1.25rem;">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">🔕 Stop / Resume messages</h3>
+                <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.85rem;">
+                  Patients who reply STOP, or are stopped here, get no WhatsApp reminders until resumed.
+                </p>
+              </div>
             </div>
+            <label class="form-field" style="margin-bottom: 0.75rem;"><span>Search patient name or mobile number</span>
+              <input type="text" id="consent-search-input" placeholder="e.g. Ramesh or 98765 43210"></label>
+            <div id="consent-search-results"><div class="empty-note">Type at least 2 letters of the name or digits of the mobile number.</div></div>
           </div>
-          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem;">
-            <input type="text" id="consent-customer-id" placeholder="Customer ID (e.g. S0/12345)" style="padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); width: 240px;">
-            <button class="btn btn-danger" id="btn-consent-opt-out">Opt Out</button>
-            <button class="btn btn-outline" id="btn-consent-opt-in">Opt In</button>
-          </div>
-          <div class="table-responsive">
-            <table class="data-table" id="table-opted-out">
-              <thead>
-                <tr><th>Customer ID</th><th>Name</th><th>Mobile</th><th>Updated</th><th>Action</th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">📋 Messages Sent</h3>
+                <p style="color: var(--text-secondary); margin-top: 0.35rem; font-size: 0.85rem;" id="wa-log-summary"></p>
+              </div>
+            </div>
+            <div class="filter-row" style="margin-bottom: 0.75rem;">
+              <label class="form-field"><span>Day</span><input type="date" id="wa-log-day"></label>
+              <label class="form-field"><span>Status</span>
+                <select id="wa-log-status">
+                  <option value="ALL" selected>All</option>
+                  <option value="SENT">Sent</option>
+                  <option value="FAILED">Failed</option>
+                </select></label>
+            </div>
+            <div id="wa-log-table-wrap"></div>
           </div>
         </div>
       </section>
@@ -1159,57 +677,19 @@
   </main>
 
   <!-- ==============================================================================
-       MODALS: ADD MEDICATION RULE
+       SHARED MODAL (confirmations for add / remove / stop / send) - see openModal() in app.js
        ============================================================================== -->
-  <div class="modal-overlay" id="modal-add-rule">
-    <div class="modal-card">
+  <div class="modal-overlay" id="app-modal">
+    <div class="modal-card" id="app-modal-card" role="dialog" aria-modal="true" aria-labelledby="app-modal-title">
       <div class="modal-header">
-        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main);"> Add Medication Classification Rule (Supabase)</h3>
-        <button class="action-btn" id="btn-close-modal-rule" style="border: none; font-size: 1.2rem;">&times;</button>
+        <h3 id="app-modal-title" style="font-size: 1.15rem; font-weight: 700; color: var(--text-main);"></h3>
+        <button class="action-btn" id="app-modal-close" style="border: none; font-size: 1.2rem;" aria-label="Close">&times;</button>
       </div>
-      <div class="modal-body">
-        <div>
-          <label style="font-size: 0.82rem; font-weight: 700; color: var(--text-main); display: block; margin-bottom: 0.35rem;">Medication Keyword / Pattern *</label>
-          <input type="text" id="rule-pattern-input" placeholder="e.g. TELMA, GLYCOMET, VAPORUB, COOL-GEL..." style="width: 100%; padding: 0.6rem 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-          <small style="font-size: 0.74rem; color: var(--text-muted);">Exact brand name, molecule, or word substring.</small>
-        </div>
-
-        <div>
-          <label style="font-size: 0.82rem; font-weight: 700; color: var(--text-main); display: block; margin-bottom: 0.35rem;">Rule Classification *</label>
-          <select id="rule-type-select" style="width: 100%; padding: 0.6rem 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main); font-weight: 600;">
-            <option value="CHRONIC">CHRONIC (Maintenance Medication - Eligible for Refill Reminders)</option>
-            <option value="EXCLUDE">EXCLUDE (Non-Chronic / OTC / FMCG / Surgical - Excluded from Reminders)</option>
-          </select>
-        </div>
-
-        <div>
-          <label style="font-size: 0.82rem; font-weight: 700; color: var(--text-main); display: block; margin-bottom: 0.35rem;">Clinical Category *</label>
-          <select id="rule-category-select" style="width: 100%; padding: 0.6rem 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-            <option value="ANTI_DIABETIC">ANTI_DIABETIC (Metformin, Glimepiride, Sitagliptin, Insulins)</option>
-            <option value="CARDIOVASCULAR_HTN">CARDIOVASCULAR_HTN (Telmisartan, Amlodipine, Beta-Blockers)</option>
-            <option value="LIPID_LOWERING">LIPID_LOWERING (Atorvastatin, Rosuvastatin, Fenofibrate)</option>
-            <option value="RESPIRATORY_ASTHMA">RESPIRATORY_ASTHMA (Inhalers, Montelukast, Formoterol)</option>
-            <option value="THYROID_ENDOCRINE">THYROID_ENDOCRINE (Thyroxine, Carbimazole)</option>
-            <option value="NEURO_PSYCHIATRIC">NEURO_PSYCHIATRIC (Levetiracetam, Clonazepam, Escitalopram)</option>
-            <option value="PERSONAL_CARE_AND_HYGIENE">PERSONAL_CARE_AND_HYGIENE (Soaps, Shampoos, Powders)</option>
-            <option value="OTC_BALMS_GELS">OTC_BALMS_GELS (Vicks, Volini, Moov, Pain Gels)</option>
-            <option value="ACUTE_ANALGESIC">ACUTE_ANALGESIC (Dolo, Calpol, Paracetamol, Sinarest)</option>
-            <option value="SURGICAL_CONSUMABLES">SURGICAL_CONSUMABLES (Bandages, Syringes, Diapers)</option>
-            <option value="OTHER_GENERAL">OTHER_GENERAL</option>
-          </select>
-        </div>
-
-        <div>
-          <label style="font-size: 0.82rem; font-weight: 700; color: var(--text-main); display: block; margin-bottom: 0.35rem;">Pharmacist Notes (Optional)</label>
-          <input type="text" id="rule-notes-input" placeholder="e.g. Added by Chief Pharmacist for cardiac patients" style="width: 100%; padding: 0.6rem 0.85rem; border-radius: var(--radius-md); border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-main);">
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" id="btn-cancel-modal-rule">Cancel</button>
-        <button class="btn btn-primary" id="btn-save-rule-to-supabase">Save Rule to Supabase</button>
-      </div>
+      <div class="modal-body" id="app-modal-body"></div>
+      <div class="modal-footer" id="app-modal-footer"></div>
     </div>
   </div>
+
 
   <!-- Notification Toast Container -->
   <div class="toast-container" id="toast-container"></div>

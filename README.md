@@ -10,6 +10,7 @@ comes through the Mediastra web application, built by the backend team.
 | [future_implementation/GO_LIVE_CHECKLIST.md](future_implementation/GO_LIVE_CHECKLIST.md) | everything still needed for live mode — part A store / operations, part B RefillCare code, part C backend team |
 | [future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md](future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md) | multi-tenant architecture and AWS deployment (backend team) |
 | [future_implementation/PRODUCTION_READINESS_SCENARIO_1.md](future_implementation/PRODUCTION_READINESS_SCENARIO_1.md) | every code change needed to move from one local store to multi-tenant AWS (tenants → stores, RDS, S3, Docker) |
+| [future_implementation/PROJECT_AUDIT_ML_AND_MARKET.md](future_implementation/PROJECT_AUDIT_ML_AND_MARKET.md) | model accuracy review, deep-learning decision, 200+ store readiness, competitor comparison |
 
 What it does, end to end:
 

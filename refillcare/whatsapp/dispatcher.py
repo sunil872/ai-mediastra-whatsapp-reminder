@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,7 @@ from database.models import (
 from refillcare.data.monthly_ingestion import determine_mobile_status, format_display_phone_10digits
 from refillcare.whatsapp.client import RefillWhatsAppClient
 from refillcare.whatsapp.consent import load_opt_out_index
+from refillcare.whatsapp.holdout import is_holdout
 from refillcare.whatsapp.template_formatter import get_tier_for_stage_offset
 
 logger = logging.getLogger("refillcare_whatsapp_dispatcher")
@@ -52,6 +53,33 @@ def live_attempts(db: Session, reminder_id: str) -> int:
         .filter(WhatsAppDeliveryLogModel.reminder_id == reminder_id, WhatsAppDeliveryLogModel.is_dry_run == False)  # noqa: E712
         .count()
     )
+
+
+APPROVABLE_STATUSES = ("PENDING", "DUE")
+
+
+def approve_stages(db: Session, stages: List[ReminderStageModel], approved_by: str) -> int:
+    """Approve PENDING / DUE stages (pharmacist confirmation before a live send). Returns count."""
+    now = datetime.utcnow()
+    n = 0
+    for st in stages:
+        if st.status in APPROVABLE_STATUSES:
+            st.status = "APPROVED"
+            st.updated_at = now
+            n += 1
+    if n:
+        db.commit()
+        logger.info("%d reminder stage(s) approved for live send by %s", n, approved_by)
+    return n
+
+
+def _pharmacist_added(db: Session) -> set:
+    try:
+        from refillcare.engine.pharmacist_overrides import pharmacist_added_customer_ids
+
+        return pharmacist_added_customer_ids(db)
+    except Exception:
+        return set()
 
 
 class StaleSalesData(PermissionError):
@@ -151,10 +179,15 @@ class RefillWhatsAppDispatcher:
         target_month: Optional[str] = None,
         tier_filter: str = "ALL",
         dry_run: bool = True,
-        batch_limit: int = 50,
+        batch_limit: Optional[int] = 50,
         rate_limit_delay_sec: float = 0.05,
+        approve_before_send: bool = False,
+        approved_by: str = "pharmacist",
     ) -> Dict[str, Any]:
         """Dispatch a filtered batch of scheduled reminder stages.
+
+        ``approve_before_send`` (live only) is the pharmacist's explicit confirmation: selected
+        PENDING / DUE stages are approved and sent in one step. ``batch_limit=None`` = no limit.
 
         Args:
             db: Active SQLAlchemy database session.
@@ -170,7 +203,7 @@ class RefillWhatsAppDispatcher:
         # Query active scheduled stages
         if dry_run:
             allowed_status = ["PENDING", "DUE", "APPROVED"]
-        elif live_requires_approval():
+        elif live_requires_approval() and not approve_before_send:
             allowed_status = ["APPROVED", "FAILED"]
         else:
             allowed_status = ["PENDING", "DUE", "APPROVED", "FAILED"]
@@ -207,11 +240,13 @@ class RefillWhatsAppDispatcher:
         all_stages = query.all()
 
         opt_outs = load_opt_out_index(db)
+        ph_added = _pharmacist_added(db)  # pharmacist-added patients are never in the control group
 
         # Filter only valid mobile numbers and opted-in customers
         valid_candidates = []
         skipped_already_sent = 0
         skipped_opted_out = 0
+        skipped_holdout = 0
         for stg in all_stages:
             dec = getattr(stg.cycle, "decision", None)
             if dec is None or not dec.is_eligible:
@@ -219,6 +254,9 @@ class RefillWhatsAppDispatcher:
 
             if opt_outs.blocks(dec.customer_id, dec.mobile_no):
                 skipped_opted_out += 1
+                continue
+            if str(dec.customer_id) not in ph_added and is_holdout(dec.customer_id, dec.mobile_no):
+                skipped_holdout += 1  # no-reminder control group (uplift measurement)
                 continue
 
             if not dry_run:
@@ -236,7 +274,9 @@ class RefillWhatsAppDispatcher:
                 valid_candidates.append((stg, cust_name, phone, med_name, stg.expected_refill_date))
 
         # Take batch slice
-        batch_slice = valid_candidates[:batch_limit]
+        batch_slice = valid_candidates if batch_limit is None else valid_candidates[:batch_limit]
+        if not dry_run and approve_before_send:
+            approve_stages(db, [c[0] for c in batch_slice], approved_by)
 
         logs: List[Dict[str, Any]] = []
         success_count = 0
@@ -285,7 +325,8 @@ class RefillWhatsAppDispatcher:
             "failed_count": failed_count,
             "is_dry_run": dry_run,
             "skipped_already_sent": skipped_already_sent,
-            "requires_approval": (not dry_run) and live_requires_approval(),
+            "skipped_holdout": skipped_holdout,
+            "requires_approval": (not dry_run) and live_requires_approval() and not approve_before_send,
             "tier_filter": tier_filter,
             "delivery_logs": logs,
             "delivery_summary": logs,
@@ -296,11 +337,15 @@ class RefillWhatsAppDispatcher:
         db: Session,
         bundle: Any,
         dry_run: bool = True,
+        approve_before_send: bool = False,
+        approved_by: str = "pharmacist",
     ) -> Dict[str, Any]:
         """Dispatch a synchronized multi-medication WhatsApp reminder.
 
         Live sends are idempotent per bundle_id and per covered reminder stage, require the
         covered stages to be APPROVED (unless disabled) and mark them SENT on success.
+        ``approve_before_send=True`` is the pharmacist's explicit confirmation (the "Yes, send"
+        dialog / API flag): PENDING / DUE stages are approved first, then sent.
         """
         stage_ids = list(getattr(bundle, "stage_reminder_ids", []) or [])
         if not dry_run:
@@ -310,6 +355,8 @@ class RefillWhatsAppDispatcher:
             if already_delivered_live(db, bundle.bundle_id) or any(already_delivered_live(db, sid) for sid in stage_ids):
                 return {"success": False, "status_code": None, "message": "Skipped: already delivered live (idempotency guard).", "skipped": True}
             stages = db.query(ReminderStageModel).filter(ReminderStageModel.reminder_id.in_(stage_ids)).all()
+            if approve_before_send:
+                approve_stages(db, stages, approved_by)
             allowed = {"APPROVED"} if live_requires_approval() else {"PENDING", "DUE", "APPROVED"}
             not_ready = [st.reminder_id for st in stages if st.status not in allowed]
             if not stages or not_ready:
@@ -364,35 +411,78 @@ class RefillWhatsAppDispatcher:
 
         return res
 
+    def summarize_medsync_send(self, db: Session, bundles: List[Any]) -> Dict[str, int]:
+        """Counts for the send-confirmation dialog: how many messages would actually go out."""
+        opt_outs = load_opt_out_index(db)
+        ph_added = _pharmacist_added(db)  # pharmacist-added patients are never in the control group
+        out = {"to_send": 0, "medicines": 0, "no_valid_mobile": 0, "opted_out": 0, "already_sent": 0, "holdout": 0, "total": len(bundles)}
+        for b in bundles:
+            if determine_mobile_status(b.mobile_no or "") != "Valid":
+                out["no_valid_mobile"] += 1
+                continue
+            if opt_outs.blocks(getattr(b, "customer_id", None), b.mobile_no):
+                out["opted_out"] += 1
+                continue
+            if str(getattr(b, "customer_id", None)) not in ph_added and is_holdout(getattr(b, "customer_id", None), b.mobile_no):
+                out["holdout"] += 1
+                continue
+            stage_ids = list(getattr(b, "stage_reminder_ids", []) or [])
+            if already_delivered_live(db, b.bundle_id) or any(already_delivered_live(db, sid) for sid in stage_ids):
+                out["already_sent"] += 1
+                continue
+            out["to_send"] += 1
+            out["medicines"] += len(b.synced_items) if getattr(b, "synced_items", None) else 1
+        return out
+
     def dispatch_medsync_batch(
         self,
         db: Session,
         bundles: List[Any],
         dry_run: bool = True,
-        batch_limit: int = 50,
+        batch_limit: Optional[int] = 50,
         rate_limit_delay_sec: float = 0.05,
+        approve_before_send: bool = False,
+        approved_by: str = "pharmacist",
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, Any]:
-        """Dispatch a batch of Med-Sync synchronized bundles."""
+        """Dispatch a batch of Med-Sync synchronized bundles.
+
+        ``batch_limit=None`` sends every valid bundle. ``approve_before_send`` approves the covered
+        PENDING / DUE stages first (pharmacist confirmation). ``on_progress(done, total)`` is called
+        after each bundle (UI progress bar).
+        """
         if not dry_run:
             check_live_send_allowed(db, self.allow_stale_data)  # once, before the first bundle
         opt_outs = load_opt_out_index(db)
+        ph_added = _pharmacist_added(db)  # pharmacist-added patients are never in the control group
         valid_bundles = []
+        skipped_holdout = 0
         for b in bundles:
             if determine_mobile_status(b.mobile_no or "") != "Valid":
                 continue
             if opt_outs.blocks(getattr(b, "customer_id", None), b.mobile_no):
                 continue
+            if str(getattr(b, "customer_id", None)) not in ph_added and is_holdout(getattr(b, "customer_id", None), b.mobile_no):
+                skipped_holdout += 1  # no-reminder control group (uplift measurement)
+                continue
             valid_bundles.append(b)
 
-        batch_slice = valid_bundles[:batch_limit]
+        batch_slice = valid_bundles if batch_limit is None else valid_bundles[:batch_limit]
+        if not dry_run and approve_before_send:
+            logger.info("Live Med-Sync send of %d bundle(s) approved by %s", len(batch_slice), approved_by)
 
         logs: List[Dict[str, Any]] = []
         success_count = 0
         failed_count = 0
 
         skipped = 0
-        for b in batch_slice:
-            res = self.dispatch_medsync_bundle_record(db=db, bundle=b, dry_run=dry_run)
+        total = len(batch_slice)
+        for idx, b in enumerate(batch_slice, start=1):
+            res = self.dispatch_medsync_bundle_record(
+                db=db, bundle=b, dry_run=dry_run, approve_before_send=approve_before_send, approved_by=approved_by,
+            )
+            if on_progress is not None:
+                on_progress(idx, total)
             is_ok = res.get("success", False)
             if res.get("skipped"):
                 skipped += 1
@@ -428,6 +518,7 @@ class RefillWhatsAppDispatcher:
             "failed_count": failed_count,
             "is_dry_run": dry_run,
             "skipped_not_approved_or_already_sent": skipped,
+            "skipped_holdout": skipped_holdout,
             "delivery_logs": logs,
             "delivery_summary": logs,
         }

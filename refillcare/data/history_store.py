@@ -15,7 +15,7 @@ import hashlib
 import logging
 import threading
 from datetime import date, datetime
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -33,12 +33,14 @@ COLUMN_MAP: Dict[str, str] = {
     "freeQuantity": "free_quantity", "MOBILE_NO": "mobile_no", "customerId": "customer_id", "itemId": "item_id",
     "salt_composition": "salt_composition", "salt_category": "salt_category", "transaction_type": "transaction_type",
     "refillcare_eligible": "refillcare_eligible", "exclusion_reason": "exclusion_reason", "import_batch_id": "import_batch_id",
+    "daysSupply": "days_supply",
 }
 _CHUNK = 900  # stays under SQLite's bound-parameter limit
 _cache_lock = threading.Lock()
 # (store, with_history_columns) -> (version, frame): the ML tab and the dashboard views keep separate
 # entries instead of evicting each other on every switch
 _full_cache: Dict[Tuple[str, bool], Tuple[Tuple, pd.DataFrame]] = {}
+_patients_cache: Dict[Tuple, Any] = {}  # (store, history version, identity mode) -> patients monitored dict
 
 
 def _norm_text(v) -> str:
@@ -118,6 +120,111 @@ def _to_frame(rows: Iterable) -> pd.DataFrame:
         df["invoice_date"] = pd.to_datetime(df["invoice_date"], errors="coerce")
         df["refillcare_eligible"] = df["refillcare_eligible"].fillna(True).astype(bool)
     return df
+
+
+def channel_counts(db: Session) -> Dict[str, int]:
+    """Sales-line counts of the current store from its database (Streamlit overview and API share this).
+
+    received = bill lines in the store's active uploads; stored = lines kept (every line of a bill, incl.
+    repeat scans); not_stored = returns netted against their sale, invalid rows, lines uploaded before.
+    """
+    from database.models import ImportBatchModel
+
+    by_type = dict(db.execute(select(Line.transaction_type, func.count(Line.id)).group_by(Line.transaction_type)).all())
+    stored = int(sum(by_type.values()))
+    eligible = int(db.execute(select(func.count(Line.id)).where(Line.refillcare_eligible.is_(True))).scalar() or 0)
+    received = int(db.execute(select(func.sum(func.coalesce(ImportBatchModel.record_count, 0))).where(
+        ImportBatchModel.is_active.is_(True))).scalar() or 0)
+    received = max(received, stored)
+    return {
+        "received": received,
+        "stored": stored,
+        "not_stored": received - stored,
+        "customer_sales": int(by_type.get("CUSTOMER_SALE", 0)),
+        "b2b_inter_store": int(by_type.get("B2B_INTER_STORE", 0)),
+        "unknown": int(stored - by_type.get("CUSTOMER_SALE", 0) - by_type.get("B2B_INTER_STORE", 0)),
+        "refillcare_eligible": eligible,
+    }
+
+
+def store_summary(db: Session) -> Dict[str, Any]:
+    """THE store summary every tab and the API show (one definition, counted from the database):
+
+    first / latest sales date, sales lines stored, and active patients (last 12 months or available span)
+    with all-time customers monitored as secondary information.
+    """
+    from datetime import timedelta
+    from refillcare.data.identity import apply_patient_identity
+    from refillcare.data.identity import identity_mode
+    from refillcare.tenancy import current_store_id
+
+    lo, hi = date_bounds(db)
+    # Patients exactly as the engine keys them (name + mobile by default). The distinct (name, mobile)
+    # scan takes ~20 s on ~1M lines, so it is cached until the store's sales lines change.
+    key = (current_store_id(), history_version(db), identity_mode())
+    with _cache_lock:
+        cached_info = _patients_cache.get(key)
+    if cached_info is None or not isinstance(cached_info, dict):
+        span_days = (hi - lo).days if (lo and hi) else 0
+        has_12m = span_days >= 365
+        months_span = max(1, round(span_days / 30.4375)) if span_days > 0 else 0
+
+        if has_12m:
+            active_label = "Active patients (last 12 months)"
+            cutoff = hi - timedelta(days=365)
+        elif span_days < 30:
+            active_label = f"Active patients ({max(1, span_days)} days history)"
+            cutoff = lo
+        else:
+            active_label = f"Active patients (last {months_span} months)"
+            cutoff = lo
+
+        pairs = pd.DataFrame(db.execute(select(Line.customer_id, Line.mobile_no).where(
+            Line.transaction_type == "CUSTOMER_SALE", Line.refillcare_eligible.is_(True)).distinct()).all(),
+            columns=["customerId", "MOBILE_NO"])
+        all_time_customers = int(apply_patient_identity(pairs)["customerId"].nunique()) if not pairs.empty else 0
+
+        if cutoff and lo and cutoff > lo:
+            pairs_act = pd.DataFrame(db.execute(select(Line.customer_id, Line.mobile_no).where(
+                Line.transaction_type == "CUSTOMER_SALE", Line.refillcare_eligible.is_(True),
+                Line.invoice_date >= cutoff).distinct()).all(),
+                columns=["customerId", "MOBILE_NO"])
+            active_customers = int(apply_patient_identity(pairs_act)["customerId"].nunique()) if not pairs_act.empty else 0
+        else:
+            active_customers = all_time_customers
+
+        cached_info = {
+            "all_time_customers": all_time_customers,
+            "active_patients": active_customers,
+            "active_patients_label": active_label,
+            "has_12m_history": has_12m,
+            "history_span_months": months_span,
+            "history_span_days": span_days,
+        }
+        with _cache_lock:
+            for k in [k for k in _patients_cache if k[0] == key[0]]:
+                _patients_cache.pop(k, None)
+            _patients_cache[key] = cached_info
+
+    subtext = (
+        f"All-time: {cached_info['all_time_customers']:,}"
+        if cached_info.get("has_12m_history", True) else
+        f"All-time: {cached_info['all_time_customers']:,} ({cached_info.get('history_span_months', 0)} mos history)"
+    )
+
+    return {
+        "first_sales_date": lo.isoformat() if lo else None,
+        "latest_sales_date": hi.isoformat() if hi else None,
+        "sales_lines_stored": history_count(db),
+        "customers_monitored": cached_info["active_patients"],
+        "all_time_customers": cached_info["all_time_customers"],
+        "active_patients": cached_info["active_patients"],
+        "active_patients_label": cached_info["active_patients_label"],
+        "active_patients_subtext": subtext,
+        "has_12m_history": cached_info["has_12m_history"],
+        "history_span_months": cached_info["history_span_months"],
+        "history_span_days": cached_info["history_span_days"],
+    }
 
 
 def history_count(db: Session) -> int:
@@ -266,7 +373,7 @@ def net_returns(db: Session, returns: pd.DataFrame, window_days: int = 14) -> Di
     A return within ``window_days`` after a sale reduces that sale's quantity; a fully returned
     sale stops counting as a refill (``refillcare_eligible`` False, reason RETURNED).
     """
-    out = {"returns_seen": int(len(returns)), "returns_netted": 0, "sales_fully_returned": 0}
+    out = {"returns_seen": int(len(returns)), "returns_netted": 0, "sales_fully_returned": 0, "returned_sales": []}
     if returns.empty:
         return out
     for rec in returns.to_dict(orient="records"):
@@ -287,6 +394,9 @@ def net_returns(db: Session, returns: pd.DataFrame, window_days: int = 14) -> Di
             sale.refillcare_eligible = False
             sale.exclusion_reason = "RETURNED"
             out["sales_fully_returned"] += 1
+            # the purchase no longer counts: its reminder effects are reverted by the caller
+            out["returned_sales"].append({"customerId": sale.customer_id, "itemId": sale.item_id,
+                                          "invoice_date": pd.Timestamp(sale.invoice_date), "MOBILE_NO": sale.mobile_no})
     return out
 
 
@@ -328,3 +438,4 @@ def ensure_history_in_db(db: Session, legacy_parquet=None) -> Dict[str, int]:
 def clear_cache() -> None:
     with _cache_lock:
         _full_cache.clear()
+        _patients_cache.clear()

@@ -139,6 +139,7 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "GALVUS", "JANUVIA", "TRAJENTA", "JARDIANCE", "FORXIGA", "GLUCONORM", "DIAPRIDE",
     "ZITA", "GLYCIPHAGE", "OBIMET", "GEMER", "ZORYL", "TENALIS", "TENEPURE", "DAPAVEL", "OXRA",
     "GLYCOMET", "GLIMESTAR", "GLIMIPRIME", "CYBLEX", "UDAPA", "GLUCRETA", "OBORAVO", "ZOMELIS", "GLUCOBAY", "SITAXA", "PRACTOMET",
+    "CETAPIN XR",
 
     # 2. Anti-Hypertensive / Cardiovascular / Heart Failure
     "TELMISARTAN", "AMLODIPINE", "LOSARTAN", "CANDESARTAN", "VALSARTAN", "OLMESARTAN", "IRBESARTAN",
@@ -152,6 +153,8 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "TELMA", "CONCOR", "BETALOC", "STARPRESS", "MET-XL", "METPURE", "CILACAR", "CARDACE",
     "LOSAR", "AMLONG", "AMLOKIND", "STAMLO", "BENITEC", "NEBICARD", "CARVIL", "INDERAL", "NICARDIA",
     "ERITEL", "TELMIKIND", "TELSAR", "TELISTA", "CORTEL", "TELLZY", "CARDIVAS", "CTD",
+    "PAH 20", "ASSURANS", "PULMOSIL", "REVATIO", "SILDENAFIL 20", "TADANAP 5", "MODULA 5", "PULMOPRES", "TADALAFIL 5",
+    "STARPRESS XL", "IVASAVE", "CIANGAR",
 
     # 3. Dyslipidemia / Cholesterol / Statin
     "ATORVASTATIN", "ROSUVASTATIN", "PITAVASTATIN", "SIMVASTATIN", "PRAVASTATIN",
@@ -175,15 +178,18 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     "AMITRIPTYLINE", "PROTHIADEN", "DULOXETINE", "DUZELA",
     "PREGABALIN", "PREGABA", "PREGABID", "GABAPENTIN", "GABAPIN", "BACLOFEN",
     "DONEPEZIL", "MEMANTINE", "SYNDOPA", "LEVODOPA", "PRAMIPEXOLE", "FLUNARIZINE",
+    "LEVECAD", "ENKORATE", "EPITRIL",
 
     # 7. Nephrology, Urology & Organ Support
     "TAMSULOSIN", "URIMAX", "FINASTERIDE", "DUTASTERIDE", "SILODOSIN", "SILODAL", "ALFUZOSIN",
     "FEBUXOSTAT", "FEBUTAZ", "ALLOPURINOL", "ZYLORIC", "REVLAMER", "SEVELAMER",
     "KETOANALOGUE", "KETOLIC", "CALCIUM ACETATE", "CALCIROL", "GEMCAL",
+    "FINCAR", "URIMAX-F", "SILODAL-F", "FINASTERIDE 5", "SEVMAC",
 
     # 8. Gastroenterology (Chronic Maintenance & Liver/IBD)
     "PANTOPRAZOLE", "PANTOCID", "RABEPRAZOLE", "RABLET", "RABICIP",
     "ESOMEPRAZOLE", "NEXPRO", "UDCA", "URSOCOL", "URSO", "MESALAMINE", "MESALAZINE", "MESACOL",
+    "PAN 20", "RABLET 20",
 
     # 9. Rheumatology, Autoimmune & Chronic Anti-Inflammatory
     "METHOTREXATE", "FOLITRAX", "HYDROXYCHLOROQUINE", "HCQS", "SULFASALAZINE", "SAAZ",
@@ -192,6 +198,7 @@ CHRONIC_STRONG_MARKERS: List[str] = [
     # 10. Anti-platelet & Anticoagulant
     "ASPIRIN", "ECOSPRIN", "CLOPIDOGREL", "CLOPIVAS", "DEPLATT", "TICAGRELOR", "BRILINTA", "PRASUGREL",
     "APIXABAN", "ELIQUIS", "RIVAROXABAN", "XARELTO", "DABIGATRAN", "PRADAXA", "WARFARIN",
+    "ECOSPRIN 75", "ECOSPRIN 150", "ECOSPRIN AV", "DEPLATT-A", "CLOPILOC-A",
 ]
 
 # Formulations, release modifiers, combination suffixes, and strengths (Global standard)
@@ -487,9 +494,27 @@ def get_rules_status() -> Dict[str, Any]:
     }
 
 
-def get_dynamic_classification_rules() -> Tuple[Set[str], Set[str]]:
+def normalize_medication_rule_keyword(raw_kw: str) -> str:
+    """Normalize pharmacist input to canonical brand/salt keyword.
+    
+    Strips trailing oral solid dosage forms (e.g. 'CETAPIN XR TAB' -> 'CETAPIN XR')
+    so that rules automatically cover all dosage variations (250mg, 500mg, 850mg, 1000mg).
+    """
+    clean = str(raw_kw).strip().upper()
+    clean = re.sub(r"\s+(?:TAB|TABS|TABLET|TABLETS|CAP|CAPS|CAPSULE|CAPSULES|STRIP|STRIPS)\b", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean
+
+
+def get_dynamic_classification_rules(force_refresh: bool = False) -> Tuple[Set[str], Set[str]]:
     """Active pharmacist rules (exclusions, chronic markers); one fetch at a time across threads."""
-    if (time.time() - _CACHED_RULES_TIMESTAMP) < _CACHE_TTL_SECONDS and (_DYNAMIC_EXCLUSIONS or _DYNAMIC_CHRONIC):
+    global _CACHED_RULES_TIMESTAMP, _RULES_LIST_CACHE_TIMESTAMP
+    if force_refresh:
+        _CACHED_RULES_TIMESTAMP = 0.0
+        _RULES_LIST_CACHE_TIMESTAMP = 0.0
+        _reset_fetch_throttle()
+        clear_classification_caches()
+    elif (time.time() - _CACHED_RULES_TIMESTAMP) < _CACHE_TTL_SECONDS and (_DYNAMIC_EXCLUSIONS or _DYNAMIC_CHRONIC):
         return _DYNAMIC_EXCLUSIONS, _DYNAMIC_CHRONIC
     with _RULES_FETCH_LOCK:
         return _get_dynamic_classification_rules_locked()
@@ -528,10 +553,28 @@ def _get_dynamic_classification_rules_locked() -> Tuple[Set[str], Set[str]]:
                             chr_set.add(kw)
 
                 def _compile_rule_regex(k: str) -> re.Pattern:
-                    esc = re.escape(k)
-                    if re.search(r"\d+$", k):
-                        return re.compile(r"(?:\b|_)" + esc + r"(?:MG|ML|MCG|GM|G|IU)?(?:\b|_)", re.IGNORECASE)
-                    return re.compile(r"(?:\b|_)" + esc + r"(?:\b|_)", re.IGNORECASE)
+                    raw = str(k).strip()
+                    # Strip oral solid dosage forms that pharmacists naturally append
+                    clean = re.sub(r"\s+(?:TAB|TABS|TABLET|TABLETS|CAP|CAPS|CAPSULE|CAPSULES|STRIP|STRIPS)\b", "", raw, flags=re.IGNORECASE).strip()
+                    clean = re.sub(r"\s+", " ", clean).strip()
+                    # Extract base strength if ending in dosage unit (e.g. 'ECOSPRIN 75MG' -> 'ECOSPRIN 75')
+                    base = re.sub(r"(\d+)\s*(?:MG|ML|MCG|GM|G|IU)\b", r"\1", clean, flags=re.IGNORECASE).strip()
+                    if not base:
+                        base = clean if clean else raw
+
+                    esc_base = re.escape(base)
+                    if re.search(r"\d+$", base):
+                        # Base ends with strength number (e.g. 'PAN 20', 'ECOSPRIN 75') -> matches optional dosage units and dosage forms
+                        return re.compile(
+                            r"(?:\b|_)" + esc_base + r"(?:MG|ML|MCG|GM|G|IU)?(?:\s+(?:TAB|TABS|TABLET|TABLETS|CAP|CAPS|CAPSULE|CAPSULES))?(?:\b|_)",
+                            re.IGNORECASE,
+                        )
+                    else:
+                        # Base is brand name without number (e.g. 'CETAPIN XR', 'STARPRESS XL') -> matches optional strength & dosage forms
+                        return re.compile(
+                            r"(?:\b|_)" + esc_base + r"(?:\s+\d+(?:\.\d+)?\s*(?:MG|ML|MCG|GM|G|IU)?)?(?:\s+(?:TAB|TABS|TABLET|TABLETS|CAP|CAPS|CAPSULE|CAPSULES))?(?:\b|_)",
+                            re.IGNORECASE,
+                        )
 
                 if excl_set != _DYNAMIC_EXCLUSIONS or chr_set != _DYNAMIC_CHRONIC:
                     clear_classification_caches()
@@ -559,7 +602,8 @@ def add_classification_rule(
     if not client:
         return {"status": "error", "message": "Supabase client not configured or unreachable."}
 
-    clean_kw = str(medication_name_or_keyword).strip().upper()
+    raw_kw = str(medication_name_or_keyword).strip().upper()
+    clean_kw = normalize_medication_rule_keyword(raw_kw)
     clean_type = str(rule_type).strip().upper()
     if clean_type not in ("CHRONIC", "EXCLUDE"):
         return {"status": "error", "message": "rule_type must be either 'CHRONIC' or 'EXCLUDE'."}
@@ -570,7 +614,7 @@ def add_classification_rule(
         data = {
             "medication_name_or_keyword": clean_kw,
             "rule_type": clean_type,
-            "notes": notes or "Added via UI by Pharmacist",
+            "notes": notes or (f"Added via UI by Pharmacist (input: '{raw_kw}')" if raw_kw != clean_kw else "Added via UI by Pharmacist"),
             "is_active": True,
         }
         res = client.table("medication_classification_rules").upsert(
@@ -581,9 +625,149 @@ def add_classification_rule(
         _reset_fetch_throttle()
         clear_classification_caches()
         get_dynamic_classification_rules()
-        return {"status": "success", "message": f"Rule for '{clean_kw}' saved as {clean_type}.", "data": res.data}
+        
+        # Production Dynamic Hook: Instantly re-score affected transactions & sync cycles
+        sync_result = rescore_affected_medication(clean_kw, clean_type)
+        return {
+            "status": "success",
+            "message": f"Rule for '{clean_kw}' saved as {clean_type}. Dynamic re-scoring completed.",
+            "data": res.data,
+            "sync": sync_result,
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def rescore_affected_medication(keyword: str, rule_type: str) -> Dict[str, Any]:
+    """Targeted dynamic re-scoring of customers/items affected by a medication rule change.
+    
+    1. If EXCLUDE: Immediately supersedes any active reminder cycles and pending stages for matching items.
+    2. If CHRONIC: Finds customer transactions matching keyword, re-evaluates trajectories through
+       UnifiedRefillDecisionEngine, saves updated RefillDecision records, and syncs active reminder cycles/stages.
+    """
+    clean_kw = str(keyword).strip().upper()
+    base_kw = normalize_medication_rule_keyword(clean_kw)
+    search_kw = base_kw if len(base_kw) >= 3 else clean_kw
+    clean_type = str(rule_type).strip().upper()
+    try:
+        from sqlalchemy import or_
+        from database.connection import SessionLocal
+        from database.models import (
+            RefillDecisionModel,
+            ReminderCycleModel,
+            ReminderStageModel,
+            SalesTransactionModel,
+        )
+        from refillcare.engine.decision_types import (
+            STATUS_SUPERSEDED,
+            STATUS_PENDING,
+            STATUS_DUE,
+            STATUS_APPROVED,
+        )
+        from refillcare.engine.persistence import RefillPersistenceManager
+        from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
+        from refillcare.ml.model_provider import ModelProvider
+        from datetime import date
+        import pandas as pd
+    except Exception as e:
+        return {"status": "skipped", "message": f"Database dependencies not loaded: {e}"}
+
+    db = SessionLocal()
+    try:
+        pm = RefillPersistenceManager()
+        if clean_type == "EXCLUDE":
+            active_cycles = db.query(ReminderCycleModel).filter(
+                ReminderCycleModel.is_active == True,
+                or_(
+                    ReminderCycleModel.item_id.ilike(f"%{clean_kw}%"),
+                    ReminderCycleModel.item_id.ilike(f"%{search_kw}%")
+                )
+            ).all()
+            superseded_cycles = 0
+            superseded_stages = 0
+            for cyc in active_cycles:
+                cyc.is_active = False
+                superseded_cycles += 1
+                stages = db.query(ReminderStageModel).filter(
+                    ReminderStageModel.cycle_id == cyc.cycle_id,
+                    ReminderStageModel.status.in_([STATUS_PENDING, STATUS_DUE, STATUS_APPROVED])
+                ).all()
+                for st in stages:
+                    st.status = STATUS_SUPERSEDED
+                    st.failure_reason = f"Superseded: Item excluded by rule '{clean_kw}'"
+                    superseded_stages += 1
+            
+            decisions = db.query(RefillDecisionModel).filter(
+                or_(
+                    RefillDecisionModel.item_name.ilike(f"%{clean_kw}%"),
+                    RefillDecisionModel.item_name.ilike(f"%{search_kw}%")
+                ),
+                RefillDecisionModel.is_eligible == True
+            ).all()
+            for dec in decisions:
+                dec.is_eligible = False
+                dec.decision_reason = f"Excluded by pharmacist rule: '{clean_kw}'"
+            
+            db.commit()
+            return {"status": "success", "superseded_cycles": superseded_cycles, "superseded_stages": superseded_stages}
+
+        elif clean_type == "CHRONIC":
+            tx_q = db.query(SalesTransactionModel).filter(
+                or_(
+                    SalesTransactionModel.item_name.ilike(f"%{clean_kw}%"),
+                    SalesTransactionModel.item_name.ilike(f"%{search_kw}%")
+                )
+            )
+            total_tx = tx_q.count()
+            if total_tx == 0:
+                return {"status": "success", "rescored": 0, "cycles_created": 0}
+
+            touched_custs = [r[0] for r in tx_q.with_entities(SalesTransactionModel.customer_id).distinct().all()]
+            full_cust_tx = db.query(SalesTransactionModel).filter(
+                SalesTransactionModel.customer_id.in_(touched_custs)
+            ).all()
+
+            rows = []
+            for t in full_cust_tx:
+                rows.append({
+                    "customerId": t.customer_id,
+                    "customerName": t.customer_name,
+                    "item_code": t.item_code or t.item_id,
+                    "itemId": t.item_id or t.item_name,
+                    "itemName": t.item_name,
+                    "quantity": t.quantity,
+                    "packing": t.packing,
+                    "invoice_date": pd.to_datetime(t.invoice_date),
+                    "MOBILE_NO": t.mobile_no,
+                    "salt_name": t.salt_composition,
+                })
+            df_subset = pd.DataFrame(rows)
+
+            provider = ModelProvider.from_registry(db)
+            engine = UnifiedRefillDecisionEngine(model_provider=provider)
+            
+            keys_to_eval = set()
+            for _, r in df_subset.iterrows():
+                it_name = str(r["itemName"]).upper()
+                if clean_kw in it_name or search_kw in it_name:
+                    keys_to_eval.add((str(r["customerId"]).strip(), str(r["itemId"]).strip()))
+
+            _, decisions = engine.evaluate_all_customer_items(df_subset, as_of_date=date.today(), only_keys=keys_to_eval)
+
+            saved = pm.save_refill_decisions(db, decisions)
+            sync_res = pm.sync_reminder_cycles(db, decisions)
+            db.commit()
+
+            return {
+                "status": "success",
+                "decisions_saved": saved,
+                "cycles_created": sync_res.get("cycles_created", 0),
+                "stages_created": sync_res.get("stages_created", 0)
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
 
 
 _RULES_LIST_CACHE: List[Dict[str, Any]] = []
@@ -655,18 +839,41 @@ def list_classification_rules(
 
 
 def delete_classification_rule(rule_id: str) -> Dict[str, Any]:
-    """Delete a classification rule from Supabase."""
+    """Delete a classification rule from Supabase and dynamically re-score affected transactions."""
     global _CACHED_RULES_TIMESTAMP
     client = get_supabase_client(write=True)
     if not client:
         return {"status": "error", "message": "Supabase client not configured."}
     try:
+        deleted_kw = None
+        deleted_type = None
+        try:
+            fetch_res = client.table("medication_classification_rules").select("*").eq("id", rule_id).execute()
+            if fetch_res.data and len(fetch_res.data) > 0:
+                deleted_kw = fetch_res.data[0].get("medication_name_or_keyword")
+                deleted_type = fetch_res.data[0].get("rule_type")
+        except Exception:
+            pass
+
         res = client.table("medication_classification_rules").delete().eq("id", rule_id).execute()
         _CACHED_RULES_TIMESTAMP = 0.0
         _reset_fetch_throttle()
         clear_classification_caches()
         get_dynamic_classification_rules()
-        return {"status": "success", "message": "Rule deleted successfully."}
+
+        sync_result = None
+        if deleted_kw:
+            sync_result = rescore_affected_medication(
+                deleted_kw,
+                "CHRONIC" if str(deleted_type).upper() == "EXCLUDE" else "EXCLUDE"
+            )
+
+        return {
+            "status": "success",
+            "message": f"Rule deleted successfully. Dynamic re-scoring completed for '{deleted_kw}'.",
+            "deleted_rule": {"keyword": deleted_kw, "rule_type": deleted_type},
+            "sync": sync_result,
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

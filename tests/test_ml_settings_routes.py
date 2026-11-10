@@ -45,7 +45,7 @@ def test_settings_reflect_env(client, monkeypatch):
     monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name_mobile")
     s = client.get("/api/v1/ml/settings").json()
     assert s["rules"]["path_b_mode"] == "blend" and s["patient_identity"] == "name_mobile"
-    assert len(s["stored_sales_columns"]) == 11 and "REFILLCARE_ITEM_GROUPING" in s["env_switches"]["item_grouping"]
+    assert len(s["stored_sales_columns"]) == 12 and "daysSupply" in s["stored_sales_columns"] and "REFILLCARE_ITEM_GROUPING" in s["env_switches"]["item_grouping"]
 
 
 def test_reports_are_saved_and_served(client):

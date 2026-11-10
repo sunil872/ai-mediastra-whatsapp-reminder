@@ -12,6 +12,7 @@ Executes the standardized production lifecycle when receiving a new month's sale
 """
 
 import os
+import re
 import io
 import uuid
 import shutil
@@ -167,6 +168,17 @@ def validate_monthly_sales_data(
             "is_ambiguous": True,
             "warning": "No invoice_date column found in file.",
         }
+
+    # Same patient identity as the original history load: "AKHILA .R" / "VAMSHI.K" -> "AKHILA R" / "VAMSHI K"
+    from refillcare.data.cleaning import clean_customer_identifier
+
+    for _col in ("customerId", "customerName"):
+        if _col in renamed.columns:
+            _raw = renamed[_col]
+            # name-style ids only: codes with digits / underscores (CUST_001, B/O X-305) stay exactly as billed
+            _clean = _raw.map(lambda v: clean_customer_identifier(v)
+                              if pd.notna(v) and not re.search(r"[\d_]", str(v)) else v)
+            renamed[_col] = _clean.where(_clean.astype(str).str.strip() != "", _raw)
 
     # Validation criteria:
     # 1. Non-null, parseable invoice_date

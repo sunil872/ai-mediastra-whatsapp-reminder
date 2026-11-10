@@ -19,6 +19,8 @@ from typing import Any, Callable, Dict
 from refillcare.jobs import queue
 
 logger = logging.getLogger("refillcare.worker")
+
+MAX_SCHEDULED_RETRAIN_FAILURES = 3  # scheduled retrain retries per store per month
 _stop = False
 
 
@@ -31,7 +33,7 @@ def _retrain(db, p: Dict[str, Any]) -> Dict[str, Any]:
     from refillcare.ml.service import retrain_cycle
 
     res = retrain_cycle(db, promote_best=bool(p.get("promote_best")), created_by=p.get("created_by", "worker"),
-                        max_eval_events=int(p.get("max_eval_events", 3000)))
+                        max_eval_events=p.get("max_eval_events"))
     return {k: res[k] for k in ("candidate_version", "selected_on_validation", "promoted", "gate", "test") if k in res}
 
 
@@ -45,7 +47,7 @@ def _rolling(db, p):
     from refillcare.ml.service import rolling_evaluation
 
     return rolling_evaluation(db, n_folds=p.get("n_folds"), created_by="worker",
-                              max_eval_events=int(p.get("max_eval_events", 3000)), max_train_events=int(p.get("max_train_events", 150000)))
+                              max_eval_events=p.get("max_eval_events"), max_train_events=int(p.get("max_train_events", 150000)))
 
 
 def _evaluate(db, p):
@@ -163,9 +165,15 @@ def schedule_store_jobs(today: date | None = None) -> int:
                     fresh = data_freshness(db, load_history())
                 finally:
                     db.close()
-            if fresh.get("retrain_recommended"):
+            retrain_key = f"retrain:{today:%Y-%m}"
+            # One scheduled retrain per store per month: a finished retrain that was not promoted
+            # (gate rejected, or ML_AUTO_PROMOTE off) still reports "retrain recommended", so without
+            # this check the hourly scheduler re-queued the same retrain every hour. Failures retry up to 3x.
+            already_tried = (queue.count_jobs(retrain_key, ("done",), store_id=sid) > 0
+                             or queue.count_jobs(retrain_key, ("failed",), store_id=sid) >= MAX_SCHEDULED_RETRAIN_FAILURES)
+            if fresh.get("retrain_recommended") and not already_tried:
                 queue.enqueue("retrain", {"promote_best": _flag("ML_AUTO_PROMOTE"), "created_by": "scheduler"},
-                              store_id=sid, dedupe_key=f"retrain:{today:%Y-%m}")
+                              store_id=sid, dedupe_key=retrain_key)
                 queued += 1
         except Exception:
             logger.exception("Freshness check failed for store %s", sid)

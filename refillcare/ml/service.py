@@ -51,6 +51,18 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def resolve_max_eval_events(value: Optional[int] = None) -> Optional[int]:
+    """Events per evaluation run. ``None`` = ``ML_MAX_EVAL_EVENTS`` (0 / unset = every qualifying event).
+
+    Evaluating every event (about 5,400 per 30-day window today, not a 3,000 sample) tightens the
+    promotion gate's 95% CI from about +/-2.3 to +/-1.7 percentage points.
+    """
+    if value is not None:
+        return value if value > 0 else None
+    env = _env_int("ML_MAX_EVAL_EVENTS", 0)
+    return env if env > 0 else None
+
+
 MIN_TRAIN_DAYS = 180
 
 
@@ -404,7 +416,7 @@ def freshness_experiment(
     history_df: Optional[pd.DataFrame] = None,
     step_days: Optional[int] = None,
     created_by: str = "system",
-    max_eval_events: Optional[int] = 3000,
+    max_eval_events: Optional[int] = None,
     max_train_events: int = 150000,
 ) -> Dict[str, Any]:
     """Does retraining on fresher data help? Two models, identical except for the training cutoff.
@@ -433,7 +445,7 @@ def freshness_experiment(
 
     run = run_evaluation(db, version_ids=ids, candidate_version_id=fresh.version_id,
                          eval_start=plan["test"]["start"], eval_end=plan["test"]["end"],
-                         max_events=max_eval_events, created_by=created_by, history_df=hist,
+                         max_events=resolve_max_eval_events(max_eval_events), created_by=created_by, history_df=hist,
                          run_id=f"FRESH-{datetime.utcnow().strftime('%Y%m%d%H%M%S') + '-' + uuid.uuid4().hex[:4]}")
     if run.status != "COMPLETED":
         raise RuntimeError(f"Freshness evaluation failed: {run.error}")
@@ -478,7 +490,7 @@ def rolling_evaluation(
     history_df: Optional[pd.DataFrame] = None,
     n_folds: Optional[int] = None,
     created_by: str = "system",
-    max_eval_events: Optional[int] = 3000,
+    max_eval_events: Optional[int] = None,
     max_train_events: int = 150000,
     seed: int = 42,
 ) -> Dict[str, Any]:
@@ -517,7 +529,7 @@ def rolling_evaluation(
             methods["model_current_rules"]: _engine_for(loaded, rules_now),
         }
         report = run_backtest(hist, engines, f["start"], f["end"], candidate_method=methods["model_current_rules"],
-                              max_events=max_eval_events, seed=seed)
+                              max_events=resolve_max_eval_events(max_eval_events), seed=seed)
         pc = report.get("paired_comparison") or {}
         got = pc.get("methods") or {}
         insulin = (((report.get("segments") or {}).get("therapy") or {}).get("insulin") or {}).get("methods") or {}
@@ -566,7 +578,7 @@ def retrain_cycle(
     history_df: Optional[pd.DataFrame] = None,
     promote_best: bool = False,
     created_by: str = "system",
-    max_eval_events: Optional[int] = 3000,
+    max_eval_events: Optional[int] = None,
     max_train_events: int = 150000,
 ) -> Dict[str, Any]:
     """Re-plan the splits from the current data, retrain, select on validation, gate on test.
@@ -594,7 +606,7 @@ def retrain_cycle(
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
     val_run = run_evaluation(db, version_ids=ids, candidate_version_id=candidate.version_id,
                              eval_start=plan["validation"]["start"], eval_end=plan["validation"]["end"],
-                             max_events=max_eval_events, created_by=created_by, history_df=hist, run_id=f"VAL-{stamp}")
+                             max_events=resolve_max_eval_events(max_eval_events), created_by=created_by, history_df=hist, run_id=f"VAL-{stamp}")
     if val_run.status != "COMPLETED":
         raise RuntimeError(f"Validation evaluation failed: {val_run.error}")
 
@@ -604,7 +616,7 @@ def retrain_cycle(
 
     test_run = run_evaluation(db, version_ids=ids, candidate_version_id=best,
                               eval_start=plan["test"]["start"], eval_end=plan["test"]["end"],
-                              max_events=max_eval_events, created_by=created_by, history_df=hist, run_id=f"TEST-{stamp}")
+                              max_events=resolve_max_eval_events(max_eval_events), created_by=created_by, history_df=hist, run_id=f"TEST-{stamp}")
     if test_run.status != "COMPLETED":
         raise RuntimeError(f"Test evaluation failed: {test_run.error}")
 
@@ -746,3 +758,38 @@ def latest_report(kind: str) -> Optional[Dict[str, Any]]:
     if not job or job.get("result") is None:
         return None
     return {"kind": kind, "created_at": str(job.get("finished_at")), "report": job["result"], "job_id": job.get("job_id")}
+
+
+def production_accuracy(db: Session) -> Dict[str, Any]:
+    """Production model + its latest measured evaluation, incl. the client-facing business view.
+
+    Single source for the Streamlit dashboard and ``GET /api/v1/ml/evidence`` (never typed-in numbers).
+    """
+    from refillcare.ml import registry as reg
+
+    reg.ensure_bootstrap_versions(db)
+    prod = reg.get_by_status(db, reg.FAMILY_PATH_A_INTERVAL, reg.STATUS_PRODUCTION)
+    if prod is None:
+        return {"production_model_version": None, "is_validated": False, "evaluation": None}
+    ev = reg.to_dict(prod, db).get("evaluation_summary")
+    measured = None
+    if ev:
+        methods = ev.get("methods") or {}
+        mine = methods.get(f"engine[{prod.version_id}]") or methods.get(f"engine[{prod.version_id.split(':', 1)[-1]}]")
+        measured = {
+            "run_id": ev.get("run_id"),
+            "window": ev.get("evaluated_window"),
+            "n_paired_events": ev.get("n_paired_events"),
+            "production": mine,
+            "baseline_engine": methods.get(f"engine[{reg.BASELINE_VERSION_ID}]"),
+            "baseline_historical_median": methods.get("historical_median"),
+            "fixed_interval_days_of_supply": methods.get("days_of_supply"),
+            "business_view": ev.get("business_view"),
+        }
+    return {
+        "production_model_version": prod.version_id,
+        "model_type": prod.model_type,
+        "is_validated": bool(prod.is_validated),
+        "evaluation": measured,
+    }
+

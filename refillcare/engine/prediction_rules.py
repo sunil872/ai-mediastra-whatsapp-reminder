@@ -45,6 +45,7 @@ class EngineRules:
     dom_anchor: bool = False
     path_b_mode: str = "dos"
     device_cap_mode: str = "strict"
+    quantity_scaling: bool = True
 
     @classmethod
     def from_env(cls) -> "EngineRules":
@@ -61,12 +62,14 @@ class EngineRules:
             dom_anchor=_flag("REFILLCARE_RULE_DOM_ANCHOR", False),
             path_b_mode=mode if mode in PATH_B_MODES else "dos",
             device_cap_mode=cap if cap in DEVICE_CAP_MODES else "strict",
+            quantity_scaling=_flag("REFILLCARE_RULE_QUANTITY_SCALING", True),
         )
 
     @classmethod
     def legacy(cls) -> "EngineRules":
         """Behaviour before these rules existed (for A/B backtests)."""
-        return cls(high_stability_median=False, insulin_median=False, dom_anchor=False, path_b_mode="dos", device_cap_mode="strict")
+        return cls(high_stability_median=False, insulin_median=False, dom_anchor=False, path_b_mode="dos", device_cap_mode="strict",
+                   quantity_scaling=False)
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -75,6 +78,7 @@ class EngineRules:
             "dom_anchor": self.dom_anchor,
             "path_b_mode": self.path_b_mode,
             "device_cap_mode": self.device_cap_mode,
+            "quantity_scaling": self.quantity_scaling,
         }
 
 
@@ -89,6 +93,25 @@ def device_ceiling_days(mode: str, cap_days: Optional[float], personal_median: O
     if mode == "observed" and personal_median:
         return max(float(cap_days), float(personal_median))
     return float(cap_days)
+
+
+QTY_SCALE_LOW = 2 / 3                         # below this share of the usual quantity, the strips decide
+MIN_SCALED_INTERVAL, MAX_SCALED_INTERVAL = 5, 180
+
+
+def quantity_scaled_interval(interval_days: int, qty_ratio: float) -> Tuple[int, bool]:
+    """A regular patient bought clearly FEWER strips than usual: scale his usual interval down by it.
+
+    Evidence (store-1 sales, 10 Nov 2026, 20,702 such purchases): next visit within 7 days 37.4% with the
+    usual rhythm vs 47.1% scaled (median error 11 -> 8 days). Buying MORE than usual is NOT scaled: those
+    patients still return close to their rhythm (17,301 purchases: 40.8% with the rhythm vs 29.4% scaled);
+    very large stock-ups go to pharmacist review (BULK_PURCHASE_DIVERGENCE).
+    Example: GEMER usually 4 strips every ~29 days; 1 strip -> ~7 days.
+    """
+    if not qty_ratio or qty_ratio <= 0 or qty_ratio >= QTY_SCALE_LOW:
+        return interval_days, False
+    scaled = int(round(min(MAX_SCALED_INTERVAL, max(MIN_SCALED_INTERVAL, interval_days * qty_ratio))))
+    return scaled, scaled != interval_days
 
 
 def is_normal_quantity(features: Dict[str, Any]) -> bool:

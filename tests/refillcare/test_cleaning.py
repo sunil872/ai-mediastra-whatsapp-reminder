@@ -40,7 +40,8 @@ def test_load_raw_transactions_date_parsing(synthetic_raw_csv):
 
 
 def test_clean_transactions_drops_invalid_and_duplicates(synthetic_raw_csv):
-    """Verify clean_transactions drops missing customerId, missing itemId, mfgDate, and exact duplicate rows."""
+    """clean_transactions drops missing customerId / itemId and mfgDate, but KEEPS identical lines: the same
+    batch scanned twice on one bill is real strips sold (validated on 23,641 purchases, 9 Nov 2026)."""
     raw_df = load_raw_transactions(synthetic_raw_csv)
     assert len(raw_df) == 7
     assert "mfgDate" in raw_df.columns
@@ -50,11 +51,11 @@ def test_clean_transactions_drops_invalid_and_duplicates(synthetic_raw_csv):
     # mfgDate should be removed
     assert "mfgDate" not in cleaned.columns
 
-    # Row 3 was exact duplicate of Row 1 -> dropped
+    # Row 3 is identical to Row 1 -> KEPT (added up per bill later by merge_bill_lines)
     # Row 6 had missing customerId -> dropped
     # Row 7 had missing itemId -> dropped
-    # Remaining rows: Row 1, Row 2, Row 4, Row 5 = 4 rows
-    assert len(cleaned) == 4
+    # Remaining rows: Row 1, Row 2, Row 3, Row 4, Row 5 = 5 rows
+    assert len(cleaned) == 5
 
     # All remaining records must have non-empty customerId and itemId
     assert cleaned["customerId"].notna().all()
@@ -142,3 +143,22 @@ def test_legacy_phone1_header_renamed_to_mobile_no(tmp_path):
     assert "MOBILE_NO" in df.columns
     assert "phone1" not in df.columns
     assert df.loc[0, "MOBILE_NO"] == "9876543210"
+
+
+def test_merge_bill_lines_adds_all_strips_of_a_bill_including_identical_lines():
+    """S0/26135 NODOSIS: lines 1 + 3 + 1 (two batches, one scanned twice) = ONE purchase of 5 strips."""
+    from refillcare.data.cleaning import merge_bill_lines
+
+    df = pd.DataFrame({
+        "customerId": ["K SUBBA RAO"] * 4 + ["ANUSHA"] * 2,
+        "itemId": ["8468", "8468", "8468", "20515", "1162", "1162"],
+        "invoice_number": ["S0/26135"] * 4 + ["S0/36940"] * 2,
+        "invoice_date": pd.to_datetime(["2026-09-01"] * 4 + ["2026-10-31"] * 2),
+        "quantity": [1, 3, 1, 1, 1, 2], "freeQuantity": [0, 0, 0, 0, 0, 1],
+    })
+    m = merge_bill_lines(df)
+    q = {(r.customerId, r.itemId): (r.quantity, r.freeQuantity) for r in m.itertuples()}
+    assert q[("K SUBBA RAO", "8468")] == (5, 0)
+    assert q[("K SUBBA RAO", "20515")] == (1, 0)
+    assert q[("ANUSHA", "1162")] == (3, 1)        # billed and free strips both added
+    assert len(m) == 3 and merge_bill_lines(m).equals(m)  # idempotent

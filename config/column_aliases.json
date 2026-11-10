@@ -1,43 +1,270 @@
 {
   "_comment": "Sales-file header aliases per RefillCare field. Matching ignores case, spaces and punctuation ('Bill No.' == 'billno'). 'strong' = this header almost always means the field; 'weak' = generic header that is accepted only when the column's values also look right. Add a store's headers here instead of changing code.",
   "invoice_date": {
-    "strong": ["invoicedate", "invdate", "invoicedt", "billdate", "billdt", "salesdate", "saledate", "transactiondate", "txndate", "trndate", "trdate", "vchdate", "voucherdate", "docdate", "documentdate", "orderdate", "salestime", "entrydate", "dateofsale", "dateofbill", "invoicedatetime", "billingdate"],
-    "weak": ["date", "dated", "dt", "day"]
+    "strong": [
+      "invoicedate",
+      "invdate",
+      "invoicedt",
+      "billdate",
+      "billdt",
+      "salesdate",
+      "saledate",
+      "transactiondate",
+      "txndate",
+      "trndate",
+      "trdate",
+      "vchdate",
+      "voucherdate",
+      "docdate",
+      "documentdate",
+      "orderdate",
+      "salestime",
+      "entrydate",
+      "dateofsale",
+      "dateofbill",
+      "invoicedatetime",
+      "billingdate"
+    ],
+    "weak": [
+      "date",
+      "dated",
+      "dt",
+      "day"
+    ]
   },
   "invoice_number": {
-    "strong": ["invoicenumber", "invoiceno", "invno", "invnumber", "invoiceid", "billnumber", "billno", "billid", "trnno", "trnnbr", "transactionno", "transactionnumber", "transactionid", "txnno", "txnid", "vchno", "voucherno", "vouchernumber", "docno", "documentno", "documentnumber", "receiptno", "memono", "saleno", "salesno", "salesinvoiceno", "refno"],
-    "weak": ["invoice", "bill", "voucher"]
+    "strong": [
+      "invoicenumber",
+      "invoiceno",
+      "invno",
+      "invnumber",
+      "invoiceid",
+      "billnumber",
+      "billno",
+      "billid",
+      "trnno",
+      "trnnbr",
+      "transactionno",
+      "transactionnumber",
+      "transactionid",
+      "txnno",
+      "txnid",
+      "vchno",
+      "voucherno",
+      "vouchernumber",
+      "docno",
+      "documentno",
+      "documentnumber",
+      "receiptno",
+      "memono",
+      "saleno",
+      "salesno",
+      "salesinvoiceno",
+      "refno"
+    ],
+    "weak": [
+      "invoice",
+      "bill",
+      "voucher"
+    ]
   },
   "customerName": {
-    "strong": ["customername", "custname", "patientname", "partyname", "clientname", "buyername", "accountname", "nameofcustomer", "nameofpatient", "customerfullname"],
-    "weak": ["customer", "patient", "party", "name", "client", "buyer"]
+    "strong": [
+      "customername",
+      "custname",
+      "patientname",
+      "partyname",
+      "clientname",
+      "buyername",
+      "accountname",
+      "nameofcustomer",
+      "nameofpatient",
+      "customerfullname"
+    ],
+    "weak": [
+      "customer",
+      "patient",
+      "party",
+      "name",
+      "client",
+      "buyer"
+    ]
   },
   "customerId": {
-    "strong": ["customerid", "custid", "customercode", "custcode", "patientid", "patientcode", "partycode", "partyid", "clientid", "clientcode", "accountcode", "accountid", "uhid", "mrno", "mrdno", "regno"],
+    "strong": [
+      "customerid",
+      "custid",
+      "customercode",
+      "custcode",
+      "patientid",
+      "patientcode",
+      "partycode",
+      "partyid",
+      "clientid",
+      "clientcode",
+      "accountcode",
+      "accountid",
+      "uhid",
+      "mrno",
+      "mrdno",
+      "regno"
+    ],
     "weak": []
   },
   "itemCode": {
-    "strong": ["itemcode", "itemid", "productcode", "productid", "prodcode", "medicinecode", "medicineid", "drugcode", "drugid", "skucode", "skuid", "icode", "itemno", "materialcode", "articlecode", "barcode"],
-    "weak": ["code", "sku", "item"]
+    "strong": [
+      "itemcode",
+      "itemid",
+      "productcode",
+      "productid",
+      "prodcode",
+      "medicinecode",
+      "medicineid",
+      "drugcode",
+      "drugid",
+      "skucode",
+      "skuid",
+      "icode",
+      "itemno",
+      "materialcode",
+      "articlecode",
+      "barcode"
+    ],
+    "weak": [
+      "code",
+      "sku",
+      "item"
+    ]
   },
   "itemName": {
-    "strong": ["itemname", "productname", "prodname", "medicinename", "drugname", "brandname", "itemdescription", "itemdesc", "productdescription", "nameofitem", "nameofmedicine", "iname"],
-    "weak": ["item", "product", "medicine", "drug", "description", "particulars", "brand"]
+    "strong": [
+      "itemname",
+      "productname",
+      "prodname",
+      "medicinename",
+      "drugname",
+      "brandname",
+      "itemdescription",
+      "itemdesc",
+      "productdescription",
+      "nameofitem",
+      "nameofmedicine",
+      "iname"
+    ],
+    "weak": [
+      "item",
+      "product",
+      "medicine",
+      "drug",
+      "description",
+      "particulars",
+      "brand"
+    ]
   },
   "packing": {
-    "strong": ["packing", "packsize", "packaging", "packingsize", "pack", "unitpack", "packdesc", "packtype", "pkg", "pkgsize", "packunit"],
-    "weak": ["uom", "strip", "unit", "size"]
+    "strong": [
+      "packing",
+      "packsize",
+      "packaging",
+      "packingsize",
+      "pack",
+      "unitpack",
+      "packdesc",
+      "packtype",
+      "pkg",
+      "pkgsize",
+      "packunit"
+    ],
+    "weak": [
+      "uom",
+      "strip",
+      "unit",
+      "size"
+    ]
   },
   "quantity": {
-    "strong": ["quantity", "qty", "saleqty", "salesqty", "soldqty", "billedqty", "billqty", "quantitysold", "qtysold", "issuedqty", "qtyordered", "salequantity", "nos"],
-    "weak": ["units", "count"]
+    "strong": [
+      "quantity",
+      "qty",
+      "saleqty",
+      "salesqty",
+      "soldqty",
+      "billedqty",
+      "billqty",
+      "quantitysold",
+      "qtysold",
+      "issuedqty",
+      "qtyordered",
+      "salequantity",
+      "nos"
+    ],
+    "weak": [
+      "units",
+      "count"
+    ]
   },
   "freeQuantity": {
-    "strong": ["freequantity", "freeqty", "fqty", "freeunits", "schemeqty", "schqty", "bonusqty", "freeissue"],
-    "weak": ["free", "scheme", "bonus"]
+    "strong": [
+      "freequantity",
+      "freeqty",
+      "fqty",
+      "freeunits",
+      "schemeqty",
+      "schqty",
+      "bonusqty",
+      "freeissue"
+    ],
+    "weak": [
+      "free",
+      "scheme",
+      "bonus"
+    ]
   },
   "MOBILE_NO": {
-    "strong": ["mobileno", "mobile", "mobilenumber", "mobnumber", "mobno", "phone", "phoneno", "phonenumber", "contactno", "contactnumber", "cellno", "cellnumber", "whatsapp", "whatsappno", "whatsappnumber", "customermobile", "patientmobile", "partymobile", "customerphone", "patientphone"],
-    "weak": ["contact", "cell", "mob", "tel"]
+    "strong": [
+      "mobileno",
+      "mobile",
+      "mobilenumber",
+      "mobnumber",
+      "mobno",
+      "phone",
+      "phoneno",
+      "phonenumber",
+      "contactno",
+      "contactnumber",
+      "cellno",
+      "cellnumber",
+      "whatsapp",
+      "whatsappno",
+      "whatsappnumber",
+      "customermobile",
+      "patientmobile",
+      "partymobile",
+      "customerphone",
+      "patientphone"
+    ],
+    "weak": [
+      "contact",
+      "cell",
+      "mob",
+      "tel"
+    ]
+  },
+  "daysSupply": {
+    "strong": [
+      "dayssupply",
+      "daysupply",
+      "noofdays",
+      "prescribeddays",
+      "rxdays",
+      "durationdays",
+      "dosedays",
+      "supplydays"
+    ],
+    "weak": [
+      "days",
+      "duration",
+      "dosage"
+    ]
   }
 }

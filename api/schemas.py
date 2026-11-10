@@ -206,7 +206,11 @@ class WhatsAppBatchDispatchRequest(BaseModel):
     target_month: Optional[str] = Field(None, description="YYYY-MM (alternative to reminder_date)")
     tier_filter: Optional[str] = Field("ALL", description="ALL, DUE, FOLLOWUP, LAPSED")
     dry_run: bool = True
-    batch_size: int = Field(50, ge=1, le=500)
+    batch_size: int = Field(50, ge=1, le=5000, description="Max messages in this call (daily volume can exceed 1,000)")
+    approve_before_send: bool = Field(
+        False,
+        description="Live only: the pharmacist confirmed the send - approve the selected PENDING/DUE stages and send them in one step",
+    )
     override_stale_data: bool = Field(False, description="Send live although the sales data is stale (needs override_reason; recorded)")
     override_reason: Optional[str] = None
 
@@ -247,9 +251,37 @@ class OperationsKPISummary(BaseModel):
     target_prediction_month: Optional[str] = None
     target_month_reminders_count: Optional[int] = None
     monthly_stage_distribution: Optional[Dict[str, int]] = None
+    # Pharmacy Overview (same numbers as the Streamlit overview: this store, this calendar month)
+    overview_month: Optional[str] = None
+    reminder_messages_this_month: Optional[int] = Field(None, description="Reminder messages scheduled this month (up to 7 per patient-medicine)")
+    patients_needing_review_today: Optional[int] = Field(None, description="Patients not getting reminders (chronic / not classified) due today")
     adherence_rate_pct: Optional[float] = Field(None, description="Measured refill rate (resolved / (resolved + no refill)); null until outcomes exist")
     chronic_medicines_count: Optional[int] = None
     out_of_stock_or_critical: Optional[int] = None
+    all_time_customers: Optional[int] = Field(None, description="All-time cumulative unique patients on file")
+    active_patients: Optional[int] = Field(None, description="Active patients who purchased in the last 12 months (or available history span)")
+    active_patients_label: Optional[str] = Field("Active patients (last 12 months)", description="Label showing active window")
+    has_12m_history: Optional[bool] = Field(True, description="True if store has at least 12 months of sales history")
+    history_span_months: Optional[int] = Field(None, description="Total months of sales data on file")
+
+
+class PharmacyOverviewResponse(BaseModel):
+    month: str = Field(..., description="Target month in YYYY-MM format")
+    month_label: str = Field(..., description="Target month display label, e.g. November 2026")
+    customers_monitored: int = Field(..., description="Active patients in the evaluation window")
+    all_time_customers: int = Field(..., description="All-time cumulative unique patients on file")
+    active_patients: int = Field(..., description="Active patients who purchased within the last 12 months (or available history)")
+    active_patients_label: str = Field("Active patients (last 12 months)", description="Label reflecting history span, e.g. Active patients (last 12 months)")
+    active_patients_subtext: str = Field(..., description="Secondary display info, e.g. All-time: 35,345")
+    has_12m_history: bool = Field(True, description="True if store has at least 12 months of sales data")
+    history_span_months: int = Field(..., description="Total months of sales data on record")
+    history_span_days: int = Field(..., description="Total days span of sales data")
+    first_sales_date: Optional[str] = Field(None, description="Earliest sales date on file")
+    latest_sales_date: Optional[str] = Field(None, description="Latest sales date on file")
+    sales_lines_stored: int = Field(..., description="Total sales lines stored in ledger")
+    reminder_messages_month: int = Field(..., description="Reminder messages scheduled this month")
+    reminders_due_today: int = Field(..., description="Reminders scheduled for dispatch today")
+    patients_needing_review_today: int = Field(..., description="Patients needing review due today")
 
 
 class DosageRegimenItem(BaseModel):
@@ -367,7 +399,7 @@ class TransactionChannelSummary(BaseModel):
     refillcare_eligible: int
     raw_total_transactions: Optional[int] = None
     cleaned_transactions: Optional[int] = None
-    purged_duplicates: Optional[int] = None
+    purged_duplicates: Optional[int] = Field(None, description="Lines received but not stored: returns netted against their sale, invalid rows, lines already uploaded. Bill lines of the same medicine (batches / repeat scans) are NOT removed - their strips are added up per bill.")
 
 
 # ------------------------------------------------------------------------------
@@ -395,6 +427,7 @@ class MedSyncBundleSchema(BaseModel):
     anchor_item_id: str
     anchor_item_name: str
     anchor_refill_date: str
+    target_send_date: Optional[str] = None
     window_start_date: str
     window_end_date: str
     lifecycle_tier: Optional[str] = "DUE"
@@ -513,6 +546,7 @@ class WhatsAppCandidateItem(BaseModel):
     refill_function: str
     status: str
     items_count: int = 1
+    stage_display: Optional[str] = None
 
 
 class WhatsAppCandidatesResponse(BaseModel):
@@ -582,3 +616,26 @@ class StoreRegisterRequest(BaseModel):
     store_name: Optional[str] = None
     store_contact: Optional[str] = None
     settings: Optional[Dict[str, Any]] = Field(None, description="Per-store overrides, e.g. {'REFILLCARE_PATIENT_IDENTITY': 'name_mobile'}")
+
+
+# ------------------------------------------------------------------------------
+# Pharmacist "Add to reminders" (patients the engine left out)
+# ------------------------------------------------------------------------------
+class PharmacistAddRequest(BaseModel):
+    customer_item_key: str
+    interval_days: Optional[int] = Field(None, ge=7, le=180, description="Refill every N days (default: patient's usual gap)")
+    next_refill_date: Optional[date] = Field(None, description="Refill due date (default: last purchase + gap, not before today)")
+    note: Optional[str] = None
+
+
+class WhatsAppSendTodayRequest(BaseModel):
+    override_reason: Optional[str] = Field(None, description="Only when sales data is stale: why sending anyway (logged)")
+
+
+class PharmacistBulkAddRequest(BaseModel):
+    customer_item_keys: List[str] = Field(..., min_length=1, max_length=5000)
+    note: Optional[str] = None
+
+
+class PharmacistRemoveRequest(BaseModel):
+    customer_item_key: str

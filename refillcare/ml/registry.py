@@ -73,9 +73,11 @@ def summarize_report_for_version(report: Dict[str, Any], version_id: str) -> Opt
         "evaluated_window": report.get("evaluation_window"),
         "n_paired_events": paired.get("n_events"),
         "methods": {
-            name: {k: m.get(k) for k in ("mae_days", "within_7_days_pct", "within_3_days_pct", "early_pct", "late_pct", "within_7_days_ci95")}
+            name: {k: m.get(k) for k in ("mae_days", "within_7_days_pct", "within_3_days_pct", "early_pct", "late_pct", "within_7_days_ci95",
+                                         "within_14_days_pct", "reminder_before_purchase_pct", "reminder_0_7_days_before_pct")}
             for name, m in methods.items()
         },
+        "business_view": report.get("business_view"),
         "candidate_method": report.get("candidate_method"),
         "candidate_model_version": report.get("candidate_model_version"),
     }

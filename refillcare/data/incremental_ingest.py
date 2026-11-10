@@ -107,6 +107,20 @@ def get_population_stats(db: Session, force_refresh: bool = False):
     return stats
 
 
+def b2b_lines_to_store(review_df: pd.DataFrame) -> pd.DataFrame:
+    """B2B / inter-store (SB/) lines with a valid date and quantity, marked not eligible for reminders."""
+    if review_df is None or review_df.empty or "transaction_type" not in review_df.columns:
+        return pd.DataFrame()
+    q = pd.to_numeric(review_df.get("quantity"), errors="coerce")
+    d = pd.to_datetime(review_df.get("invoice_date"), errors="coerce")
+    b2b = review_df[(review_df["transaction_type"] == "B2B_INTER_STORE") & (q > 0) & d.notna()].copy()
+    if b2b.empty:
+        return b2b
+    b2b["refillcare_eligible"] = False
+    b2b["exclusion_reason"] = b2b.get("exclusion_reason", pd.Series(index=b2b.index)).fillna("INTER_STORE_TRANSACTION")
+    return b2b
+
+
 def ingest_sales_batch(
     db: Session,
     sales_df: pd.DataFrame,
@@ -173,10 +187,13 @@ def ingest_sales_batch(
         db.add(batch)
         db.flush()
         counts = hs.append_lines(db, valid_df, batch_id)
+        b2b = b2b_lines_to_store(review_df)
+        if not b2b.empty:  # counted on the dashboard, never used for reminders (refillcare_eligible False)
+            counts["inserted"] += hs.append_lines(db, b2b, batch_id)["inserted"]
         netting = hs.net_returns(db, returns) if not returns.empty else {}
         warnings.update(_gap_warnings(db, new_min, new_max, prev_max))
         if netting.get("returns_netted"):
-            warnings["returns_netted"] = netting
+            warnings["returns_netted"] = {k: v for k, v in netting.items() if k != "returned_sales"}
         batch.records_inserted = counts["inserted"]
         batch.records_skipped = counts["skipped"]
         batch.data_warnings = warnings or None
@@ -206,6 +223,22 @@ def ingest_sales_batch(
     }
     if sync and counts["inserted"] > 0:
         result["online_sync"] = sync_batch(db, batch_id)
+        if netting.get("returned_sales"):
+            result["online_sync"]["returns_reverted"] = revert_returned_sales(db, netting)
+        if netting.get("returns_netted"):  # returns of patients who bought nothing else in this file
+            others = sorted(set(returns["customerId"].dropna().astype(str).str.strip()) - set(cust_ids))
+            if others:
+                result["online_sync"]["returns_rescored"] = rescore_customers(db, others).get("customer_items_rescored", 0)
+    elif sync and netting.get("returns_netted"):
+        # A file with only returns: the returned sales no longer count, so the patients' reminders must
+        # move back (e.g. EMPHA returned the next day -> due again now, not next month)
+        reverted = revert_returned_sales(db, netting)
+        res = rescore_customers(db, sorted(set(returns["customerId"].dropna().astype(str).str.strip())))
+        batch = db.get(ImportBatchModel, batch_id)
+        batch.sync_status = "SYNCED"
+        db.commit()
+        result["online_sync"] = {"customer_items_rescored": res.get("customer_items_rescored", 0),
+                                 "returns_reverted": reverted, "note": "returns only: patients re-scored"}
     elif counts["inserted"] == 0:
         batch = db.get(ImportBatchModel, batch_id)
         batch.sync_status = "SYNCED"
@@ -285,6 +318,39 @@ def rescore_customers(db: Session, customer_ids: List[str], raw_lines: Optional[
     }
 
 
+def removed_purchase_keys(db: Session, lines: pd.DataFrame, customers: Optional[List[str]] = None) -> Dict[str, set]:
+    """{patient-medicine key: purchase dates} of sales that no longer count (rolled back / fully returned),
+    keyed exactly as the engine keys them (name + mobile identity, salt grouping) on the patients' history."""
+    from refillcare.data.identity import BRAND_ITEM_COL, SOURCE_CUSTOMER_COL, normalise_trajectory_keys
+
+    removed: Dict[str, set] = {}
+    if lines is None or lines.empty:
+        return removed
+    customers = customers or lines["customerId"].dropna().astype(str).unique().tolist()
+    patients = normalise_trajectory_keys(hs.load_customers(db, customers))
+    if patients.empty:
+        return removed
+    dts = pd.to_datetime(lines["invoice_date"]).dt.date.astype(str)
+    ids = set(dts + "|" + lines["customerId"].astype(str) + "|" + lines["itemId"].astype(str))
+    pkey = (patients["invoice_date"].dt.date.astype(str) + "|" + patients[SOURCE_CUSTOMER_COL].astype(str)
+            + "|" + patients[BRAND_ITEM_COL].astype(str))
+    for c, i, d, k in zip(patients["customerId"].astype(str), patients["itemId"].astype(str), patients["invoice_date"].dt.date, pkey):
+        if k in ids:
+            removed.setdefault(f"{c}_{i}", set()).add(d)
+    return removed
+
+
+def revert_returned_sales(db: Session, netting: Dict[str, Any]) -> Dict[str, Any]:
+    """Fully returned sales: switch their reminder cycles back like a rollback (the earlier cycle resumes)."""
+    from refillcare.engine.persistence import RefillPersistenceManager
+
+    sales = pd.DataFrame(netting.get("returned_sales") or [])
+    if sales.empty:
+        return {}
+    removed = removed_purchase_keys(db, sales)
+    return RefillPersistenceManager().revert_rolled_back_purchases(db, removed) if removed else {}
+
+
 def rollback_batch(db: Session, batch_id: str) -> Dict[str, Any]:
     """Undo an upload: delete its lines, revert its reminder effects, re-score its patients.
 
@@ -302,17 +368,7 @@ def rollback_batch(db: Session, batch_id: str) -> Dict[str, Any]:
     with store_write_lock(db):
         lines = hs.batch_lines(db, batch_id)
         customers = lines["customerId"].dropna().astype(str).unique().tolist() if not lines.empty else []
-        removed: Dict[str, set] = {}
-        if not lines.empty:
-            # Keys of the removed lines as the engine sees them (identity / salt grouping applied on the patients' history)
-            patients = normalise_trajectory_keys(hs.load_customers(db, customers))
-            ids = set(lines["invoice_date"].dt.date.astype(str) + "|" + lines["customerId"].astype(str) + "|" + lines["itemId"].astype(str))
-            from refillcare.data.identity import BRAND_ITEM_COL, SOURCE_CUSTOMER_COL
-
-            pkey = patients["invoice_date"].dt.date.astype(str) + "|" + patients[SOURCE_CUSTOMER_COL].astype(str) + "|" + patients[BRAND_ITEM_COL].astype(str)
-            for c, i, d, k in zip(patients["customerId"].astype(str), patients["itemId"].astype(str), patients["invoice_date"].dt.date, pkey):
-                if k in ids:
-                    removed.setdefault(f"{c}_{i}", set()).add(d)
+        removed = removed_purchase_keys(db, lines, customers)
         n = hs.delete_batch(db, batch_id)
         batch.processing_status, batch.is_active = "ROLLED_BACK", False
         db.commit()

@@ -57,6 +57,18 @@ def decision_is_chronic(item_name: str, purchase_count: Optional[int], cadence_m
     )
 
 
+def medicine_can_be_sent(item_name: Optional[str], path: Optional[str] = None) -> bool:
+    """THE send rule (9 Nov 2026, user decision): a reminder is sent only when the Medication Rules mark the
+    medicine chronic, or a pharmacist added it. "Not classified" medicines (e.g. supplements bought regularly)
+    are not sent; they appear in Patients Needing Review for the pharmacist to add or classify.
+    Used by the reminder queue (Streamlit lists, API, WhatsApp send) and the overview counts."""
+    if path == "PHARMACIST_ADDED":
+        return True
+    from refillcare.data.medication_classifier import classify_medication_cached
+
+    return bool(classify_medication_cached(str(item_name or "")).get("is_chronic_eligible"))
+
+
 def parse_decision_provenance(reason: Optional[str]) -> Tuple[str, str]:
     """Parse archetype badge and clinical dosage regimen from decision reason."""
     if not reason:
@@ -182,6 +194,9 @@ class RefillPersistenceManager:
         """
         if not decisions:
             return 0
+        from refillcare.engine.pharmacist_overrides import apply_pharmacist_overrides
+
+        apply_pharmacist_overrides(db, decisions)  # keep pharmacist-added patients in reminders
 
         now = datetime.utcnow()
         target_ids = [
@@ -292,6 +307,9 @@ class RefillPersistenceManager:
         Returns:
             Dict with counts of cycles_created, stages_created, cycles_superseded, stages_superseded.
         """
+        from refillcare.engine.pharmacist_overrides import apply_pharmacist_overrides
+
+        apply_pharmacist_overrides(db, decisions)  # idempotent; same result as in save_refill_decisions
         metrics = {
             "cycles_created": 0,
             "stages_created": 0,
@@ -501,9 +519,8 @@ class RefillPersistenceManager:
         for stage, dec in results:
             c_name = dec.customer_name if dec else "Valued Customer"
             i_name = dec.item_name if dec else stage.item_id
-            # Same chronic gate as the decision engine (rules + personal recurrence), so list
-            # counts and KPI counts agree.
-            if not decision_is_chronic(str(i_name), dec.purchase_count if dec else 1, dec.cadence_median if dec else None):
+            # One send rule for every surface: rules-chronic medicine or pharmacist-added
+            if not medicine_can_be_sent(i_name, dec.path if dec else None):
                 continue
             phone = dec.mobile_no if dec else None
             p_masked = mask_phone(phone) if phone else "MISSING"
@@ -656,6 +673,14 @@ class RefillPersistenceManager:
 
         if is_opted_out(db, dec.customer_id, dec.mobile_no):
             raise ValueError(f"Cannot dispatch: Customer '{dec.customer_id}' has opted out of WhatsApp reminders.")
+
+        from refillcare.whatsapp.holdout import is_holdout
+
+        if not is_dry_run and dec.path != "PHARMACIST_ADDED" and is_holdout(dec.customer_id, dec.mobile_no):
+            raise ValueError(
+                f"Not sent: customer '{dec.customer_id}' is in the no-reminder control group used to measure "
+                "reminder uplift (REFILLCARE_HOLDOUT_PCT)."
+            )
 
         if not is_dry_run:
             already = (

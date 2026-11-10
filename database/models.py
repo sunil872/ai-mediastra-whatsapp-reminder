@@ -79,6 +79,7 @@ class SalesTransactionModel(Base):
     item_name = Column(String(255), nullable=True)
     quantity = Column(Float, nullable=False)
     free_quantity = Column(Float, nullable=True)
+    days_supply = Column(Float, nullable=True)  # optional: prescribed days for this sale (C7; added by additive migration)
     packing = Column(String(64), nullable=True)
     mobile_no = Column(String(32), nullable=True, index=True)
     salt_composition = Column(String(255), nullable=True)
@@ -422,6 +423,30 @@ class MLEvaluationRunModel(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[str] = mapped_column(String(64), default="system", nullable=False)
+
+
+class PharmacistReminderOverrideModel(Base):
+    """A patient-medicine the pharmacist added to reminders although the engine rated it not eligible.
+
+    Kept so re-scoring after every upload honours the decision (the engine would otherwise cancel
+    the cycle). Removing sets ``is_active = False`` (kept for the audit trail).
+    """
+    __tablename__ = "pharmacist_reminder_overrides"
+
+    customer_item_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    customer_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    customer_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    interval_days: Mapped[int] = mapped_column(Integer, nullable=False)  # refill every N days
+    next_refill_date: Mapped[date] = mapped_column(Date, nullable=False)  # chosen at add time
+    last_purchase_at_add: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    added_by: Mapped[str] = mapped_column(String(64), default="pharmacist", nullable=False)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    removed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    removed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class RefillDecisionOutcomeModel(Base):

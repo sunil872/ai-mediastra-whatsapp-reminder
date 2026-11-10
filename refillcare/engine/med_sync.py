@@ -73,10 +73,15 @@ class MedSyncBundle:
     status: str = "PENDING"
     created_at: datetime = field(default_factory=datetime.now)
     stage_reminder_ids: List[str] = field(default_factory=list)  # reminder_stages covered by this bundle
+    target_send_date: Optional[date] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d["anchor_refill_date"] = self.anchor_refill_date.strftime("%Y-%m-%d")
+        if self.target_send_date:
+            d["target_send_date"] = self.target_send_date.strftime("%Y-%m-%d") if isinstance(self.target_send_date, date) else str(self.target_send_date)
+        else:
+            d["target_send_date"] = d["anchor_refill_date"]
         d["window_start_date"] = self.window_start_date.strftime("%Y-%m-%d")
         d["window_end_date"] = self.window_end_date.strftime("%Y-%m-%d")
         d["lifecycle_tier"] = self.lifecycle_tier
@@ -176,6 +181,15 @@ class MedSyncEngine:
             if not r.get("is_eligible", True):
                 continue
 
+            target_send_raw = _extract_field(
+                r,
+                "target_send_date",
+                "Reminder Date",
+                "target_send_date_raw",
+                "send_date",
+            )
+            target_send = _parse_date(target_send_raw)
+
             erd_raw = _extract_field(
                 r,
                 "expected_refill_date",
@@ -185,8 +199,12 @@ class MedSyncEngine:
                 "reminder_date",
             )
             erd = _parse_date(erd_raw)
+            if not erd and target_send:
+                erd = target_send
             if not erd:
                 continue
+
+            dispatch_date = target_send if target_send is not None else erd
 
             cid = str(
                 _extract_field(
@@ -339,6 +357,7 @@ class MedSyncEngine:
                 "item_name": item_name,
                 "last_purchase_date": lpd,
                 "expected_refill_date": erd,
+                "target_send_date": target_send,
                 "predicted_interval_days": pred_interval_days,
                 "stability_tier": stability,
                 "dos_days": dos_days,
@@ -346,6 +365,7 @@ class MedSyncEngine:
                 "quantile_p90_date": _parse_date(p90_raw),
                 "lifecycle_tier": lifecycle_tier,
                 "_parsed_erd": erd,
+                "_dispatch_date": dispatch_date,
             }
             valid_records.append(norm_rec)
 
@@ -361,15 +381,16 @@ class MedSyncEngine:
         bundles: List[MedSyncBundle] = []
 
         for (pkey, tier), cust_items in customer_tier_groups.items():
-            # Sort customer items chronologically by expected_refill_date
-            cust_items.sort(key=lambda x: x["_parsed_erd"])
+            # Sort customer items chronologically by dispatch date, then expected refill date
+            cust_items.sort(key=lambda x: (x["_dispatch_date"], x["_parsed_erd"]))
 
             # Resolve best known customer_id, customer name and mobile across items
             cid = next((it["customer_id"] for it in cust_items if it["customer_id"]), pkey.split("::")[0])
             cust_name = next((it["customer_name"] for it in cust_items if it["customer_name"] and it["customer_name"] != cid), pkey.split("::")[0])
             best_mobile = next((it["mobile_no"] for it in cust_items if it["mobile_no"] and it["mobile_no"] != "-"), "-")
 
-            # Cluster items using a greedy temporal window
+            # Cluster items using temporal window on dispatch_date (items scheduled on the same dispatch date
+            # always bundle together regardless of window; items within window days of anchor dispatch are also clustered)
             clusters: List[List[Dict[str, Any]]] = []
             current_cluster: List[Dict[str, Any]] = []
 
@@ -377,9 +398,9 @@ class MedSyncEngine:
                 if not current_cluster:
                     current_cluster.append(item)
                 else:
-                    cluster_anchor_date = current_cluster[0]["_parsed_erd"]
-                    item_date = item["_parsed_erd"]
-                    if (item_date - cluster_anchor_date).days <= window:
+                    cluster_anchor_disp = current_cluster[0]["_dispatch_date"]
+                    item_disp = item["_dispatch_date"]
+                    if item_disp == cluster_anchor_disp or (item_disp - cluster_anchor_disp).days <= window:
                         current_cluster.append(item)
                     else:
                         clusters.append(current_cluster)
@@ -399,6 +420,9 @@ class MedSyncEngine:
                 sorted_by_priority = sorted(cluster, key=_sort_key)
                 anchor = sorted_by_priority[0]
                 anchor_date: date = anchor["_parsed_erd"]
+                # Send day of THIS cluster (all items share it within the sync window)
+                send_day: date = cluster[0]["_dispatch_date"]
+                anchor_send: Optional[date] = anchor.get("target_send_date") or cluster[0].get("target_send_date") or anchor_date
 
                 synced_items_list: List[SyncedMedicationItem] = []
                 p10_dates: List[date] = []
@@ -437,7 +461,11 @@ class MedSyncEngine:
 
                 tier_suffix = f"_{tier.lower()}" if tier != "DUE" else ""
                 clean_mobile_tag = best_mobile.replace("+", "").replace("-", "BLANK") if best_mobile and best_mobile != "-" else "BLANK"
-                bundle_uid = f"SYNC_{cid}_{clean_mobile_tag}_{anchor_date.strftime('%Y%m%d')}{tier_suffix}_{cluster_idx+1}"
+                # One id per patient + SEND DAY + tier: the -7/-3/-1/0/+2/+5/+45 messages of one cycle share the
+                # expected refill date, so an id built from it made every later stage look "already delivered"
+                # (scenario test 10-11-2026). Double sends are still blocked per stage by the reminder ids.
+                bundle_uid = (f"SYNC_{cid}_{clean_mobile_tag}_{anchor_date.strftime('%Y%m%d')}"
+                              f"_S{send_day.strftime('%Y%m%d')}{tier_suffix}_{cluster_idx+1}")
 
                 if tier == "FOLLOWUP":
                     func_tag = "REFILL_FOLLOW_UP"
@@ -454,6 +482,7 @@ class MedSyncEngine:
                     anchor_item_id=anchor["item_id"],
                     anchor_item_name=anchor["item_name"],
                     anchor_refill_date=anchor_date,
+                    target_send_date=anchor_send,
                     window_start_date=window_start,
                     window_end_date=window_end,
                     synced_items=synced_items_list,

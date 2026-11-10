@@ -18,7 +18,7 @@ The RefillCare Medication Refill Reminder System integrates with Meta/Xinno What
 ## 2. Exact Approved Template Body Text
 
 ```text
-Dear *{{1}}*,
+Dear *{{1}}* Garu,
 
 This is a friendly reminder from *{{2}}* regarding your regular medicine refill.
 

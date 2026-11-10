@@ -192,10 +192,81 @@ def clean_transactions(df: pd.DataFrame) -> pd.DataFrame:
         valid_date = cleaned["invoice_date"].notna()
         cleaned = cleaned[valid_date]
 
-    # 6. Remove exact duplicate rows
-    cleaned = cleaned.drop_duplicates()
+    # 6. Identical lines are NOT removed: at the counter the same batch scanned twice (or a strip added
+    #    later in the bill) produces identical export lines that are real strips sold. Validated on
+    #    23,641 purchases (9 Nov 2026): adding them predicts the next visit at 32 d (real 31 d), dropping
+    #    them predicts 16 d. Lines are added up per bill by ``merge_bill_lines`` / ``aggregate_invoice_items``.
 
     return cleaned.reset_index(drop=True)
+
+
+BILL_LINE_KEY = ["customerId", "itemId", "invoice_number", "_bill_day"]
+BILL_SUM_COLS = ("quantity", "freeQuantity", "netAmount", "gstAmount", "item_discount")
+
+
+def merge_bill_lines(df: pd.DataFrame, by: str = "bill") -> pd.DataFrame:
+    """THE purchase rule (shared by uploads, re-scoring, training and evaluation):
+
+    every line with the same customer + medicine + bill number + bill date is ONE purchase, and its
+    strips are ADDED UP - billed and free quantity - including lines that are exactly identical
+    (same batch scanned again). Example: S0/26135 NODOSIS lines 1 + 3 + 1 -> one purchase of 5 strips.
+
+    Rows without a bill number are left as they are. Other columns keep the first line's value;
+    ``daysSupply`` keeps the largest value. Idempotent (an already merged frame is unchanged).
+
+    ``by="day"``: also adds up separate bills of the same medicine on the same day (two visits, or a
+    second bill for a forgotten strip) - one purchase per patient + medicine + day, as training and
+    evaluation count purchases. Used by the decision engine.
+    """
+    if by == "day":
+        if df is None or df.empty or not {"customerId", "itemId", "invoice_date"}.issubset(df.columns):
+            return df
+        work = df.copy()
+        work["_bill_day"] = pd.to_datetime(work["invoice_date"], errors="coerce").dt.normalize()
+        key = ["customerId", "itemId", "_bill_day"]
+        ok = work["_bill_day"].notna()
+        keyed, rest = work[ok], work[~ok]
+        if not keyed.duplicated(subset=key).any():
+            return df
+        for c in BILL_SUM_COLS:
+            if c in keyed.columns:
+                keyed = keyed.assign(**{c: pd.to_numeric(keyed[c], errors="coerce")})
+        agg = {c: "first" for c in keyed.columns if c not in key}
+        for c in BILL_SUM_COLS:
+            if c in keyed.columns:
+                agg[c] = lambda s: s.sum(min_count=1)
+        if "daysSupply" in keyed.columns:
+            agg["daysSupply"] = "max"
+        merged = keyed.groupby(key, sort=False, dropna=False).agg(agg).reset_index()
+        out = pd.concat([merged, rest], ignore_index=True) if not rest.empty else merged
+        out = out.drop(columns=["_bill_day"]).sort_values("invoice_date", kind="stable").reset_index(drop=True)
+        return out[[c for c in df.columns if c in out.columns]]
+    if df is None or df.empty or not {"customerId", "itemId", "invoice_number", "invoice_date"}.issubset(df.columns):
+        return df
+    work = df.copy()
+    work["_bill_day"] = pd.to_datetime(work["invoice_date"], errors="coerce").dt.normalize()
+    inv = work["invoice_number"].astype(str).str.strip()
+    has_bill = work["invoice_number"].notna() & (inv != "") & work["_bill_day"].notna()
+    if not has_bill.any():
+        return df
+    keyed, rest = work[has_bill], work[~has_bill]
+    if not keyed.duplicated(subset=BILL_LINE_KEY).any():
+        return df  # nothing to merge
+    for c in BILL_SUM_COLS:
+        if c in keyed.columns:
+            keyed = keyed.assign(**{c: pd.to_numeric(keyed[c], errors="coerce")})
+    agg = {c: "first" for c in keyed.columns if c not in BILL_LINE_KEY}
+    for c in BILL_SUM_COLS:
+        if c in keyed.columns:
+            agg[c] = lambda s: s.sum(min_count=1)
+    if "daysSupply" in keyed.columns:
+        agg["daysSupply"] = "max"
+    merged = keyed.groupby(BILL_LINE_KEY, sort=False, dropna=False).agg(agg).reset_index()
+    out = pd.concat([merged, rest], ignore_index=True) if not rest.empty else merged
+    out = out.drop(columns=["_bill_day"])
+    if "invoice_date" in out.columns:
+        out = out.sort_values("invoice_date", kind="stable").reset_index(drop=True)
+    return out[[c for c in df.columns if c in out.columns]]
 
 
 def aggregate_invoice_items(df: pd.DataFrame) -> pd.DataFrame:

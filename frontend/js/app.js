@@ -37,12 +37,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupNavigation();
   setupUploadDropzone();
   setupActionListeners();
-  setupQuickActions();
-  window.loadMedRules = setupMedicationRules();
-  setupMlActions();
+  setupModalHelper();
+  setupOverviewActions();
+  setupReviewTab();
+  setupWhatsAppSend();
   setupConsentActions();
+  setupDeliveryLog();
   setupApiKeyButton();
-  
+
   // Dynamic default date (local calendar date)
   const todayStr = localDateStr(new Date());
   const dateInput = document.getElementById("reminder-target-date");
@@ -56,6 +58,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const waDateInput = document.getElementById("wa-target-date");
   if (waDateInput) waDateInput.value = todayStr;
+
+  const logDayInput = document.getElementById("wa-log-day");
+  if (logDayInput) logDayInput.value = todayStr;
 
   await initReminderMonthOptions();
   await loadInitialData();
@@ -103,10 +108,23 @@ function showToast(message, type = "info") {
 // ------------------------------------------------------------------------------
 // Navigation & Tab Switching
 // ------------------------------------------------------------------------------
+const TAB_LOADERS = {
+  "tab-dashboard": () => loadInitialData(),
+  "tab-upload": () => { loadBatches(); loadColumnMappings(); loadDataStatus(); },
+  "tab-reminders": () => loadReminders(true),  // always fresh on tab switch (uploads / pharmacist adds change it)
+  "tab-medsync": () => loadMedSyncBundles(),
+  "tab-review": () => loadReviewTab(),
+  "tab-whatsapp": () => { loadWhatsAppGateway(); loadDeliveryLog(); },
+};
+
+function switchTab(tabId) {
+  const navItem = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+  if (navItem) navItem.click();
+}
+
 function setupNavigation() {
   const navItems = document.querySelectorAll(".nav-item");
   const tabPanes = document.querySelectorAll(".tab-pane");
-  const titleElem = document.getElementById("current-page-title");
   const breadcrumbElem = document.getElementById("breadcrumb-current");
 
   navItems.forEach((item) => {
@@ -119,36 +137,60 @@ function setupNavigation() {
       const targetPane = document.getElementById(tabId);
       if (targetPane) targetPane.classList.add("active");
 
-      const label = item.querySelector("span:nth-child(2)")?.innerText || "Dashboard";
-      if (titleElem) titleElem.innerText = label;
+      const label = item.querySelector("strong")?.innerText?.trim() || "Pharmacy Overview";
       if (breadcrumbElem) breadcrumbElem.innerText = label;
+      document.title = `${label} — Mediastra Refillcare`;
 
       // Lazy load tab data
-      if (tabId === "tab-medrules" && window.loadMedRules) window.loadMedRules();
-      if (tabId === "tab-upload") { loadBatches(); loadColumnMappings(); loadDataStatus(); }
-      if (tabId === "tab-predictions") loadPredictionSnapshots();
-      if (tabId === "tab-reminders") loadReminders();
-      if (tabId === "tab-medsync") loadMedSyncBundles();
-      if (tabId === "tab-review") loadReviewQueue();
-      if (tabId === "tab-models") loadModels();
-      if (tabId === "tab-whatsapp") { loadWhatsAppGateway(); loadOptedOut(); }
+      const loader = TAB_LOADERS[tabId];
+      if (loader) loader();
     });
   });
 }
 
 // ------------------------------------------------------------------------------
-// Data Loading Functions
+// Pharmacy Overview (same numbers as the Streamlit overview)
 // ------------------------------------------------------------------------------
+function parseDMY(s) {
+  // "DD-MM-YYYY" or "YYYY-MM-DD" -> local Date (or null)
+  if (!s) return null;
+  const str = String(s).trim().slice(0, 10);
+  let m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  m = str.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  return null;
+}
+
+function fmtDMY(s) {
+  // any supported date string -> "dd-mm-yyyy"; unknown formats are returned unchanged
+  const d = parseDMY(s);
+  if (!d) return s ? String(s) : "-";
+  return `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${d.getFullYear()}`;
+}
+
+function fmtLongDate(isoDay) {
+  // "2026-11-09" -> "09 Nov 2026"
+  const d = parseDMY(isoDay);
+  if (!d) return isoDay || "";
+  const mon = d.toLocaleString("en-GB", { month: "short" });
+  return `${String(d.getDate()).padStart(2, "0")} ${mon} ${d.getFullYear()}`;
+}
+
+function fmtNum(v) {
+  return v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString();
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.innerText = value;
+}
+
 async function loadInitialData() {
+  // Sidebar model label + latest sales date come from the analytics KPI endpoint.
+  let kpis = null;
   try {
-    const kpis = await ApiClient.getKpis();
-    if (document.getElementById("kpi-customers")) document.getElementById("kpi-customers").innerText = Number(kpis.total_customers_monitored).toLocaleString();
-    if (document.getElementById("kpi-transactions")) document.getElementById("kpi-transactions").innerText = Number(kpis.total_sales_transactions).toLocaleString();
-    if (document.getElementById("kpi-upcoming")) document.getElementById("kpi-upcoming").innerText = Number(kpis.upcoming_reminders_count).toLocaleString();
-    if (document.getElementById("kpi-due-today")) document.getElementById("kpi-due-today").innerText = Number(kpis.reminders_due_today ?? 0).toLocaleString();
-    if (document.getElementById("kpi-chronic-count")) document.getElementById("kpi-chronic-count").innerText = (kpis.chronic_medicines_count != null ? `${kpis.chronic_medicines_count}+` : "-");
-    if (document.getElementById("kpi-latest-date")) document.getElementById("kpi-latest-date").innerText = kpis.latest_sales_date;
-    if (document.getElementById("sales-coverage-badge")) document.getElementById("sales-coverage-badge").innerText = kpis.sales_coverage_date_range;
+    kpis = await ApiClient.getKpis();
     if (document.getElementById("sidebar-active-model")) {
       const v = kpis.active_model_version || "none";
       const evidence = kpis.measured_backtest_within_7_days_pct != null
@@ -156,29 +198,53 @@ async function loadInitialData() {
         : " · not yet evaluated";
       document.getElementById("sidebar-active-model").innerText = `${v}${kpis.model_is_validated ? " (Validated)" : ""}${evidence}`;
     }
-    if (document.getElementById("kpi-target-month-label") && kpis.target_prediction_month) {
-      document.getElementById("kpi-target-month-label").innerText = `${kpis.target_prediction_month} forecast target pipeline`;
-    }
+    setText("kpi-latest-sales-date", kpis.latest_sales_date || "–");
+    setText("kpi-sales-coverage", kpis.sales_coverage_date_range ? `Sales on file: ${kpis.sales_coverage_date_range}` : "");
 
-    // Load Transaction Channel Breakdown
-    try {
-      const channelStats = await ApiClient.getTransactionTypes();
-      const customerElem = document.getElementById("kpi-chan-customer");
-      const b2bElem = document.getElementById("kpi-chan-b2b");
-      const unknownElem = document.getElementById("kpi-chan-unknown");
-      const excludedElem = document.getElementById("kpi-chan-excluded");
-
-      if (customerElem) customerElem.innerText = Number(channelStats.customer_sales).toLocaleString();
-      if (b2bElem) b2bElem.innerText = Number(channelStats.b2b_inter_store).toLocaleString();
-      if (unknownElem) unknownElem.innerText = Number(channelStats.unknown).toLocaleString();
-      if (excludedElem) excludedElem.innerText = Number(channelStats.excluded_from_refillcare).toLocaleString();
-    } catch (chanErr) {
-      console.warn("Could not load transaction channel stats:", chanErr);
+    const banner = document.getElementById("overview-stale-banner");
+    if (banner) {
+      const latest = parseDMY(kpis.latest_sales_date);
+      const today = parseDMY(localDateStr(new Date()));
+      const daysAgo = latest ? Math.round((today - latest) / 86400000) : null;
+      if (daysAgo !== null && daysAgo > 2) {
+        banner.innerHTML = `Latest sales uploaded are from <b>${esc(kpis.latest_sales_date)}</b> (${esc(daysAgo)} days ago). Upload the newer sales so reminders and review lists are up to date.`;
+        banner.style.display = "block";
+      } else {
+        banner.style.display = "none";
+        banner.innerHTML = "";
+      }
     }
   } catch (err) {
     console.error("Error loading KPIs:", err);
     showToast("Error connecting to RefillCare backend", "error");
   }
+
+  try {
+    const ov = await ApiClient.getOverview();
+    const monthName = (ov.month_label || "").split(" ")[0] || "";
+    setText("ov-month-caption", ov.month_label || ov.month || "");
+    setText("ov-title-messages-month", `Reminder Messages (${monthName})`);
+    const activeLabel = ov.active_patients_label || "Active patients (last 12 months)";
+    const activeCount = ov.active_patients !== undefined ? ov.active_patients : ov.customers_monitored;
+    const allTimeCount = ov.all_time_customers !== undefined ? ov.all_time_customers : ov.customers_monitored;
+    const subtext = ov.active_patients_subtext || `All-time: ${fmtNum(allTimeCount)}`;
+    setText("kpi-customers-title", activeLabel);
+    setText("kpi-customers", fmtNum(activeCount));
+    setText("kpi-customers-subtext", subtext);
+    setText("kpi-messages-month", fmtNum(ov.reminder_messages_month));
+    setText("kpi-due-today", fmtNum(ov.reminders_due_today));
+    setText("kpi-review-today", fmtNum(ov.patients_needing_review_today));
+  } catch (err) {
+    console.error("Error loading overview:", err);
+  }
+}
+
+function setupOverviewActions() {
+  const card = document.getElementById("kpi-card-review-today");
+  if (!card) return;
+  const go = () => switchTab("tab-review");
+  card.addEventListener("click", go);
+  card.addEventListener("keypress", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
 }
 
 async function loadBatches() {
@@ -244,37 +310,6 @@ async function loadBatches() {
     });
   } catch (err) {
     console.error("Error loading batches:", err);
-  }
-}
-
-async function loadPredictionSnapshots() {
-  try {
-    const snapshots = await ApiClient.getPredictionSnapshots(100);
-    const tbody = document.querySelector("#table-prediction-snapshots tbody");
-    tbody.innerHTML = "";
-
-    if (!snapshots || snapshots.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color: var(--text-muted);">No prediction snapshots available. Click 'Generate Updated Predictions' above.</td></tr>`;
-      return;
-    }
-
-    snapshots.forEach((s) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${esc(s.customer_id)}</td>
-        <td><strong>${s.customer_name || 'Patient'}</strong></td>
-        <td>${s.phone_number || '<span class="badge badge-warning">Missing</span>'}</td>
-        <td>${esc(s.item_name)}</td>
-        <td>${esc(s.last_purchase_date)}</td>
-        <td>${esc(s.estimated_days_of_supply)} d</td>
-        <td><strong>${esc(s.expected_refill_date)}</strong></td>
-        <td>${esc(s.reminder_date)}</td>
-        <td><span class="badge badge-info">${esc(s.prediction_source)}</span></td>
-      `;
-      tbody.appendChild(tr);
-    });
-  } catch (err) {
-    console.error("Error loading snapshots:", err);
   }
 }
 
@@ -474,11 +509,10 @@ async function loadReminders(forceFetch = false) {
       if (monthSelect) monthSelect.style.display = "inline-block";
     } else if (viewMode === "ROLLING_30D") {
       const baseStr = dateInput?.value || localDateStr(new Date());
-      const baseD = new Date(baseStr);
-      const startD = isNaN(baseD.getTime()) ? new Date() : baseD;
-      const endD = new Date(startD.getTime() + 29 * 24 * 60 * 60 * 1000);
-      startDate = startD.toISOString().split("T")[0];
-      endDate = endD.toISOString().split("T")[0];
+      const startD = parseDMY(baseStr) || new Date();
+      const endD = new Date(startD.getFullYear(), startD.getMonth(), startD.getDate() + 29);
+      startDate = localDateStr(startD);
+      endDate = localDateStr(endD);
       filterLabel = `Rolling 30 Days (${startDate} to ${endDate})`;
       if (dateInput) dateInput.style.display = "inline-block";
       if (monthSelect) monthSelect.style.display = "none";
@@ -542,395 +576,27 @@ async function loadReminders(forceFetch = false) {
   }
 }
 
-async function loadReviewQueue() {
+async function loadStoreSummary() {
+  // Same store summary as the overview / Streamlit Upload tab (GET /api/v1/overview)
   try {
-    const monthSelect = document.getElementById("review-target-month");
-    const targetMonth = monthSelect && monthSelect.value ? monthSelect.value : monthKey(new Date());
-    const categoryFilter = document.getElementById("review-category-filter")?.value || "All";
-    const mobileFilter = document.getElementById("review-mobile-filter")?.value || "All";
-    const custQuery = document.getElementById("review-search-cust")?.value?.trim().toLowerCase() || "";
-
-    // 1. Load aggregate Review Queue KPIs (synced dynamically with Streamlit / Supabase)
-    try {
-      const summary = await ApiClient.getClinicalReviewSummary(targetMonth);
-      if (document.getElementById("review-kpi-total")) {
-        document.getElementById("review-kpi-total").innerText = Number(summary.total_in_review_queue ?? summary.total_needing_review ?? 0).toLocaleString();
-      }
-      if (document.getElementById("review-kpi-missing-mobile")) {
-        document.getElementById("review-kpi-missing-mobile").innerText = Number(summary.missing_mobile_numbers ?? summary.missing_mobile_count ?? 0).toLocaleString();
-      }
-      if (document.getElementById("review-kpi-stability-risk")) {
-        document.getElementById("review-kpi-stability-risk").innerText = Number(summary.stability_variance_risk ?? summary.stability_risk_count ?? 0).toLocaleString();
-      }
-      if (document.getElementById("review-kpi-cold-start")) {
-        document.getElementById("review-kpi-cold-start").innerText = Number(summary.cold_start_single_purchase ?? summary.cold_start_count ?? 0).toLocaleString();
-      }
-    } catch (kpiErr) {
-      console.warn("Could not load review summary KPIs:", kpiErr);
-    }
-
-    // 2. Fetch candidate review queue records from API
-    const missingOnly = mobileFilter === "Missing";
-    const queue = await ApiClient.getClinicalReviewQueue({
-      targetMonth: targetMonth,
-      category: categoryFilter,
-      missingMobileOnly: missingOnly,
-      search: custQuery,
-      limit: 300,
-    });
-
-    const tbody = document.querySelector("#table-review-queue tbody");
-    if (!tbody) return;
-    tbody.innerHTML = "";
-
-    // Apply client-side Valid mobile filter if specified
-    const filteredQueue = (queue || []).filter((r) => {
-      if (mobileFilter === "Valid" && r.mobile_status === "Missing") return false;
-      return true;
-    });
-
-    if (filteredQueue.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 2.5rem;">
-        <strong>No clinical review candidates matching the selected filters.</strong><br>
-        <span style="font-size: 0.85rem;">All patient records in this category meet automated outreach safety gates.</span>
-      </td></tr>`;
-      return;
-    }
-
-    filteredQueue.forEach((r) => {
-      const tr = document.createElement("tr");
-
-      // Category badge
-      let catBadge = "badge-info";
-      if (r.review_category === "Missing Mobile") catBadge = "badge-danger";
-      else if (r.review_category === "Stability Risk") catBadge = "badge-warning";
-      else if (r.review_category === "Cold-Start") catBadge = "badge-secondary";
-
-      // Mobile status badge
-      const isMissing = r.mobile_status === "Missing";
-      const mobBadge = isMissing ? '<span class="badge badge-danger">Missing</span>' : '<span class="badge badge-success">Valid</span>';
-      const dispPhone = formatDisplayPhone10(r.phone_number);
-
-      // Stability badge
-      let stabBadge = "badge-info";
-      if (r.stability_tier === "HIGH") stabBadge = "badge-success";
-      else if (r.stability_tier === "MEDIUM-RISK") stabBadge = "badge-warning";
-      else if (r.stability_tier === "UNSTABLE") stabBadge = "badge-danger";
-
-      // Path badge
-      const pathBadge = r.path === "PATH_A" ? "badge-primary" : (r.path === "PATH_B" ? "badge-accent" : "badge-secondary");
-
-      // Status badge
-      let statusBadge = "badge-info";
-      if (r.status === "APPROVED") statusBadge = "badge-success";
-      else if (r.status === "SENT") statusBadge = "badge-success";
-      else if (r.status === "REJECTED") statusBadge = "badge-danger";
-
-      // Action buttons
-      let actionHtml = `
-        <div style="display:flex; gap:0.35rem;">
-          <button class="btn btn-sm btn-primary btn-approve-review" data-id="${r.decision_id || r.customer_id}" title="Approve candidate for dispatch">Approve</button>
-          <button class="btn btn-sm btn-outline btn-reject-review" data-id="${r.decision_id || r.customer_id}" title="Reject candidate">Reject</button>
-        </div>
-      `;
-      if (r.status === "APPROVED") {
-        actionHtml = `<span style="color:var(--success); font-size:0.85rem; font-weight:600;">Approved</span>`;
-      } else if (r.status === "REJECTED") {
-        actionHtml = `<span style="color:var(--danger); font-size:0.85rem;">Rejected</span>`;
-      }
-
-      tr.innerHTML = `
-        <td>
-          <strong>${r.customer_name || 'Patient'}</strong><br>
-          <small style="color:var(--text-muted)">ID: ${esc(r.customer_id)}</small>
-        </td>
-        <td><code>${dispPhone !== '-' ? dispPhone : '<span class="badge badge-danger">No Mobile</span>'}</code></td>
-        <td>${mobBadge}</td>
-        <td><strong>${r.medication_name || '-'}</strong></td>
-        <td><span class="badge badge-info">${r.target_month || targetMonth}</span></td>
-        <td><span class="badge ${catBadge}">${esc(r.review_category)}</span></td>
-        <td><div style="max-width: 280px; font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);" title="${esc(r.decision_reason)}">${r.decision_reason || '-'}</div></td>
-        <td>
-          <span class="badge ${pathBadge}">${esc(r.path)}</span>
-          <span class="badge ${stabBadge}" style="margin-left: 3px;">${esc(r.stability_tier)}</span>
-        </td>
-        <td><span class="badge ${statusBadge}">${esc(r.status)}</span></td>
-        <td>${actionHtml}</td>
-      `;
-      tbody.appendChild(tr);
-    });
-
-    // Wire action buttons
-    document.querySelectorAll(".btn-approve-review").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.getAttribute("data-id");
-        btn.disabled = true;
-        btn.parentElement.innerHTML = `<span style="color:var(--success); font-size:0.85rem; font-weight:600;">Approved</span>`;
-        showToast(`Candidate approved for clinical dispatch: ${id}`, "success");
-      });
-    });
-
-    document.querySelectorAll(".btn-reject-review").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.getAttribute("data-id");
-        const reason = prompt("Enter clinical reason for exclusion:", "Pharmacist review exclusion");
-        if (reason === null) return;
-        btn.disabled = true;
-        btn.parentElement.innerHTML = `<span style="color:var(--danger); font-size:0.85rem;">Rejected</span>`;
-        showToast(`Candidate excluded from dispatch: ${id}`, "info");
-      });
-    });
+    const ov = await ApiClient.getOverview();
+    const dmy = (iso) => (iso ? iso.split("-").reverse().join("-") : "–");
+    setText("up-date-range", ov.latest_sales_date ? `${dmy(ov.first_sales_date)} to ${dmy(ov.latest_sales_date)}` : "No sales yet");
+    setText("up-lines-stored", fmtNum(ov.sales_lines_stored));
+    const activeLabel = ov.active_patients_label || "Active patients (last 12 months)";
+    const activeCount = ov.active_patients !== undefined ? ov.active_patients : ov.customers_monitored;
+    const allTimeCount = ov.all_time_customers !== undefined ? ov.all_time_customers : ov.customers_monitored;
+    const subtext = ov.active_patients_subtext || `All-time: ${fmtNum(allTimeCount)}`;
+    setText("up-customers-title", activeLabel);
+    setText("up-customers", fmtNum(activeCount));
+    setText("up-customers-subtext", subtext);
   } catch (err) {
-    console.error("Error loading review queue:", err);
+    console.error("Error loading store summary:", err);
   }
-}
-
-function engineMetrics(summary, versionId) {
-  const methods = summary?.methods || {};
-  return methods[`engine[${versionId}]`] || null;
-}
-
-function fmtPct(v) {
-  return v === null || v === undefined ? "–" : `${Number(v).toFixed(1)}%`;
-}
-
-const STATUS_BADGE = {
-  production: "badge-success",
-  shadow: "badge-purple",
-  candidate: "badge-info",
-  retired: "badge-warning",
-};
-
-async function loadModels() {
-  await Promise.all([loadMlPlan(), loadModelRegistry(), loadMlEvaluations(), loadMlSettings(), loadMlReports()]);
-}
-
-async function loadMlPlan() {
-  const banner = document.getElementById("ml-freshness-banner");
-  const tbody = document.querySelector("#table-ml-plan tbody");
-  if (!banner || !tbody) return;
-  try {
-    const f = await ApiClient.getMlPlan();
-    const plan = f.plan;
-    if (!plan) {
-      banner.innerHTML = `<span class="badge badge-warning">${esc(f.reason || "Not enough sales history to plan windows.")}</span>`;
-      tbody.innerHTML = "";
-      return;
-    }
-    const lag = f.days_of_new_training_data;
-    banner.innerHTML = `
-      <span class="badge ${f.retrain_recommended ? "badge-warning" : "badge-success"}">
-        ${f.retrain_recommended ? "Retrain recommended" : "Model is current"}
-      </span>
-      <span style="margin-left: 0.6rem; color: var(--text-secondary); font-size: 0.9rem;">
-        Sales data to <strong>${esc(plan.data_end)}</strong> · serving <strong>${esc(f.production_version || "none")}</strong>
-        (trained to ${esc(f.production_train_cutoff || "unknown")})
-        ${lag !== null && lag !== undefined ? ` · ${Number(lag)} days of newer training data available` : ""}
-      </span>`;
-    const rows = [
-      ["Train", plan.train, "Fit the candidate model"],
-      ["Validation", plan.validation, "Pick the best model"],
-      ["Test", plan.test, "Promotion gate only (never used to choose)"],
-    ];
-    tbody.innerHTML = rows.map(([name, w, use]) => `
-      <tr>
-        <td><strong>${name}</strong></td>
-        <td>${esc(w.start)}</td>
-        <td>${esc(w.end)}</td>
-        <td>${Number(w.purchases).toLocaleString()}</td>
-        <td>${use}</td>
-      </tr>`).join("") + `
-      <tr>
-        <td><strong>Not scored</strong></td>
-        <td colspan="3">Last ${Number(plan.censor_buffer_days)} days up to ${esc(plan.data_end)}</td>
-        <td>Refills not yet observable</td>
-      </tr>`;
-  } catch (err) {
-    banner.innerHTML = `<span class="badge badge-danger">${esc(err.message)}</span>`;
-  }
-}
-
-async function loadModelRegistry() {
-  try {
-    const models = await ApiClient.getModels();
-    const tbody = document.querySelector("#table-models tbody");
-    tbody.innerHTML = "";
-
-    models.forEach((m) => {
-      const met = engineMetrics(m.metrics_val, m.version_id);
-      const status = m.status || (m.is_active_production ? "production" : "candidate");
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td><strong>${esc(m.version_id)}</strong></td>
-        <td>${esc(m.model_type)}</td>
-        <td>${esc(m.dataset_cutoff_date || "–")}</td>
-        <td>${m.training_sample_count ? Number(m.training_sample_count).toLocaleString() : "–"}</td>
-        <td><strong>${fmtPct(met?.within_7_days_pct)}</strong></td>
-        <td>${esc(met?.mae_days ?? "–")}</td>
-        <td>
-          <span class="badge ${STATUS_BADGE[status] || "badge-info"}">${esc(status)}</span>
-          ${m.is_validated ? '<span class="badge badge-success" title="Promoted through the evidence gate">validated</span>' : ""}
-        </td>
-        <td style="white-space: nowrap;">
-          <button class="btn btn-outline btn-sm btn-gate-model" data-version="${esc(m.version_id)}">Gate</button>
-          <button class="btn btn-outline btn-sm btn-activate-model" data-version="${esc(m.version_id)}" ${status === "production" ? "disabled" : ""}>
-            ${status === "production" ? "Active" : "Promote"}
-          </button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-    });
-
-    document.querySelectorAll(".btn-gate-model").forEach((btn) => {
-      btn.addEventListener("click", () => showGate(btn.getAttribute("data-version")));
-    });
-    document.querySelectorAll(".btn-activate-model").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const versionId = btn.getAttribute("data-version");
-        if (!confirm(`Promote '${versionId}' to production? It is refused unless the evidence gate approves.`)) return;
-        try {
-          const res = await ApiClient.activateModel(versionId);
-          showToast(res.message, "success");
-          await loadModels();
-          await loadInitialData();
-        } catch (err) {
-          showToast(err.message, "error");
-          await showGate(versionId);
-        }
-      });
-    });
-  } catch (err) {
-    console.error("Error loading models:", err);
-  }
-}
-
-async function showGate(versionId) {
-  const box = document.getElementById("ml-gate-result");
-  if (!box) return;
-  try {
-    const g = await ApiClient.getMlGate(versionId);
-    const checks = (g.checks || []).map((c) => `
-      <tr>
-        <td>${c.passed ? `<span class="badge badge-success">Passed</span>` : `<span class="badge badge-danger">Failed</span>`}</td>
-        <td>${esc(c.check)}</td>
-        <td>${esc(c.detail ?? "")}</td>
-      </tr>`).join("");
-    box.innerHTML = `
-      <div style="margin-bottom: 0.5rem;">
-        <strong>Promotion gate for ${esc(versionId)}:</strong>
-        <span class="badge ${g.approved ? "badge-success" : "badge-danger"}">${g.approved ? "APPROVED" : "REJECTED"}</span>
-      </div>
-      <table class="data-table"><thead><tr><th></th><th>Check</th><th>Detail</th></tr></thead><tbody>${checks}</tbody></table>`;
-  } catch (err) {
-    box.innerHTML = `<span class="badge badge-danger">${esc(err.message)}</span>`;
-  }
-}
-
-async function loadMlEvaluations() {
-  const tbody = document.querySelector("#table-ml-evaluations tbody");
-  if (!tbody) return;
-  try {
-    const runs = await ApiClient.getMlEvaluations(10);
-    if (!runs.length) {
-      tbody.innerHTML = `<tr><td colspan="7" style="color: var(--text-secondary);">No evaluations yet. Use "Retrain &amp; Evaluate".</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = runs.map((r) => {
-      const sm = r.summary || {};
-      const cand = engineMetrics(sm, r.candidate_model_version);
-      const base = (sm.methods || {}).historical_median;
-      const w = sm.evaluated_window || {};
-      const badge = r.status === "COMPLETED" ? "badge-success" : r.status === "FAILED" ? "badge-danger" : "badge-info";
-      return `
-        <tr>
-          <td><strong>${esc(r.run_id)}</strong></td>
-          <td><span class="badge ${badge}">${esc(r.status)}</span></td>
-          <td>${w.start ? `${esc(w.start)} → ${esc(w.end)}` : "–"}</td>
-          <td>${sm.n_paired_events ? Number(sm.n_paired_events).toLocaleString() : "–"}</td>
-          <td>${esc(r.candidate_model_version || "–")}</td>
-          <td><strong>${fmtPct(cand?.within_7_days_pct)}</strong></td>
-          <td>${fmtPct(base?.within_7_days_pct)}</td>
-        </tr>`;
-    }).join("");
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7">${esc(err.message)}</td></tr>`;
-  }
-}
-
-function setupMlActions() {
-  const start = async (promote) => {
-    const msg = promote
-      ? "Retrain on the planned train window, pick the best on validation, and promote it ONLY if the test-window gate approves?"
-      : "Retrain and evaluate on the current windows (no promotion)?";
-    if (!confirm(`${msg}\n\nThis runs in the background and can take several minutes.`)) return;
-    try {
-      const res = await ApiClient.startMlRetrain(promote);
-      showToast(res.message || "Retrain cycle started", "success");
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  };
-  document.getElementById("btn-ml-retrain")?.addEventListener("click", () => start(false));
-  document.getElementById("btn-ml-retrain-promote")?.addEventListener("click", () => start(true));
-
-  const startJob = async (kind) => {
-    const msg = kind === "rolling"
-      ? "Run the 3-month test? It trains one model per test month (~20 min, needs free RAM). Nothing is promoted."
-      : "Run the rule A/B on the current test month (~3 min)? Read-only: nothing is promoted.";
-    if (!confirm(msg)) return;
-    try {
-      await ApiClient.startMlJob(kind);
-      showToast("Started in the background - reopen this tab later to see the result.", "success");
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  };
-  document.getElementById("btn-ml-rollback")?.addEventListener("click", async () => {
-    if (!confirm("Put the previous validated model back into production?")) return;
-    try {
-      const r = await ApiClient.rollbackModel();
-      showToast(`Production model is now ${esc(r.production_version)}.`, "success");
-      await loadModels();
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  });
-  document.getElementById("btn-ml-rules-ab")?.addEventListener("click", () => startJob("rules_ab"));
-  document.getElementById("btn-ml-rolling")?.addEventListener("click", () => startJob("rolling"));
-
-  const showRekey = (r, applied) => {
-    const box = document.getElementById("rekey-result");
-    if (!box) return;
-    const rows = [
-      ["Patient identity", r.modes?.patient_identity], ["Therapy grouping", r.modes?.item_grouping],
-      ["Patients (before → after)", `${r.patients_before ?? "-"} → ${r.patients_after ?? "-"}`],
-      ["Active reminders on old keys", r.active_cycles_with_old_keys],
-      ["New reminders with stages already sent (never re-sent)", r.new_cycles_with_already_sent_stages],
-    ];
-    if (applied) rows.push(["Re-scored decisions", r.decisions_rescored], ["Cycles created", r.cycles_created],
-      ["Stages cancelled (already sent)", r.new_stages_cancelled_already_sent], ["Database backup", r.database_backup || "not SQLite"]);
-    box.innerHTML = `<table class="data-table"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>`;
-  };
-  document.getElementById("btn-rekey-dry")?.addEventListener("click", async () => {
-    try {
-      showToast("Running re-key dry run...", "info");
-      showRekey(await ApiClient.getRekeyDryRun(), false);
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  });
-  document.getElementById("btn-rekey-apply")?.addEventListener("click", async () => {
-    if (!confirm("Apply the patient-identity / salt-grouping re-key now?\n\nThe database is backed up first. Old-key reminders are retired and every patient is re-scored.")) return;
-    try {
-      const job = await ApiClient.applyRekey();
-      showToast(`Re-key queued as job #${esc(job.job_id)}; worker re-scoring initiated.`, "success");
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  });
 }
 
 async function loadDataStatus() {
+  loadStoreSummary();
   const box = document.getElementById("data-status-banner");
   if (!box) return;
   try {
@@ -945,68 +611,6 @@ async function loadDataStatus() {
     }
   } catch (err) {
     box.textContent = "";
-  }
-}
-
-async function loadMlSettings() {
-  const tbody = document.querySelector("#table-ml-settings tbody");
-  if (!tbody) return;
-  try {
-    const s = await ApiClient.getMlSettings();
-    const sw = s.env_switches || {};
-    const rows = [
-      ["Short-history mode (Path B)", s.rules?.path_b_mode, sw.path_b_mode],
-      ["Device cap (insulin / inhaler)", s.rules?.device_cap_mode, sw.device_cap_mode],
-      ["High-stability → personal median", s.rules?.high_stability_median ? "on" : "off", sw.high_stability_median],
-      ["Insulin → personal median", s.rules?.insulin_median ? "on" : "off", sw.insulin_median],
-      ["Day-of-month anchor", s.rules?.dom_anchor ? "on" : "off", sw.dom_anchor],
-      ["Patient identity", s.patient_identity, sw.patient_identity],
-      ["Therapy grouping", s.item_grouping, sw.item_grouping],
-      ["Item / salt catalogue", `${s.salt_catalog?.file} (${s.salt_catalog?.exists ? "found" : "MISSING"})`, "REFILLCARE_SALT_CATALOG"],
-      ["Store ID (mapping profiles)", s.store_id, "REFILLCARE_STORE_ID"],
-      ["Sales columns stored", (s.stored_sales_columns || []).join(", "), "-"],
-    ];
-    tbody.innerHTML = rows.map(([k, v, e]) => `<tr><td>${esc(k)}</td><td><strong>${esc(v)}</strong></td><td><code>${esc(e)}</code></td></tr>`).join("");
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="3">${esc(err.message)}</td></tr>`;
-  }
-}
-
-
-async function loadMlReports() {
-  const abBody = document.querySelector("#table-ml-rules-ab tbody");
-  const rollBody = document.querySelector("#table-ml-rolling tbody");
-  if (!abBody || !rollBody) return;
-  try {
-    const ab = await ApiClient.getMlReport("rules_ab");
-    const abMeta = document.getElementById("ml-rules-ab-meta");
-    if (!ab) {
-      abMeta.textContent = "No rule A/B yet.";
-      abBody.innerHTML = "";
-    } else {
-      const r = ab.report;
-      abMeta.textContent = `Rule A/B of ${r.model_version} on ${r.window?.start} → ${r.window?.end} (${r.n_paired_events} refills) · run ${ab.created_at}`;
-      abBody.innerHTML = Object.entries(r.variants || {}).map(([name, m]) =>
-        `<tr><td>${esc(name.replace("rules:", ""))}</td><td>${fmtPct(m.within_7_days_pct)}</td><td>${esc(m.within_7_gain_pp_vs_none ?? "-")}</td><td>${esc(m.mae_days ?? "-")}</td><td>${fmtPct(m.early_pct)}</td><td>${fmtPct(m.late_pct)}</td></tr>`).join("");
-    }
-    const ro = await ApiClient.getMlReport("rolling");
-    const roMeta = document.getElementById("ml-rolling-meta");
-    if (!ro) {
-      roMeta.textContent = "No multi-month test yet.";
-      rollBody.innerHTML = "";
-    } else {
-      const r = ro.report;
-      roMeta.textContent = `${r.n_folds} test months, ${r.n_paired_events_total} refills · model beats baseline every month: ${r.model_beats_baseline_every_fold ? "yes" : "no"} · rules help every month: ${r.rules_help_every_fold ? "yes" : "no"} · run ${ro.created_at}`;
-      const rows = (r.folds || []).map(f => {
-        const m = f.methods || {};
-        return `<tr><td>${esc(f.window?.start)} → ${esc(f.window?.end)}</td><td>${esc(f.n_paired_events)}</td><td>${fmtPct(m.raw_median?.within_7_days_pct)}</td><td>${fmtPct(m.baseline_engine?.within_7_days_pct)}</td><td>${fmtPct(m.model_no_rules?.within_7_days_pct)}</td><td>${fmtPct(m.model_current_rules?.within_7_days_pct)}</td><td>${esc(m.model_current_rules?.mae_days ?? "-")}</td></tr>`;
-      });
-      const pl = r.pooled || {};
-      rows.push(`<tr><td><strong>Pooled</strong></td><td>${esc(r.n_paired_events_total)}</td><td>${fmtPct(pl.raw_median?.within_7_days_pct)}</td><td>${fmtPct(pl.baseline_engine?.within_7_days_pct)}</td><td>${fmtPct(pl.model_no_rules?.within_7_days_pct)}</td><td>${fmtPct(pl.model_current_rules?.within_7_days_pct)}</td><td>${esc(pl.model_current_rules?.mae_days ?? "-")}</td></tr>`);
-      rollBody.innerHTML = rows.join("");
-    }
-  } catch (err) {
-    abBody.innerHTML = `<tr><td colspan="6">${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -1036,57 +640,6 @@ async function loadColumnMappings() {
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="5">${esc(err.message)}</td></tr>`;
   }
-}
-
-// ------------------------------------------------------------------------------
-// Patient WhatsApp consent (opt-out / opt-in)
-// ------------------------------------------------------------------------------
-async function loadOptedOut() {
-  const tbody = document.querySelector("#table-opted-out tbody");
-  if (!tbody) return;
-  try {
-    const rows = await ApiClient.getOptedOutCustomers();
-    if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="5" style="color: var(--text-secondary);">No patients have opted out.</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = rows.map((r) => `
-      <tr>
-        <td><strong>${esc(r.customer_id)}</strong></td>
-        <td>${esc(r.customer_name || "–")}</td>
-        <td>${esc(r.mobile_number ? formatDisplayPhone10(r.mobile_number) : "–")}</td>
-        <td>${esc(r.updated_at ? r.updated_at.replace("T", " ").slice(0, 16) : "–")}</td>
-        <td><button class="btn btn-outline btn-sm btn-consent-row-optin" data-customer="${esc(r.customer_id)}">Opt In</button></td>
-      </tr>`).join("");
-    document.querySelectorAll(".btn-consent-row-optin").forEach((btn) => {
-      btn.addEventListener("click", () => changeConsent(btn.getAttribute("data-customer"), true));
-    });
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">${esc(err.message)}</td></tr>`;
-  }
-}
-
-async function changeConsent(customerId, optIn) {
-  if (!customerId) {
-    showToast("Enter a customer ID first.", "error");
-    return;
-  }
-  if (!confirm(`${optIn ? "Re-enable WhatsApp reminders for" : "Opt out"} '${customerId}'?`)) return;
-  try {
-    const res = await ApiClient.setCustomerConsent(customerId, optIn);
-    showToast(res.message, "success");
-    await loadOptedOut();
-    await loadWhatsAppGateway();
-    await loadInitialData();
-  } catch (err) {
-    showToast(err.message, "error");
-  }
-}
-
-function setupConsentActions() {
-  const idInput = () => document.getElementById("consent-customer-id")?.value?.trim();
-  document.getElementById("btn-consent-opt-out")?.addEventListener("click", () => changeConsent(idInput(), false));
-  document.getElementById("btn-consent-opt-in")?.addEventListener("click", () => changeConsent(idInput(), true));
 }
 
 // ------------------------------------------------------------------------------
@@ -1544,36 +1097,6 @@ function setupActionListeners() {
     }
   });
 
-  // Run Predictions
-  const runPredsHandler = async () => {
-    try {
-      showToast("Generating updated refill predictions...", "info");
-      const res = await ApiClient.generatePredictions();
-      showToast(res.message, "success");
-      await loadPredictionSnapshots();
-      await loadInitialData();
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  };
-  document.getElementById("btn-run-predictions")?.addEventListener("click", runPredsHandler);
-  document.getElementById("btn-quick-predict")?.addEventListener("click", runPredsHandler);
-
-  // Evaluate Outcomes
-  document.getElementById("btn-run-evaluation")?.addEventListener("click", async () => {
-    try {
-      showToast("Evaluating prediction accuracy against actual sales...", "info");
-      const res = await ApiClient.evaluateOutcomes();
-      document.getElementById("eval-count").innerText = Number(res.predictions_evaluated).toLocaleString();
-      document.getElementById("eval-within3").innerText = `${res.within_3_days_pct.toFixed(1)}%`;
-      document.getElementById("eval-within7").innerText = `${res.within_7_days_pct.toFixed(1)}%`;
-      document.getElementById("eval-mae").innerText = `${res.mean_absolute_error.toFixed(1)} days`;
-      showToast("Evaluation complete!", "success");
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  });
-
   // Download Reminder CSV & JSON Handlers
   const downloadCsvHandler = () => {
     const viewMode = document.getElementById("reminder-view-mode")?.value || "DATE";
@@ -1600,376 +1123,487 @@ function setupActionListeners() {
   document.getElementById("reminder-mobile-filter")?.addEventListener("change", () => loadReminders(true));
   document.getElementById("reminder-channel-filter")?.addEventListener("change", () => loadReminders(true));
 
-  // WhatsApp Gateway Listeners
-  document.getElementById("wa-target-mode")?.addEventListener("change", (e) => {
-    const isDate = e.target.value === "DATE";
-    const dateInput = document.getElementById("wa-target-date");
-    const monthSelect = document.getElementById("wa-target-month");
-    const targetLabel = document.getElementById("wa-target-label");
-    if (dateInput) dateInput.style.display = isDate ? "inline-block" : "none";
-    if (monthSelect) monthSelect.style.display = isDate ? "none" : "inline-block";
-    if (targetLabel) targetLabel.innerText = isDate ? "Target Date" : "Target Month";
-    loadWhatsAppGateway();
-  });
-
-  document.getElementById("wa-target-date")?.addEventListener("change", loadWhatsAppGateway);
-  document.getElementById("wa-target-month")?.addEventListener("change", loadWhatsAppGateway);
-  document.getElementById("wa-tier-filter")?.addEventListener("change", loadWhatsAppGateway);
-  document.getElementById("wa-mobile-filter")?.addEventListener("change", loadWhatsAppGateway);
-
-  document.getElementById("wa-sync-window")?.addEventListener("input", (e) => {
-    const lbl = document.getElementById("wa-sync-win-val");
-    if (lbl) lbl.innerText = e.target.value;
-  });
-  document.getElementById("wa-sync-window")?.addEventListener("change", loadWhatsAppGateway);
-
-  document.getElementById("btn-refresh-wa")?.addEventListener("click", loadWhatsAppGateway);
-  document.getElementById("wa-search-input")?.addEventListener("input", loadWhatsAppGateway);
-  document.getElementById("wa-search-input")?.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      loadWhatsAppGateway();
-    }
-  });
-
-  document.getElementById("wa-preview-patient-select")?.addEventListener("change", (e) => {
-    selectCandidateForPreview(parseInt(e.target.value, 10));
-  });
-
-  document.getElementById("wa-single-dryrun-chk")?.addEventListener("change", (e) => {
-    const isDry = e.target.checked;
-    const caption = document.getElementById("wa-mode-caption");
-    if (caption) {
-      caption.innerHTML = isDry 
-        ? "Mode: Dry-Run (Simulation)" 
-        : "<span style='color: #ef4444; font-weight: 600;'>Mode: LIVE CARRIER DISPATCH</span>";
-    }
-  });
-
-  document.getElementById("btn-send-single-wa")?.addEventListener("click", async () => {
-    if (!activeWhatsAppCandidate) {
-      showToast("Please select a candidate patient first.", "error");
-      return;
-    }
-    const phoneInput = document.getElementById("wa-single-test-phone")?.value?.trim();
-    if (!phoneInput || phoneInput.length < 10) {
-      showToast("Please enter a valid 10- or 12-digit phone number.", "error");
-      return;
-    }
-    const isDryRun = document.getElementById("wa-single-dryrun-chk")?.checked ?? true;
-    const feedbackBox = document.getElementById("wa-single-send-feedback");
-
-    try {
-      showToast(`Dispatching ${isDryRun ? "Dry-Run simulation" : "LIVE WhatsApp message"}...`, "info");
-      const res = await ApiClient.sendSingleWhatsApp({
-        phone_number: phoneInput,
-        customer_name: activeWhatsAppCandidate.customer_name,
-        medications: activeWhatsAppCandidate.medication,
-        expected_refill_date: activeWhatsAppCandidate.expected_refill_date,
-        tier: activeWhatsAppCandidate.tier,
-        stage_offset: activeWhatsAppCandidate.stage_offset,
-        dry_run: isDryRun,
-      });
-
-      // A refused send (e.g. opted-out phone) comes back with success=false in the body.
-      if (!res.success) throw new Error(res.message || "Dispatch refused");
-      if (feedbackBox) {
-        feedbackBox.style.display = "block";
-        feedbackBox.innerHTML = `
-          <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid #22c55e; border-radius: 6px; padding: 0.65rem 0.85rem; font-size: 0.82rem; color: #166534;">
-            <strong>${esc(res.message)}</strong> (Status: ${esc(res.status_code)})
-          </div>
-        `;
-      }
-      showToast(res.message, "success");
-    } catch (err) {
-      if (feedbackBox) {
-        feedbackBox.style.display = "block";
-        feedbackBox.innerHTML = `
-          <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 6px; padding: 0.65rem 0.85rem; font-size: 0.82rem; color: #b91c1c;">
-            <strong>Dispatch Failed:</strong> ${esc(err.message)}
-          </div>
-        `;
-      }
-      showToast(err.message, "error");
-    }
-  });
-
-  // Batch Simulation
-  document.getElementById("btn-dispatch-dryrun")?.addEventListener("click", async () => {
-    const targetDate = document.getElementById("wa-target-date")?.value || new Date().toISOString().split("T")[0];
-    try {
-      showToast("Simulating batch WhatsApp dispatch (Dry-Run)...", "info");
-      const res = await ApiClient.dispatchWhatsApp(targetDate, true, 50);
-      showToast(`Dry-run simulation completed: ${esc(res.success_count)} simulated successfully.`, "success");
-      loadWhatsAppGateway();
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  });
-
-  // Review Queue Filters & Actions
-  document.getElementById("btn-refresh-review-queue")?.addEventListener("click", loadReviewQueue);
-  document.getElementById("review-search-cust")?.addEventListener("input", loadReviewQueue);
-  document.getElementById("review-search-cust")?.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      loadReviewQueue();
-    }
-  });
-  document.getElementById("review-target-month")?.addEventListener("change", loadReviewQueue);
-  document.getElementById("review-category-filter")?.addEventListener("change", loadReviewQueue);
-  document.getElementById("review-mobile-filter")?.addEventListener("change", loadReviewQueue);
-  document.getElementById("review-target-date")?.addEventListener("change", loadReviewQueue);
-  document.getElementById("review-path-filter")?.addEventListener("change", loadReviewQueue);
-  document.getElementById("review-stability-filter")?.addEventListener("change", loadReviewQueue);
-
-  // Refresh All Button
-  document.getElementById("btn-refresh-all")?.addEventListener("click", async () => {
-    await loadInitialData();
-    await loadBatches();
-    await loadPredictionSnapshots();
-    await loadReminders();
-    await loadReviewQueue();
-    showToast("Dashboard synchronized.", "info");
-  });
 }
 
 // ------------------------------------------------------------------------------
-// Pharmacist Medication Rules & Live Classifier (Supabase)
+// Generic modal helper (replaces confirm() / prompt() for the pharmacist flows)
 // ------------------------------------------------------------------------------
-function setupMedicationRules() {
-  const tableBody = document.querySelector("#table-med-rules tbody");
-  const typeFilter = document.getElementById("rule-type-filter");
-  const searchInput = document.getElementById("rule-search-input");
-  const searchBtn = document.getElementById("btn-search-rules");
-  const refreshBtn = document.getElementById("btn-refresh-rules");
-  const countBadge = document.getElementById("rules-count-badge");
+let modalOnClose = null;
 
-  const loadRules = async () => {
-    if (!tableBody) return;
-    tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-muted);">Loading Supabase rules...</td></tr>`;
+function setupModalHelper() {
+  const overlay = document.getElementById("app-modal");
+  if (!overlay) return;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  document.getElementById("app-modal-close")?.addEventListener("click", () => closeModal());
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && overlay.classList.contains("active")) closeModal();
+  });
+}
+
+/** Open the shared modal. bodyHtml / footerHtml must already be escaped. Returns the modal parts. */
+function openModal(title, bodyHtml, footerHtml = "", { onClose = null, wide = false } = {}) {
+  const overlay = document.getElementById("app-modal");
+  const card = document.getElementById("app-modal-card");
+  document.getElementById("app-modal-title").innerText = title;
+  const body = document.getElementById("app-modal-body");
+  const footer = document.getElementById("app-modal-footer");
+  body.innerHTML = bodyHtml;
+  footer.innerHTML = footerHtml;
+  footer.style.display = footerHtml ? "" : "none";
+  card.classList.toggle("modal-card-wide", !!wide);
+  setModalLocked(false);
+  modalOnClose = onClose;
+  overlay.classList.add("active");
+  return { overlay, body, footer };
+}
+
+function setModalLocked(locked) {
+  const overlay = document.getElementById("app-modal");
+  if (overlay) overlay.dataset.locked = locked ? "1" : "";
+  const closeBtn = document.getElementById("app-modal-close");
+  if (closeBtn) closeBtn.disabled = !!locked;
+}
+
+function closeModal(force = false) {
+  const overlay = document.getElementById("app-modal");
+  if (!overlay || !overlay.classList.contains("active")) return;
+  if (overlay.dataset.locked && !force) return;  // e.g. while WhatsApp messages are being sent
+  overlay.classList.remove("active");
+  setModalLocked(false);
+  const cb = modalOnClose;
+  modalOnClose = null;
+  if (cb && !force) cb();
+}
+
+/** Yes/No confirmation. onConfirm may be async; errors are shown inside the modal. */
+function confirmModal({ title, messageHtml, confirmLabel = "Yes", confirmClass = "btn-primary", cancelLabel = "No, cancel", onConfirm }) {
+  const { body, footer } = openModal(
+    title,
+    `${messageHtml}<div class="alert alert-danger modal-error" style="display:none;"></div>`,
+    `<button class="btn btn-outline" data-modal-cancel>${esc(cancelLabel)}</button>
+     <button class="btn ${esc(confirmClass)}" data-modal-confirm>${esc(confirmLabel)}</button>`,
+  );
+  const no = footer.querySelector("[data-modal-cancel]");
+  const yes = footer.querySelector("[data-modal-confirm]");
+  no.addEventListener("click", () => closeModal());
+  yes.addEventListener("click", async () => {
+    yes.disabled = true;
+    no.disabled = true;
+    setModalLocked(true);
     try {
-      const filter = typeFilter?.value || "All";
-      const query = searchInput?.value || "";
-      const res = await ApiClient.getMedicationRules(filter, query);
-      const rules = res.rules || [];
-
-      if (countBadge) countBadge.innerText = `${esc(rules.length)} Rules Active (Supabase)`;
-      tableBody.innerHTML = "";
-
-      if (rules.length === 0) {
-        tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-muted);">No medication rules found. Click 'Add New Medication Rule' above.</td></tr>`;
-        return;
-      }
-
-      rules.forEach((r) => {
-        const tr = document.createElement("tr");
-        const isChronic = r.rule_type === "CHRONIC";
-        const badgeClass = isChronic ? "badge-success" : "badge-danger";
-        const typeLabel = isChronic ? "CHRONIC (ELIGIBLE)" : "EXCLUDE (OTC/FMCG)";
-
-        tr.innerHTML = `
-          <td><code><strong>${esc(r.pattern)}</strong></code></td>
-          <td><span class="badge ${badgeClass}">${typeLabel}</span></td>
-          <td><span class="badge badge-info">${r.category || 'CLINICAL'}</span></td>
-          <td>${r.brand_name || r.pattern}</td>
-          <td style="color: var(--text-muted); font-size: 0.8rem;">${r.notes || '-'}</td>
-          <td style="font-size: 0.78rem;">${r.created_by || 'Pharmacist'}</td>
-          <td>
-            <button class="action-btn action-btn-delete btn-del-rule" data-id="${esc(r.id)}" data-pattern="${esc(r.pattern)}" title="Delete Rule">Delete</button>
-          </td>
-        `;
-        tableBody.appendChild(tr);
-      });
-
-      // Wire delete buttons
-      document.querySelectorAll(".btn-del-rule").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const ruleId = btn.getAttribute("data-id");
-          const pattern = btn.getAttribute("data-pattern");
-          if (confirm(`Are you sure you want to delete rule for '${esc(pattern)}' from Supabase?`)) {
-            try {
-              await ApiClient.deleteMedicationRule(ruleId);
-              showToast(`Rule '${esc(pattern)}' deleted from Supabase.`, "success");
-              await loadRules();
-              await loadInitialData();
-            } catch (err) {
-              showToast(err.message, "error");
-            }
-          }
-        });
-      });
+      await onConfirm();
+      setModalLocked(false);
+      closeModal();
     } catch (err) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align:center;">Error: ${esc(err.message)}</td></tr>`;
+      setModalLocked(false);
+      yes.disabled = false;
+      no.disabled = false;
+      const box = body.querySelector(".modal-error");
+      if (box) { box.style.display = "block"; box.innerText = err.message; }
     }
+  });
+}
+
+function downloadCsv(filename, headers, rows) {
+  const cell = (v) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
+  const csv = [headers.map(cell).join(","), ...rows.map((r) => r.map(cell).join(","))].join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
 
-  if (typeFilter) typeFilter.addEventListener("change", loadRules);
-  if (searchBtn) searchBtn.addEventListener("click", loadRules);
-  if (searchInput) searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") loadRules(); });
-  if (refreshBtn) refreshBtn.addEventListener("click", loadRules);
+function mobileStatusBadge(status) {
+  const s = status || "Missing";
+  const cls = s === "Valid" ? "badge-success" : (s === "Invalid" ? "badge-danger" : "badge-warning");
+  return `<span class="badge ${cls}">${esc(s)}</span>`;
+}
 
-  // Test Classifier Diagnostic Button
-  const testBtn = document.getElementById("btn-run-med-test");
-  if (testBtn) {
-    testBtn.addEventListener("click", async () => {
-      const nameInput = document.getElementById("test-med-name-input");
-      const packingInput = document.getElementById("test-med-packing-input");
-      const resultBox = document.getElementById("test-result-box");
-      const titleElem = document.getElementById("test-result-title");
-      const badgeElem = document.getElementById("test-result-badge");
-      const detailElem = document.getElementById("test-result-details");
+// ------------------------------------------------------------------------------
+// Patients Needing Review (same lists and actions as the Streamlit Review tab)
+// ------------------------------------------------------------------------------
+const REVIEW_CATEGORY_LABELS = {
+  candidates: "Patients not getting reminders",
+  missing_mobile: "Missing mobile number (in reminders)",
+  unstable: "Unstable refill pattern (in reminders)",
+  b2b: "B2B / Inter-Store excluded (audit)",
+};
 
-      const name = nameInput?.value?.trim();
-      if (!name) {
-        showToast("Please enter a medicine or item name to test", "warning");
-        return;
-      }
+let reviewRows = [];
+let reviewSelected = new Set();
+let reviewLoadedCategory = "candidates";
+let reviewLoadedDay = "";
+let reviewSearchTimer = null;
 
+function setupReviewTab() {
+  const dateInput = document.getElementById("review-target-date");
+  if (dateInput) dateInput.value = localDateStr(new Date());
+  dateInput?.addEventListener("change", () => loadReviewList());
+  document.getElementById("review-category")?.addEventListener("change", () => loadReviewList());
+  document.getElementById("review-mobile-status")?.addEventListener("change", () => renderReview());
+  const debounced = () => { clearTimeout(reviewSearchTimer); reviewSearchTimer = setTimeout(renderReview, 200); };
+  document.getElementById("review-search")?.addEventListener("input", debounced);
+  document.getElementById("review-medicine-search")?.addEventListener("input", debounced);
+  document.getElementById("btn-review-export")?.addEventListener("click", exportReviewCsv);
+}
+
+function loadReviewTab() {
+  loadReviewList();
+  loadPharmacistAdded();
+}
+
+function reviewDay() {
+  return document.getElementById("review-target-date")?.value || localDateStr(new Date());
+}
+
+async function loadReviewList() {
+  const category = document.getElementById("review-category")?.value || "candidates";
+  const day = reviewDay();
+  const wrap = document.getElementById("review-table-wrap");
+  if (wrap) wrap.innerHTML = `<div class="empty-note">Loading…</div>`;
+  reviewSelected = new Set();
+  reviewLoadedCategory = category;
+  reviewLoadedDay = day;
+  renderReviewAddPanel();
+  try {
+    const rows = category === "candidates"
+      ? await ApiClient.getReviewCandidates(day)
+      : await ApiClient.getReviewOther(category, day);
+    reviewRows = Array.isArray(rows) ? rows : [];
+    renderReview();
+  } catch (err) {
+    reviewRows = [];
+    if (wrap) wrap.innerHTML = `<div class="alert alert-danger">${esc(err.message)}</div>`;
+  }
+}
+
+function filteredReviewRows() {
+  const q = (document.getElementById("review-search")?.value || "").trim().toLowerCase();
+  const qDigits = q.replace(/\D/g, "");
+  const med = (document.getElementById("review-medicine-search")?.value || "").trim().toLowerCase();
+  const mob = document.getElementById("review-mobile-status")?.value || "All";
+  return reviewRows.filter((r) => {
+    if (q) {
+      const nameHit = String(r.customer_name || "").toLowerCase().includes(q);
+      const mobileHit = qDigits.length > 0 && String(r.mobile_number || "").replace(/\D/g, "").includes(qDigits);
+      if (!nameHit && !mobileHit) return false;
+    }
+    if (med && !String(r.medicine || "").toLowerCase().includes(med)) return false;
+    if (mob !== "All" && (r.mobile_status || "Missing") !== mob) return false;
+    return true;
+  });
+}
+
+function renderReview() {
+  const wrap = document.getElementById("review-table-wrap");
+  const heading = document.getElementById("review-heading");
+  const caption = document.getElementById("review-caption");
+  const kpis = document.getElementById("review-kpis");
+  const exportBtn = document.getElementById("btn-review-export");
+  if (!wrap) return;
+  const rows = filteredReviewRows();
+  const dayLabel = fmtLongDate(reviewLoadedDay);
+  const isCandidates = reviewLoadedCategory === "candidates";
+
+  if (kpis) {
+    kpis.style.display = isCandidates ? "" : "none";
+    if (isCandidates) {
+      setText("review-kpi-not-in", fmtNum(rows.length));
+      setText("review-kpi-chronic", fmtNum(rows.filter((r) => r.medicine_class === "Chronic").length));
+      setText("review-kpi-unclassified", fmtNum(rows.filter((r) => r.medicine_class !== "Chronic").length));
+      setText("review-kpi-no-mobile", fmtNum(rows.filter((r) => r.mobile_status !== "Valid").length));
+    }
+  }
+  if (heading) heading.innerText = `${REVIEW_CATEGORY_LABELS[reviewLoadedCategory] || "Review"} (${rows.length.toLocaleString()}) · refill due on ${dayLabel}`;
+  if (caption) caption.style.display = isCandidates && rows.length ? "" : "none";
+  if (exportBtn) exportBtn.style.display = !isCandidates && rows.length ? "" : "none";
+
+  // Drop selections that the filters now hide
+  const visibleKeys = new Set(rows.map((r) => r.customer_item_key));
+  reviewSelected = new Set([...reviewSelected].filter((k) => visibleKeys.has(k)));
+
+  if (!rows.length) {
+    wrap.innerHTML = isCandidates
+      ? `<div class="empty-note">No patients left out of reminders (refill due on ${esc(dayLabel)}).</div>`
+      : `<div class="empty-note">No records for this category (refill due on ${esc(dayLabel)}).</div>`;
+    renderReviewAddPanel();
+    return;
+  }
+
+  if (isCandidates) {
+    const allTicked = rows.every((r) => reviewSelected.has(r.customer_item_key));
+    wrap.innerHTML = `
+      <div class="table-responsive" style="max-height: 520px;">
+        <table class="data-table" id="table-review-candidates">
+          <thead><tr>
+            <th style="width:36px;"><input type="checkbox" id="review-select-all" ${allTicked ? "checked" : ""} title="Select all"></th>
+            <th>Customer Name</th><th>Mobile Number</th><th>Mobile Status</th><th>Medication</th><th>Medicine Type</th>
+            <th>Purchases</th><th>Last Purchase</th><th>Usual Gap (days)</th><th>Estimated Due</th><th>Why Not In Reminders</th>
+          </tr></thead>
+          <tbody>${rows.map((r) => {
+            const ticked = reviewSelected.has(r.customer_item_key);
+            const typeBadge = r.medicine_class === "Chronic" ? "badge-primary" : "badge-secondary";
+            return `<tr class="${ticked ? "row-selected" : ""}">
+              <td><input type="checkbox" class="review-row-chk" data-key="${esc(r.customer_item_key)}" ${ticked ? "checked" : ""}></td>
+              <td><strong>${esc(r.customer_name || "-")}</strong></td>
+              <td><code>${esc(formatDisplayPhone10(r.mobile_number))}</code></td>
+              <td>${mobileStatusBadge(r.mobile_status)}</td>
+              <td>${esc(r.medicine || "-")}</td>
+              <td><span class="badge ${typeBadge}">${esc(r.medicine_class || "-")}</span></td>
+              <td>${esc(r.purchase_count ?? "-")}</td>
+              <td>${esc(fmtDMY(r.last_purchase_date))}</td>
+              <td>${esc(r.usual_gap_days ?? "-")}</td>
+              <td>${esc(fmtDMY(r.estimated_due_date))}</td>
+              <td style="font-size:0.82rem; color: var(--text-secondary);">${esc(r.reason_not_in_reminders || "-")}</td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table>
+      </div>`;
+    wrap.querySelector("#review-select-all")?.addEventListener("change", (e) => {
+      rows.forEach((r) => (e.target.checked ? reviewSelected.add(r.customer_item_key) : reviewSelected.delete(r.customer_item_key)));
+      renderReview();
+    });
+    wrap.querySelectorAll(".review-row-chk").forEach((chk) => {
+      chk.addEventListener("change", () => {
+        const key = chk.getAttribute("data-key");
+        if (chk.checked) reviewSelected.add(key); else reviewSelected.delete(key);
+        chk.closest("tr")?.classList.toggle("row-selected", chk.checked);
+        const all = wrap.querySelector("#review-select-all");
+        if (all) all.checked = rows.every((r) => reviewSelected.has(r.customer_item_key));
+        renderReviewAddPanel();
+      });
+    });
+  } else {
+    wrap.innerHTML = `
+      <div class="table-responsive" style="max-height: 520px;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Customer Name</th><th>Mobile Number</th><th>Mobile Status</th><th>Medication</th>
+            <th>Last Purchase Date</th><th>Expected Refill Date</th><th>Review Reason</th>
+          </tr></thead>
+          <tbody>${rows.map((r) => `<tr>
+            <td><strong>${esc(r.customer_name || "-")}</strong></td>
+            <td><code>${esc(formatDisplayPhone10(r.mobile_number))}</code></td>
+            <td>${mobileStatusBadge(r.mobile_status)}</td>
+            <td>${esc(r.medicine || "-")}</td>
+            <td>${esc(fmtDMY(r.last_purchase_date))}</td>
+            <td>${esc(fmtDMY(r.expected_refill_date))}</td>
+            <td style="font-size:0.82rem; color: var(--text-secondary);">${esc(r.review_reason || "-")}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+  }
+  renderReviewAddPanel();
+}
+
+function exportReviewCsv() {
+  const rows = filteredReviewRows();
+  if (!rows.length) return;
+  downloadCsv(
+    `review_${reviewLoadedCategory}_${reviewLoadedDay}.csv`,
+    ["Customer Name", "Mobile Number", "Mobile Status", "Medication", "Last Purchase Date", "Expected Refill Date", "Review Reason"],
+    rows.map((r) => [r.customer_name, formatDisplayPhone10(r.mobile_number), r.mobile_status, r.medicine,
+      fmtDMY(r.last_purchase_date), fmtDMY(r.expected_refill_date), r.review_reason]),
+  );
+}
+
+function renderReviewAddPanel() {
+  const panel = document.getElementById("review-add-panel");
+  if (!panel) return;
+  const selected = reviewLoadedCategory === "candidates"
+    ? reviewRows.filter((r) => reviewSelected.has(r.customer_item_key))
+    : [];
+  if (!selected.length) {
+    panel.style.display = "none";
+    panel.innerHTML = "";
+    return;
+  }
+  panel.style.display = "block";
+  const today = localDateStr(new Date());
+
+  if (selected.length === 1) {
+    const r = selected[0];
+    const gap = Math.min(180, Math.max(7, parseInt(r.usual_gap_days, 10) || 30));
+    const est = parseDMY(r.estimated_due_date);
+    const estIso = est ? localDateStr(est) : today;
+    const due = estIso > today ? estIso : today;
+    panel.innerHTML = `
+      <h4 class="panel-title">➕ Add to reminders: ${esc(r.customer_name || "-")} — ${esc(r.medicine || "-")}</h4>
+      <div class="panel-facts">
+        <span>Mobile: <b>${esc(formatDisplayPhone10(r.mobile_number))}</b></span>
+        <span>Status: ${mobileStatusBadge(r.mobile_status)}</span>
+        <span>Type: <b>${esc(r.medicine_class || "-")}</b></span>
+        <span>Purchases: <b>${esc(r.purchase_count ?? "-")}</b></span>
+        <span>Last bought: <b>${esc(fmtDMY(r.last_purchase_date))}</b></span>
+      </div>
+      ${r.medicine_class !== "Chronic" ? `<div class="alert alert-info">This medicine is not in the medication rules yet. Add it only if it is a regular (chronic) medicine for this patient.</div>` : ""}
+      ${r.mobile_status !== "Valid" ? `<div class="alert alert-warning">No valid mobile number: the reminder is scheduled but cannot be sent until the number is updated in billing.</div>` : ""}
+      <div class="form-row">
+        <label class="form-field"><span>Refill every (days)</span>
+          <input type="number" id="review-add-interval" min="7" max="180" step="1" value="${esc(gap)}"></label>
+        <label class="form-field"><span>Next refill due date</span>
+          <input type="date" id="review-add-date" min="${esc(today)}" value="${esc(due)}"></label>
+        <label class="form-field form-field-grow"><span>Note (optional)</span>
+          <input type="text" id="review-add-note" maxlength="300"></label>
+      </div>
+      <button class="btn btn-primary" id="btn-review-add">➕ Add to reminders</button>`;
+    panel.querySelector("#btn-review-add").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const interval = parseInt(panel.querySelector("#review-add-interval").value, 10);
+      const nextDate = panel.querySelector("#review-add-date").value;
+      const note = panel.querySelector("#review-add-note").value.trim();
+      if (!Number.isFinite(interval) || interval < 7 || interval > 180) { showToast("Refill every (days) must be between 7 and 180.", "error"); return; }
+      if (!nextDate || nextDate < today) { showToast("Next refill due date must be today or later.", "error"); return; }
+      btn.disabled = true;
       try {
-        const res = await ApiClient.classifyMedication({
-          item_name: name,
-          packing: packingInput?.value?.trim() || null,
+        const res = await ApiClient.pharmacistAdd({
+          customer_item_key: r.customer_item_key,
+          interval_days: interval,
+          next_refill_date: nextDate,
+          note: note || null,
         });
-
-        resultBox.style.display = "block";
-        titleElem.innerText = `Diagnosis for: "${esc(res.item_name)}"`;
-
-        if (res.is_chronic_eligible) {
-          badgeElem.className = "badge badge-success";
-          badgeElem.innerText = "● CHRONIC MAINTENANCE (ELIGIBLE)";
-          detailElem.innerHTML = `
-            <div><strong>Classification Status:</strong> <span style="color:#10b981; font-weight:700;">Eligible for automated refill cycle & WhatsApp reminders</span></div>
-            <div><strong>Clinical Category:</strong> ${esc(res.category)}</div>
-            <div><strong>Matched Rule Pattern:</strong> <code>${res.matched_rule || 'Rule Matched'}</code></div>
-            <div><strong>Decision Source:</strong> ${res.source || 'RefillCare Clinical Engine'}</div>
-          `;
+        if (res.added) {
+          showToast(`✅ ${r.customer_name} added to reminders for ${r.medicine} (next refill ${fmtDMY(res.next_refill_date || nextDate)}, every ${res.interval_days || interval} days).`, "success");
         } else {
-          badgeElem.className = "badge badge-danger";
-          badgeElem.innerText = "● EXCLUDED (NON-CHRONIC / OTC)";
-          detailElem.innerHTML = `
-            <div><strong>Classification Status:</strong> <span style="color:#ef4444; font-weight:700;">Filtered out from reminder outreach (OTC / Acute / Personal Care)</span></div>
-            <div><strong>Clinical Category:</strong> ${esc(res.category)}</div>
-            <div><strong>Exclusion Reason:</strong> <code>${res.exclusion_reason || res.matched_rule || 'Non-chronic item'}</code></div>
-            <div><strong>Decision Source:</strong> ${res.source || 'RefillCare Clinical Engine'}</div>
-          `;
+          showToast("This patient is already getting reminders.", "info");
         }
+        await afterReviewChange();
       } catch (err) {
         showToast(err.message, "error");
+        btn.disabled = false;
       }
     });
+    return;
   }
 
-  // Modal for Add Rule
-  const modal = document.getElementById("modal-add-rule");
-  const openModalBtn = document.getElementById("btn-open-add-rule-modal");
-  const closeModalBtn = document.getElementById("btn-close-modal-rule");
-  const cancelModalBtn = document.getElementById("btn-cancel-modal-rule");
-  const saveModalBtn = document.getElementById("btn-save-rule-to-supabase");
+  const n = selected.length;
+  const notClassified = selected.filter((r) => r.medicine_class !== "Chronic").length;
+  const noMobile = selected.filter((r) => r.mobile_status !== "Valid").length;
+  panel.innerHTML = `
+    <h4 class="panel-title">➕ Add ${n} selected patients to reminders</h4>
+    <p class="panel-caption">Each patient keeps their own usual refill gap and estimated due date (dates in the past move to today).</p>
+    ${notClassified ? `<div class="alert alert-info">${notClassified} of these medicines are not in the medication rules yet. Add them only if they are regular (chronic) medicines for these patients.</div>` : ""}
+    ${noMobile ? `<div class="alert alert-warning">${noMobile} of these patients have no valid mobile number: their reminders are scheduled but cannot be sent until the number is updated in billing.</div>` : ""}
+    <div class="table-responsive" style="max-height: 260px; margin-bottom: 0.75rem;">
+      <table class="data-table">
+        <thead><tr><th>Customer Name</th><th>Mobile Number</th><th>Medication</th><th>Usual Gap (days)</th><th>Estimated Due</th></tr></thead>
+        <tbody>${selected.map((r) => `<tr>
+          <td>${esc(r.customer_name || "-")}</td><td><code>${esc(formatDisplayPhone10(r.mobile_number))}</code></td>
+          <td>${esc(r.medicine || "-")}</td><td>${esc(r.usual_gap_days ?? "-")}</td><td>${esc(fmtDMY(r.estimated_due_date))}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>
+    <div class="form-row">
+      <label class="form-field form-field-grow"><span>Note for all (optional)</span>
+        <input type="text" id="review-bulk-note" maxlength="300"></label>
+    </div>
+    <button class="btn btn-primary" id="btn-review-bulk-add">➕ Add ${n} patients to reminders</button>`;
+  panel.querySelector("#btn-review-bulk-add").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const note = panel.querySelector("#review-bulk-note").value.trim();
+    btn.disabled = true;
+    try {
+      const res = await ApiClient.pharmacistAddBulk(selected.map((r) => r.customer_item_key), note || null);
+      let msg = `✅ ${Number(res.added || 0).toLocaleString()} patients added to reminders.`;
+      if (res.already_in_reminders) msg += ` ${Number(res.already_in_reminders).toLocaleString()} were already getting reminders.`;
+      showToast(msg, "success");
+      (res.failed || []).forEach((f) => {
+        const row = reviewRows.find((r) => r.customer_item_key === f.customer_item_key);
+        const who = row ? `${row.customer_name} — ${row.medicine}` : f.customer_item_key;
+        showToast(`Could not add ${who}: ${f.reason}`, "error");
+      });
+      await afterReviewChange();
+    } catch (err) {
+      showToast(err.message, "error");
+      btn.disabled = false;
+    }
+  });
+}
 
-  const closeModal = () => { if (modal) modal.classList.remove("active"); };
-  const openModal = () => { if (modal) modal.classList.add("active"); };
+async function afterReviewChange() {
+  await Promise.all([loadReviewList(), loadPharmacistAdded()]);
+  loadInitialData();
+}
 
-  if (openModalBtn) openModalBtn.addEventListener("click", openModal);
-  if (closeModalBtn) closeModalBtn.addEventListener("click", closeModal);
-  if (cancelModalBtn) cancelModalBtn.addEventListener("click", closeModal);
-
-  if (saveModalBtn) {
-    saveModalBtn.addEventListener("click", async () => {
-      const pattern = document.getElementById("rule-pattern-input")?.value?.trim();
-      const ruleType = document.getElementById("rule-type-select")?.value;
-      const category = document.getElementById("rule-category-select")?.value;
-      const notes = document.getElementById("rule-notes-input")?.value?.trim();
-
-      if (!pattern) {
-        showToast("Please enter a medication keyword or pattern", "warning");
-        return;
-      }
-
-      try {
-        showToast("Saving rule to Supabase...", "info");
-        const res = await ApiClient.addMedicationRule({
-          pattern: pattern,
-          rule_type: ruleType,
-          category: category,
-          brand_name: pattern,
-          notes: notes || "Added via Pharmacist UI",
-          created_by: "Mediastra Clinical Pharmacist",
+async function loadPharmacistAdded() {
+  const wrap = document.getElementById("review-added-wrap");
+  if (!wrap) return;
+  try {
+    const rows = await ApiClient.getPharmacistAdded();
+    const list = Array.isArray(rows) ? rows : [];
+    setText("review-added-count", list.length.toLocaleString());
+    if (!list.length) {
+      wrap.innerHTML = `<div class="empty-note">No patients have been added by a pharmacist yet.</div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead><tr><th>Patient</th><th>Medicine</th><th>Refill every (days)</th><th>Next refill</th><th>Added on</th><th>Note</th><th></th></tr></thead>
+          <tbody>${list.map((r, i) => `<tr>
+            <td><strong>${esc(r.customer_name || r.customer_id || "-")}</strong></td>
+            <td>${esc(r.medicine || "-")}</td>
+            <td>${esc(r.interval_days ?? "-")}</td>
+            <td>${esc(fmtDMY(r.next_refill_date))}</td>
+            <td>${esc(r.added_at ? String(r.added_at).slice(0, 10) : "-")}</td>
+            <td style="font-size:0.82rem;">${esc(r.note || "")}</td>
+            <td><button class="btn btn-outline btn-sm btn-pharmacist-remove" data-idx="${i}">Remove</button></td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+    wrap.querySelectorAll(".btn-pharmacist-remove").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const r = list[parseInt(btn.getAttribute("data-idx"), 10)];
+        if (!r) return;
+        const who = r.customer_name || r.customer_id || "this patient";
+        confirmModal({
+          title: "Remove from reminders",
+          messageHtml: `<p>Remove <b>${esc(who)}</b> — <b>${esc(r.medicine)}</b> from reminders? Their pending reminder messages are cancelled.</p>`,
+          confirmLabel: "Yes, remove",
+          confirmClass: "btn-danger",
+          onConfirm: async () => {
+            const res = await ApiClient.pharmacistRemove(r.customer_item_key);
+            showToast(res.removed
+              ? `${who} — ${r.medicine} removed from reminders (${Number(res.stages_cancelled || 0)} pending messages cancelled).`
+              : "This patient was not in the pharmacist-added list.", res.removed ? "success" : "info");
+            afterReviewChange();
+          },
         });
-        showToast(res.message || "Rule saved successfully to Supabase!", "success");
-        closeModal();
-        const pInput = document.getElementById("rule-pattern-input");
-        const nInput = document.getElementById("rule-notes-input");
-        if (pInput) pInput.value = "";
-        if (nInput) nInput.value = "";
-        await loadRules();
-        await loadInitialData();
-      } catch (err) {
-        showToast(err.message, "error");
-      }
+      });
     });
+  } catch (err) {
+    wrap.innerHTML = `<div class="alert alert-danger">${esc(err.message)}</div>`;
   }
-
-  return loadRules;
 }
 
 // ------------------------------------------------------------------------------
-// Quick Operational Actions
-// ------------------------------------------------------------------------------
-function setupQuickActions() {
-  const switchTab = (tabId) => {
-    const navItem = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
-    if (navItem) navItem.click();
-  };
-
-  document.getElementById("qa-add-med-rule")?.addEventListener("click", () => {
-    switchTab("tab-medrules");
-    document.getElementById("btn-open-add-rule-modal")?.click();
-  });
-
-  document.getElementById("qa-upload-sales")?.addEventListener("click", () => {
-    switchTab("tab-upload");
-  });
-
-  document.getElementById("qa-run-predictions")?.addEventListener("click", () => {
-    document.getElementById("btn-run-predictions")?.click();
-  });
-
-  document.getElementById("qa-batch-whatsapp")?.addEventListener("click", () => {
-    switchTab("tab-whatsapp");
-  });
-
-  document.getElementById("btn-view-all-reminders")?.addEventListener("click", () => {
-    switchTab("tab-reminders");
-  });
-}
-
-
-
-
-// ------------------------------------------------------------------------------
-// WhatsApp & Xinno Messaging Gateway Functions
+// WhatsApp Messages: candidate list + preview
 // ------------------------------------------------------------------------------
 let currentWhatsAppCandidates = [];
-let activeWhatsAppCandidate = null;
+let waSearchTimer = null;
+
+function waTarget() {
+  const mode = document.getElementById("wa-target-mode")?.value || "DATE";
+  if (mode === "DATE") {
+    return { mode, targetDate: document.getElementById("wa-target-date")?.value || localDateStr(new Date()), targetMonth: null };
+  }
+  return { mode, targetDate: null, targetMonth: document.getElementById("wa-target-month")?.value || monthKey(new Date()) };
+}
 
 async function loadWhatsAppGateway() {
-  const mode = document.getElementById("wa-target-mode")?.value || "DATE";
-  const dateInput = document.getElementById("wa-target-date");
-  const monthSelect = document.getElementById("wa-target-month");
+  const { targetDate, targetMonth } = waTarget();
   const tierFilter = document.getElementById("wa-tier-filter")?.value || "ALL";
   const mobileFilter = document.getElementById("wa-mobile-filter")?.value || "All";
   const syncWin = parseInt(document.getElementById("wa-sync-window")?.value || "0", 10);
   const searchInput = document.getElementById("wa-search-input")?.value?.trim() || "";
 
-  let targetDate = null;
-  let targetMonth = null;
-  if (mode === "DATE") {
-    targetDate = dateInput?.value || new Date().toISOString().split("T")[0];
-  } else {
-    targetMonth = monthSelect?.value || monthKey(new Date());
-  }
+  loadWhatsAppSendSummary();
 
   const tbody = document.getElementById("tbody-wa-candidates");
   if (tbody) {
@@ -1987,23 +1621,11 @@ async function loadWhatsAppGateway() {
     });
 
     currentWhatsAppCandidates = res.candidates || [];
-
-    // Update KPI Summary Cards
-    if (document.getElementById("wa-kpi-total")) {
-      document.getElementById("wa-kpi-total").innerText = Number(res.total_scheduled || 0).toLocaleString();
-    }
-    if (document.getElementById("wa-kpi-valid")) {
-      document.getElementById("wa-kpi-valid").innerText = Number(res.delivery_ready || 0).toLocaleString();
-    }
-    if (document.getElementById("wa-kpi-missing")) {
-      document.getElementById("wa-kpi-missing").innerText = Number(res.missing_mobile || 0).toLocaleString();
-    }
-    if (document.getElementById("wa-kpi-target-label")) {
-      document.getElementById("wa-kpi-target-label").innerText = res.target_label || "--";
-    }
-    if (document.getElementById("wa-candidate-count")) {
-      document.getElementById("wa-candidate-count").innerText = Number(res.total_scheduled || 0).toLocaleString();
-    }
+    setText("wa-kpi-total", fmtNum(res.total_scheduled || 0));
+    setText("wa-kpi-valid", fmtNum(res.delivery_ready || 0));
+    setText("wa-kpi-missing", fmtNum(res.missing_mobile || 0));
+    setText("wa-kpi-target-label", res.target_label || "--");
+    setText("wa-candidate-count", fmtNum(res.total_scheduled || 0));
 
     if (!currentWhatsAppCandidates.length) {
       if (tbody) {
@@ -2019,21 +1641,17 @@ async function loadWhatsAppGateway() {
       currentWhatsAppCandidates.forEach((c, idx) => {
         const tr = document.createElement("tr");
         tr.style.cursor = "pointer";
-        const isValid = c.mobile_status === "Valid";
-        const statusBadge = isValid 
-          ? `<span class="badge badge-success">Valid</span>` 
-          : `<span class="badge badge-warning">Missing</span>`;
-
+        const med = String(c.medication || "");
+        const stageDisp = c.stage_display || (c.tier === "FOLLOWUP" ? "FOLLOW" : (c.tier === "DUE" ? "DUE" : "LAPSED"));
         tr.innerHTML = `
           <td><strong>${esc(c.customer_name)}</strong></td>
-          <td><code>${c.mobile_display || "-"}</code></td>
-          <td>${statusBadge}</td>
-          <td><span title="${esc(c.medication)}">${c.medication.length > 25 ? c.medication.slice(0, 25) + "..." : c.medication}</span></td>
-          <td><span class="badge badge-primary">${esc(c.stage_offset)}d (${esc(c.tier)})</span></td>
-          <td>${c.expected_refill_date || "-"}</td>
+          <td><code>${esc(c.mobile_display || "-")}</code></td>
+          <td>${mobileStatusBadge(c.mobile_status)}</td>
+          <td><span title="${esc(med)}">${esc(med.length > 25 ? med.slice(0, 25) + "..." : med)}</span></td>
+          <td><span class="badge badge-primary">${esc(stageDisp)}</span></td>
+          <td>${esc(c.expected_refill_date || "-")}</td>
           <td><button class="btn btn-outline btn-sm wa-select-btn" data-index="${idx}" style="padding: 2px 8px; font-size: 0.75rem;">Preview</button></td>
         `;
-
         tr.addEventListener("click", () => selectCandidateForPreview(idx));
         tbody.appendChild(tr);
       });
@@ -2041,13 +1659,37 @@ async function loadWhatsAppGateway() {
 
     populatePatientDropdown(currentWhatsAppCandidates);
     selectCandidateForPreview(0);
-
   } catch (err) {
     console.error("Error loading WhatsApp gateway candidates:", err);
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 1.5rem;">Error loading candidate queue: ${esc(err.message)}</td></tr>`;
     }
   }
+}
+
+function setupWhatsAppListeners() {
+  document.getElementById("wa-target-mode")?.addEventListener("change", (e) => {
+    const isDate = e.target.value === "DATE";
+    const dateInput = document.getElementById("wa-target-date");
+    const monthSelect = document.getElementById("wa-target-month");
+    const targetLabel = document.getElementById("wa-target-label");
+    if (dateInput) dateInput.style.display = isDate ? "inline-block" : "none";
+    if (monthSelect) monthSelect.style.display = isDate ? "none" : "inline-block";
+    if (targetLabel) targetLabel.innerText = isDate ? "Target Date" : "Target Month";
+    loadWhatsAppGateway();
+  });
+  ["wa-target-date", "wa-target-month", "wa-tier-filter", "wa-mobile-filter", "wa-sync-window"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", loadWhatsAppGateway);
+  });
+  document.getElementById("wa-sync-window")?.addEventListener("input", (e) => setText("wa-sync-win-val", e.target.value));
+  document.getElementById("btn-refresh-wa")?.addEventListener("click", loadWhatsAppGateway);
+  document.getElementById("wa-search-input")?.addEventListener("input", () => {
+    clearTimeout(waSearchTimer);
+    waSearchTimer = setTimeout(loadWhatsAppGateway, 300);
+  });
+  document.getElementById("wa-preview-patient-select")?.addEventListener("change", (e) => {
+    selectCandidateForPreview(parseInt(e.target.value, 10));
+  });
 }
 
 function populatePatientDropdown(candidates) {
@@ -2061,40 +1703,37 @@ function populatePatientDropdown(candidates) {
   candidates.forEach((c, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.innerText = `${esc(c.customer_name)} — ${esc(c.medication)} (${esc(c.tier)})`;
+    opt.textContent = `${c.customer_name || "-"} — ${c.medication || "-"} (${c.tier || "-"})`;
     sel.appendChild(opt);
   });
 }
 
 async function selectCandidateForPreview(index) {
-  if (!currentWhatsAppCandidates[index]) return;
-  activeWhatsAppCandidate = currentWhatsAppCandidates[index];
+  const cand = currentWhatsAppCandidates[index];
+  if (!cand) return;
   const sel = document.getElementById("wa-preview-patient-select");
   if (sel) sel.value = index;
+  await renderWhatsAppPreview(cand);
+}
 
-  const rawPhone = String(activeWhatsAppCandidate.phone_number || "").replace(/\D/g, "");
-  let default12 = rawPhone;
-  if (rawPhone.length === 10) default12 = "91" + rawPhone;
-  else if (rawPhone.length === 11 && rawPhone.startsWith("0")) default12 = "91" + rawPhone.slice(1);
-
-  const phoneInput = document.getElementById("wa-single-test-phone");
-  if (phoneInput) phoneInput.value = default12;
-
-  await renderWhatsAppPreview(activeWhatsAppCandidate);
+/** Escape, then WhatsApp formatting: *bold* -> <b>, newlines -> <br>. */
+function formatWhatsAppText(text) {
+  return esc(text || "")
+    .replace(/\*([^*\n]+)\*/g, "<b>$1</b>")
+    .replace(/\r?\n/g, "<br>");
 }
 
 async function renderWhatsAppPreview(cand) {
   const previewBody = document.getElementById("wa-preview-body");
   const previewBadge = document.getElementById("wa-preview-badge");
+  const previewFooter = document.getElementById("wa-preview-footer");
+  if (previewFooter) previewFooter.innerText = "";
   if (!cand) {
     if (previewBody) previewBody.innerText = "No patient candidate selected.";
+    if (previewBadge) previewBadge.innerText = "—";
     return;
   }
-
-  if (previewBadge) {
-    previewBadge.innerText = `${esc(cand.tier)} • ${cand.refill_function || "DUE_REFILL"}`;
-  }
-
+  if (previewBadge) previewBadge.innerText = `${cand.tier || "DUE"} • ${cand.refill_function || "DUE_REFILL"}`;
   try {
     const res = await ApiClient.previewWhatsApp({
       customer_name: cand.customer_name,
@@ -2103,8 +1742,274 @@ async function renderWhatsAppPreview(cand) {
       tier: cand.tier,
       stage_offset: cand.stage_offset,
     });
-    if (previewBody) previewBody.innerText = res.visual_preview;
+    if (previewBody) previewBody.innerHTML = formatWhatsAppText(res.visual_preview);
+    if (previewFooter && res.template_name) previewFooter.innerText = `Template: ${res.template_name}`;
   } catch (err) {
-    if (previewBody) previewBody.innerText = `Could not generate message preview: ${esc(err.message)}`;
+    if (previewBody) previewBody.innerText = `Could not generate message preview: ${err.message}`;
+  }
+}
+
+// ------------------------------------------------------------------------------
+// WhatsApp Messages: send today's reminders (Yes / No confirmation)
+// ------------------------------------------------------------------------------
+let waSendSummary = null;
+
+function setupWhatsAppSend() {
+  setupWhatsAppListeners();
+  document.getElementById("btn-wa-send-today")?.addEventListener("click", () => openSendTodayModal());
+}
+
+function waSkipped(s) {
+  return Number(s.no_valid_mobile || 0) + Number(s.opted_out || 0) + Number(s.already_sent || 0);
+}
+
+async function loadWhatsAppSendSummary() {
+  const { mode, targetDate } = waTarget();
+  const today = localDateStr(new Date());
+  const day = mode === "DATE" ? targetDate : today;
+  const btn = document.getElementById("btn-wa-send-today");
+  const note = document.getElementById("wa-send-note");
+  try {
+    const s = await ApiClient.getWhatsAppSendSummary(day);
+    waSendSummary = s;
+    const toSend = Number(s.to_send || 0);
+    const label = s.target_label || fmtLongDate(day);
+    setText("wa-send-headline", `${toSend.toLocaleString()} messages ready for ${label}`);
+    setText("wa-send-subline",
+      `${fmtNum(s.medicines || 0)} medicines covered · ${waSkipped(s).toLocaleString()} skipped (no valid mobile, opted out or already sent) · ${fmtNum(s.holdout || 0)} in the no-reminder control group`);
+    const isTodaySelected = mode === "DATE" && targetDate === today;
+    const canSend = isTodaySelected && toSend > 0;
+    if (btn) {
+      btn.disabled = !canSend;
+      btn.innerText = `📤  Send WhatsApp Messages (${toSend.toLocaleString()})`;
+    }
+    if (note) {
+      if (!isTodaySelected) {
+        note.innerText = "To send, choose Specific Date with today's date above. Messages are sent only for today's reminders.";
+        note.style.display = "block";
+      } else if (toSend === 0) {
+        note.innerText = "No messages to send for today - every reminder is already sent, opted out or missing a mobile number.";
+        note.style.display = "block";
+      } else {
+        note.style.display = "none";
+      }
+    }
+  } catch (err) {
+    waSendSummary = null;
+    setText("wa-send-headline", "Send summary unavailable");
+    setText("wa-send-subline", err.message);
+    if (btn) btn.disabled = true;
+    if (note) note.style.display = "none";
+  }
+}
+
+function openSendTodayModal() {
+  const s = waSendSummary;
+  if (!s) return;
+  const n = Number(s.to_send || 0);
+  const nTxt = n.toLocaleString();
+  const label = s.target_label || "today";
+  const skipped = waSkipped(s) + Number(s.holdout || 0);
+  const configured = s.whatsapp_configured !== false;
+  const stale = !!s.sales_data_stale;
+
+  const body = `
+    <p>You are about to send <b>${esc(nTxt)}</b> WhatsApp messages to patients for <b>${esc(label)}</b>.</p>
+    <div class="modal-stats">
+      <div class="modal-stat"><div class="modal-stat-value">${esc(nTxt)}</div><div class="modal-stat-label">Messages to send</div></div>
+      <div class="modal-stat"><div class="modal-stat-value">${esc(fmtNum(s.medicines || 0))}</div><div class="modal-stat-label">Medicines covered</div></div>
+      <div class="modal-stat"><div class="modal-stat-value">${esc(skipped.toLocaleString())}</div><div class="modal-stat-label">Skipped</div></div>
+    </div>
+    <p class="panel-caption">Skipped: ${esc(fmtNum(s.no_valid_mobile || 0))} without a valid mobile number · ${esc(fmtNum(s.opted_out || 0))} opted out (STOP) · ${esc(fmtNum(s.already_sent || 0))} already sent · ${esc(fmtNum(s.holdout || 0))} in the control group (not messaged, so we can measure how many extra refills reminders bring).</p>
+    ${!configured ? `<div class="alert alert-danger">WhatsApp sending is not set up (Xinno API key or WABA number missing). Please contact your administrator.</div>` : ""}
+    ${configured && stale ? `
+      <div class="alert alert-warning">${esc(s.stale_message || "The latest sales data is not up to date.")}</div>
+      <label class="check-row"><input type="checkbox" id="wa-send-override-chk"> Send anyway - today's sales are already uploaded</label>
+      <label class="form-field"><span>Reason (saved in the log)</span><input type="text" id="wa-send-override-reason" maxlength="300"></label>` : ""}
+    <div class="alert alert-danger modal-error" style="display:none;"></div>
+    <div class="modal-progress" style="display:none;"><span class="spinner"></span> Sending ${esc(nTxt)} WhatsApp messages… please keep this page open.</div>`;
+  const footer = `
+    <button class="btn btn-outline" id="wa-send-cancel">No, cancel</button>
+    ${configured ? `<button class="btn btn-primary" id="wa-send-yes">Yes, send ${esc(nTxt)} messages</button>` : ""}`;
+  const { body: bodyEl, footer: footerEl } = openModal("Send WhatsApp reminders", body, footer, { onClose: () => loadWhatsAppGateway() });
+
+  const yes = footerEl.querySelector("#wa-send-yes");
+  const cancel = footerEl.querySelector("#wa-send-cancel");
+  cancel.addEventListener("click", () => closeModal());
+  if (!yes) return;
+
+  const chk = bodyEl.querySelector("#wa-send-override-chk");
+  const reason = bodyEl.querySelector("#wa-send-override-reason");
+  const refreshYes = () => {
+    yes.disabled = n <= 0 || (!!chk && !(chk.checked && reason.value.trim()));
+  };
+  chk?.addEventListener("change", refreshYes);
+  reason?.addEventListener("input", refreshYes);
+  refreshYes();
+
+  yes.addEventListener("click", async () => {
+    const errBox = bodyEl.querySelector(".modal-error");
+    const progress = bodyEl.querySelector(".modal-progress");
+    errBox.style.display = "none";
+    progress.style.display = "flex";
+    yes.disabled = true;
+    cancel.disabled = true;
+    if (chk) { chk.disabled = true; reason.disabled = true; }
+    setModalLocked(true);
+    try {
+      const res = await ApiClient.sendWhatsAppToday(chk ? reason.value.trim() : null);
+      setModalLocked(false);
+      showSendResult(res, bodyEl, footerEl);
+    } catch (err) {
+      setModalLocked(false);
+      progress.style.display = "none";
+      cancel.disabled = false;
+      if (chk) { chk.disabled = false; reason.disabled = false; }
+      if (err.status === 409 && !chk) {
+        // Server says the sales data is stale: re-open with the "send anyway" fields.
+        waSendSummary = { ...s, sales_data_stale: true, stale_message: err.message };
+        closeModal(true);
+        openSendTodayModal();
+        return;
+      }
+      errBox.innerText = err.message;
+      errBox.style.display = "block";
+      refreshYes();
+    }
+  });
+}
+
+function showSendResult(res, bodyEl, footerEl) {
+  const sent = Number(res.sent || 0);
+  const failed = Number(res.failed || 0);
+  const label = res.target_label || "today";
+  const failedRows = res.failed_rows || [];
+  bodyEl.innerHTML = failed === 0
+    ? `<div class="alert alert-success">✅ ${esc(sent.toLocaleString())} WhatsApp messages sent for ${esc(label)}.</div>`
+    : `<div class="alert alert-warning">${esc(sent.toLocaleString())} sent, ${esc(failed.toLocaleString())} failed for ${esc(label)}. Failed messages are listed below and can be sent again later.</div>
+       ${failedRows.length ? `<div class="table-responsive" style="max-height: 300px;"><table class="data-table">
+         <thead><tr><th>Customer</th><th>Mobile</th><th>Medicines</th><th>Reason</th></tr></thead>
+         <tbody>${failedRows.map((f) => `<tr><td>${esc(f.customer)}</td><td><code>${esc(formatDisplayPhone10(f.mobile))}</code></td><td>${esc(f.medicines)}</td><td>${esc(f.reason)}</td></tr>`).join("")}</tbody>
+       </table></div>` : ""}`;
+  footerEl.innerHTML = `<button class="btn btn-primary" id="wa-send-done">Done</button>`;
+  footerEl.style.display = "";
+  footerEl.querySelector("#wa-send-done").addEventListener("click", () => {
+    closeModal();  // onClose refreshes the send summary + candidates
+    loadDeliveryLog();
+    loadInitialData();
+  });
+}
+
+// ------------------------------------------------------------------------------
+// WhatsApp Messages: Stop / Resume messages (patient consent)
+// ------------------------------------------------------------------------------
+let consentSearchTimer = null;
+let consentResults = [];
+
+function setupConsentActions() {
+  document.getElementById("consent-search-input")?.addEventListener("input", () => {
+    clearTimeout(consentSearchTimer);
+    consentSearchTimer = setTimeout(runConsentSearch, 300);
+  });
+}
+
+async function runConsentSearch() {
+  const q = (document.getElementById("consent-search-input")?.value || "").trim();
+  const wrap = document.getElementById("consent-search-results");
+  if (!wrap) return;
+  if (q.length < 2) {
+    consentResults = [];
+    wrap.innerHTML = `<div class="empty-note">Type at least 2 letters of the name or digits of the mobile number.</div>`;
+    return;
+  }
+  try {
+    const rows = await ApiClient.searchCustomers(q);
+    consentResults = Array.isArray(rows) ? rows : [];
+    if (!consentResults.length) {
+      wrap.innerHTML = `<div class="empty-note">No patient found for “${esc(q)}”.</div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead><tr><th>Patient</th><th>Mobile</th><th>WhatsApp messages</th><th></th></tr></thead>
+          <tbody>${consentResults.map((r, i) => `<tr>
+            <td><strong>${esc(r.customer_name || r.customer_id || "-")}</strong></td>
+            <td><code>${esc(formatDisplayPhone10(r.mobile_number))}</code></td>
+            <td>${r.messages_allowed ? `<span class="badge badge-success">Allowed</span>` : `<span class="badge badge-danger">Stopped</span>`}</td>
+            <td><button class="btn btn-sm ${r.messages_allowed ? "btn-danger" : "btn-outline"} btn-consent-toggle" data-idx="${i}">${r.messages_allowed ? "Stop messages" : "Resume messages"}</button></td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+    wrap.querySelectorAll(".btn-consent-toggle").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const r = consentResults[parseInt(btn.getAttribute("data-idx"), 10)];
+        if (r) confirmConsentChange(r);
+      });
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div class="alert alert-danger">${esc(err.message)}</div>`;
+  }
+}
+
+function confirmConsentChange(r) {
+  const allow = !r.messages_allowed;
+  const name = r.customer_name || r.customer_id || "this patient";
+  const mobile = formatDisplayPhone10(r.mobile_number);
+  confirmModal({
+    title: allow ? "Resume WhatsApp messages" : "Stop WhatsApp messages",
+    messageHtml: allow
+      ? `<p>Resume WhatsApp refill reminders for <b>${esc(name)}</b> (${esc(mobile)})?</p>`
+      : `<p>Stop all WhatsApp refill reminders for <b>${esc(name)}</b> (${esc(mobile)})? They will not get any messages until resumed.</p>`,
+    confirmLabel: allow ? "Yes, resume messages" : "Yes, stop messages",
+    confirmClass: allow ? "btn-primary" : "btn-danger",
+    onConfirm: async () => {
+      const mob = r.mobile_number && mobile !== "-" ? r.mobile_number : null;
+      await ApiClient.setWhatsAppMessages(allow, r.customer_id, mob);
+      showToast(allow ? `WhatsApp messages resumed for ${name}.` : `WhatsApp messages stopped for ${name}.`, "success");
+      runConsentSearch();
+      loadWhatsAppSendSummary();
+    },
+  });
+}
+
+// ------------------------------------------------------------------------------
+// WhatsApp Messages: Messages Sent (delivery log)
+// ------------------------------------------------------------------------------
+function setupDeliveryLog() {
+  document.getElementById("wa-log-day")?.addEventListener("change", loadDeliveryLog);
+  document.getElementById("wa-log-status")?.addEventListener("change", loadDeliveryLog);
+}
+
+async function loadDeliveryLog() {
+  const wrap = document.getElementById("wa-log-table-wrap");
+  if (!wrap) return;
+  const dayInput = document.getElementById("wa-log-day");
+  if (dayInput && !dayInput.value) dayInput.value = localDateStr(new Date());
+  const day = dayInput?.value || localDateStr(new Date());
+  const status = document.getElementById("wa-log-status")?.value || "ALL";
+  try {
+    const res = await ApiClient.getDeliveryLog(day, status);
+    setText("wa-log-summary", `Sent: ${fmtNum(res.sent || 0)} · Failed: ${fmtNum(res.failed || 0)}`);
+    const rows = res.rows || [];
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">No messages for ${esc(fmtLongDate(day))}.</div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="table-responsive" style="max-height: 420px;">
+        <table class="data-table">
+          <thead><tr><th>Time (India)</th><th>Patient</th><th>Mobile</th><th>Status</th><th>Reason</th></tr></thead>
+          <tbody>${rows.map((r) => {
+            const st = String(r.status || "");
+            const cls = /sent/i.test(st) ? "badge-success" : (/fail/i.test(st) ? "badge-danger" : "badge-secondary");
+            return `<tr><td>${esc(r.time)}</td><td>${esc(r.patient)}</td><td><code>${esc(formatDisplayPhone10(r.mobile))}</code></td>
+              <td><span class="badge ${cls}">${esc(st)}</span></td><td style="font-size:0.82rem;">${esc(r.reason || "")}</td></tr>`;
+          }).join("")}</tbody>
+        </table>
+      </div>`;
+  } catch (err) {
+    setText("wa-log-summary", "");
+    wrap.innerHTML = `<div class="alert alert-danger">${esc(err.message)}</div>`;
   }
 }

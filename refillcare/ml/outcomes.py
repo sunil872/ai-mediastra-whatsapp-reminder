@@ -189,6 +189,7 @@ def outcome_summary(db: Session, window_days: int = 90, as_of: Optional[date] = 
 
     live = [r for r in rows if r.reminder_sent_live]
     return {
+        "holdout_uplift": holdout_uplift(db, rows),
         "as_of": as_of.isoformat(),
         "window_days": window_days,
         "overall": _summ(rows),
@@ -199,3 +200,34 @@ def outcome_summary(db: Session, window_days: int = 90, as_of: Optional[date] = 
         "definition": "within_7_days = actual next purchase within +/-7 days of the predicted refill date; "
         "refill_rate = resolved / (resolved + no refill within 60 days of the predicted date).",
     }
+
+
+def holdout_uplift(db: Session, rows: List[RefillDecisionOutcomeModel]) -> Dict[str, Any]:
+    """Refill rate of reminded patients vs the no-reminder control group (C8).
+
+    uplift_pp = refill_rate(reminded) - refill_rate(control). Only meaningful once live sends run with
+    REFILLCARE_HOLDOUT_PCT > 0; until then the control group has no decisions yet.
+    """
+    from database.models import RefillDecisionModel
+    from refillcare.whatsapp.holdout import holdout_pct, is_holdout
+
+    ids = [r.decision_id for r in rows]
+    who: Dict[str, Any] = {}
+    for i in range(0, len(ids), 900):
+        for did, cid, mob in (db.query(RefillDecisionModel.decision_id, RefillDecisionModel.customer_id, RefillDecisionModel.mobile_no)
+                              .filter(RefillDecisionModel.decision_id.in_(ids[i:i + 900])).all()):
+            who[did] = (cid, mob)
+    control = [r for r in rows if r.decision_id in who and is_holdout(*who[r.decision_id])]
+    reminded = [r for r in rows if r.reminder_sent_live]
+    c, m = _summ(control), _summ(reminded)
+    uplift = (round(m["refill_rate_pct"] - c["refill_rate_pct"], 2)
+              if m.get("refill_rate_pct") is not None and c.get("refill_rate_pct") is not None else None)
+    return {
+        "holdout_pct": holdout_pct(),
+        "control_group": {"decisions": c["decisions"], "refill_rate_pct": c.get("refill_rate_pct")},
+        "reminded": {"decisions": m["decisions"], "refill_rate_pct": m.get("refill_rate_pct")},
+        "uplift_pp": uplift,
+        "definition": "Share of closed decisions that were refilled (within 60 days of the predicted date): "
+                      "reminded patients minus the no-reminder control group.",
+    }
+

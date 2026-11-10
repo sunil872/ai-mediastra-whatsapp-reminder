@@ -227,6 +227,34 @@ def test_job_queue_dedupes_claims_once_and_records_results(monkeypatch):
             queue.enqueue("rm -rf", {})
 
 
+def test_scheduler_queues_one_retrain_per_month_not_every_hour(monkeypatch):
+    import refillcare.ml.service as svc
+    import refillcare.stores as stores_mod
+    from refillcare.jobs import queue
+    from refillcare.jobs.worker import schedule_store_jobs
+
+    sid = "jobs-retrain-loop"
+    monkeypatch.setattr(stores_mod, "list_stores", lambda: [{"store_id": sid, "status": "active"}])
+    monkeypatch.setattr(svc, "load_history", lambda: None)
+    monkeypatch.setattr(svc, "data_freshness", lambda db, hist: {"retrain_recommended": True})
+    day = date(2026, 12, 2)
+    key = f"retrain:{day:%Y-%m}"
+
+    schedule_store_jobs(today=day)
+    assert queue.count_jobs(key, ("queued",), store_id=sid) == 1
+    # The retrain finishes but is not promoted -> freshness still says "retrain" ...
+    while True:
+        c = queue.claim_next()
+        if c is None:
+            break
+        queue.finish(c["job_id"], result={"promoted": False})
+    # ... the next hourly runs must not queue it again this month
+    schedule_store_jobs(today=day)
+    schedule_store_jobs(today=day)
+    assert queue.count_jobs(key, ("queued", "running"), store_id=sid) == 0
+    assert queue.count_jobs(key, ("done",), store_id=sid) == 1
+
+
 def test_failed_job_is_recorded():
     from refillcare.jobs import queue
     from refillcare.jobs.worker import run_job
@@ -343,3 +371,32 @@ def test_dates_after_the_first_100_rows_are_still_parsed():
     bad = pd.Series(["01-08-2026"] * 20 + ["garbage"] * 5)
     _, meta2 = parse_pharmacy_dates(bad)
     assert meta2["is_ambiguous"]
+
+
+def test_upload_keeps_every_bill_line_stores_b2b_and_cleans_name_ids_only(store_db):
+    """9 Nov 2026: batches / repeat scans of one medicine on one bill are all kept and added up; SB/ lines are
+    stored as not eligible; 'AKHILA .R' -> 'AKHILA R' (same as the original history) but code ids stay as billed."""
+    from database.models import RefillDecisionModel, SalesTransactionModel as Line
+    from refillcare.data import history_store as hs
+    from refillcare.data.incremental_ingest import ingest_sales_batch
+
+    day = date(2026, 10, 31)
+    f = _day_file(day, rows=(("AKHILA .R", "9848012345", "1162", "GLIMY MV1 TAB", 1),
+                             ("AKHILA .R", "9848012345", "1162", "GLIMY MV1 TAB", 2),
+                             ("AKHILA .R", "9848012345", "1162", "GLIMY MV1 TAB", 1)), start_no=36940)
+    f["Bill No."] = "S0/36940"  # one bill, three lines (two identical)
+    f = pd.concat([f, _day_file(day, rows=(("CUST_001", "9848099999", "4060", "TELMA 40 TAB", 2),), start_no=7),
+                   _day_file(day, rows=(("BRANCH 2", "", "4060", "TELMA 40 TAB", 50),), prefix="SB/", start_no=1)], ignore_index=True)
+    res = ingest_sales_batch(store_db, f, "day.csv")
+    lines = store_db.query(Line).all()
+    glimy = [r for r in lines if r.item_id == "1162"]
+    assert len(glimy) == 3 and {r.customer_id for r in glimy} == {"AKHILA R"}
+    assert {r.customer_id for r in lines if r.item_id == "4060" and r.transaction_type == "CUSTOMER_SALE"} == {"CUST_001"}
+    b2b = [r for r in lines if r.transaction_type == "B2B_INTER_STORE"]
+    assert len(b2b) == 1 and b2b[0].refillcare_eligible is False
+    assert hs.channel_counts(store_db)["b2b_inter_store"] == 1
+    dec = store_db.query(RefillDecisionModel).filter(RefillDecisionModel.customer_item_key == "AKHILA R_9848012345_1162").one()  # patient = name + mobile
+    assert dec.purchase_count == 1 and dec.units_purchased == 60  # 1 + 2 + 1 strips of 15 (1X15) = one purchase of 60 tablets
+    assert store_db.query(RefillDecisionModel).filter(RefillDecisionModel.customer_id == "BRANCH 2").count() == 0
+    # re-uploading the same file adds nothing
+    assert ingest_sales_batch(store_db, f, "day-again.csv", force=True)["metrics"]["new_records_added"] == 0

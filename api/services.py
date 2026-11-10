@@ -123,10 +123,10 @@ class EnterpriseServices:
         return self.forecast_as_of().strftime("%Y-%m")
 
     def _decision_is_chronic(self, item_name: Optional[str], purchase_count: Optional[int], cadence_median: Optional[float]) -> bool:
-        """Same chronic gate as the reminder queue / decision engine (rules + personal recurrence)."""
-        from refillcare.engine.persistence import decision_is_chronic
+        """Same send rule as the reminder queue (rules-chronic medicine; see ``medicine_can_be_sent``)."""
+        from refillcare.engine.persistence import medicine_can_be_sent
 
-        return decision_is_chronic(str(item_name or ""), purchase_count, cadence_median)
+        return medicine_can_be_sent(item_name)
 
     # --------------------------------------------------------------------------
     # 1. SALES INGESTION & BATCH SERVICES
@@ -704,8 +704,12 @@ class EnterpriseServices:
         override_stale_data: bool = False,
         override_reason: Optional[str] = None,
         actor: str = "api",
+        approve_before_send: bool = False,
     ) -> Dict[str, Any]:
         """Dispatch templated WhatsApp messages for scheduled reminders using 3-tier engine.
+
+        ``approve_before_send`` mirrors the Streamlit "Yes, send" confirmation: the caller's
+        pharmacist confirmed, so selected PENDING/DUE stages are approved and sent in one step.
 
         Live sends are refused while the store's sales data is stale (a patient may already have
         bought); ``override_stale_data`` needs a reason and is logged.
@@ -729,7 +733,69 @@ class EnterpriseServices:
             tier_filter=tier_filter,
             dry_run=dry_run,
             batch_limit=batch_size,
+            approve_before_send=approve_before_send,
+            approved_by=actor,
         )
+
+    def _wa_client(self):
+        from refillcare.whatsapp.client import RefillWhatsAppClient
+
+        return RefillWhatsAppClient(store_name=self.store.store_name, store_contact=self.store.store_contact or None)
+
+    def get_whatsapp_send_summary(self, target_date: Optional[date] = None) -> Dict[str, Any]:
+        """Counts shown in the "Send WhatsApp reminders" confirmation (same as the Streamlit dialog)."""
+        from refillcare.whatsapp import RefillWhatsAppDispatcher
+        from refillcare.whatsapp.dispatcher import StaleSalesData, check_live_send_allowed
+
+        today = date.today()
+        target_date = target_date or today
+        bundles, target_label, _, _ = self._outreach_bundles(target_date=target_date)
+        client = self._wa_client()
+        summary = RefillWhatsAppDispatcher(client=client).summarize_medsync_send(self.db, bundles)
+        stale_message = None
+        try:
+            check_live_send_allowed(self.db)
+        except StaleSalesData as e:
+            stale_message = str(e)
+        return {
+            **summary,
+            "target_date": target_date.isoformat(),
+            "target_label": target_label,
+            "is_today": target_date == today,
+            "can_send": target_date == today and summary["to_send"] > 0,
+            "whatsapp_configured": bool(client.api_key and client.waba_number),
+            "sales_data_stale": stale_message is not None,
+            "stale_message": stale_message,
+        }
+
+    def send_whatsapp_today(self, override_reason: Optional[str] = None, actor: str = "api") -> Dict[str, Any]:
+        """The pharmacist pressed "Yes, send": approve and send ALL of today's reminders (Streamlit parity).
+
+        Only today's reminders can be sent. Opt-outs, invalid mobiles, the control group and double sends are
+        still skipped by the dispatcher; stale sales data blocks the send unless a reason is given (logged).
+        """
+        from refillcare.whatsapp import RefillWhatsAppDispatcher
+
+        client = self._wa_client()
+        if not (client.api_key and client.waba_number):
+            raise ValueError("WhatsApp sending is not set up (Xinno API key or WABA number missing).")
+        override = bool((override_reason or "").strip())
+        if override:
+            logger.warning("Stale-data send override by %s: %s", actor, override_reason)
+        bundles, target_label, _, _ = self._outreach_bundles(target_date=date.today())
+        outcome = RefillWhatsAppDispatcher(client=client, allow_stale_data=override).dispatch_medsync_batch(
+            db=self.db, bundles=bundles, dry_run=False, batch_limit=None, approve_before_send=True, approved_by=actor,
+        )
+        return {
+            "target_label": target_label,
+            "sent": outcome.get("success_count", 0),
+            "failed": outcome.get("failed_count", 0),
+            "skipped": outcome.get("skipped_not_approved_or_already_sent", 0),
+            "failed_rows": [
+                {"customer": r.get("customer_name"), "mobile": r.get("phone_number"), "medicines": r.get("medication_name"), "reason": r.get("message")}
+                for r in outcome.get("delivery_logs", []) if r.get("status") == "FAILED"
+            ],
+        }
 
     # --------------------------------------------------------------------------
     # 6. OPERATIONS KPI ANALYTICS
@@ -764,31 +830,9 @@ class EnterpriseServices:
 
     def get_ml_evidence(self) -> Dict[str, Any]:
         """Production model + its latest measured evaluation (never typed-in numbers)."""
-        from refillcare.ml import registry as reg
+        from refillcare.ml.service import production_accuracy
 
-        reg.ensure_bootstrap_versions(self.db)
-        prod = reg.get_by_status(self.db, reg.FAMILY_PATH_A_INTERVAL, reg.STATUS_PRODUCTION)
-        if prod is None:
-            return {"production_model_version": None, "is_validated": False, "evaluation": None}
-        d = reg.to_dict(prod, self.db)
-        ev = d.get("evaluation_summary")
-        measured = None
-        if ev:
-            methods = ev.get("methods") or {}
-            mine = methods.get(f"engine[{prod.version_id}]") or methods.get(f"engine[{prod.version_id.split(':', 1)[-1]}]")
-            measured = {
-                "run_id": ev.get("run_id"),
-                "window": ev.get("evaluated_window"),
-                "n_paired_events": ev.get("n_paired_events"),
-                "production": mine,
-                "baseline_historical_median": methods.get("historical_median"),
-            }
-        return {
-            "production_model_version": prod.version_id,
-            "model_type": prod.model_type,
-            "is_validated": bool(prod.is_validated),
-            "evaluation": measured,
-        }
+        return production_accuracy(self.db)
 
     def get_operations_kpi(self) -> Dict[str, Any]:
         """Aggregate executive operations KPIs (all values measured from store data)."""
@@ -845,9 +889,20 @@ class EnterpriseServices:
         except Exception:
             chr_count = None
 
+        from refillcare.engine.overview_kpis import overview_kpis
+
+        ov = overview_kpis(self.db)
         return {
-            "total_customers_monitored": customers,
-            "total_sales_transactions": total_tx,
+            "overview_month": ov["month"],
+            "reminder_messages_this_month": ov["reminder_messages_month"],
+            "patients_needing_review_today": ov["patients_needing_review_today"],
+            "total_customers_monitored": ov["customers_monitored"],  # history_store.store_summary (same as every tab)
+            "all_time_customers": ov.get("all_time_customers"),
+            "active_patients": ov.get("active_patients"),
+            "active_patients_label": ov.get("active_patients_label"),
+            "has_12m_history": ov.get("has_12m_history"),
+            "history_span_months": ov.get("history_span_months"),
+            "total_sales_transactions": ov["sales_lines_stored"],
             "latest_sales_date": latest_date_str,
             "sales_coverage_date_range": date_range_str,
             "upcoming_reminders_count": target_month_reminders_count,
@@ -1172,44 +1227,17 @@ class EnterpriseServices:
         from refillcare.data import history_store as hs
         if self.db is not None and hs.history_count(self.db) > 0:
             try:
-                from database.models import SalesTransactionModel as Line, ImportBatchModel
-                from sqlalchemy import func, select
-
-                cust_sales = self.db.execute(
-                    select(func.count(Line.id)).where(Line.transaction_type == "CUSTOMER_SALE")
-                ).scalar() or 0
-
-                b2b_db = self.db.execute(
-                    select(func.count(Line.id)).where(Line.transaction_type == "B2B_INTER_STORE")
-                ).scalar() or 0
-                b2b_sales = b2b_db if b2b_db > 0 else 2264
-
-                refill_el = self.db.execute(
-                    select(func.count(Line.id)).where(Line.refillcare_eligible.is_(True))
-                ).scalar() or cust_sales
-
-                tot_clean = cust_sales + b2b_sales
-
-                new_batches_raw = self.db.execute(
-                    select(func.sum(ImportBatchModel.record_count)).where(
-                        ImportBatchModel.import_batch_id != "LEGACY_HISTORY",
-                        ImportBatchModel.processing_status == "ACTIVE",
-                    )
-                ).scalar() or 0
-
-                raw_total = 909657 + int(new_batches_raw)
-                purged = max(0, raw_total - tot_clean)
-
+                c = hs.channel_counts(self.db)
                 return {
-                    "total_transactions": tot_clean,
-                    "customer_sales": cust_sales,
-                    "b2b_inter_store": b2b_sales,
-                    "unknown": 0,
-                    "excluded_from_refillcare": b2b_sales,
-                    "refillcare_eligible": refill_el,
-                    "raw_total_transactions": raw_total,
-                    "cleaned_transactions": tot_clean,
-                    "purged_duplicates": purged,
+                    "total_transactions": c["stored"],
+                    "customer_sales": c["customer_sales"],
+                    "b2b_inter_store": c["b2b_inter_store"],
+                    "unknown": c["unknown"],
+                    "excluded_from_refillcare": c["stored"] - c["refillcare_eligible"],
+                    "refillcare_eligible": c["refillcare_eligible"],
+                    "raw_total_transactions": c["received"],
+                    "cleaned_transactions": c["stored"],
+                    "purged_duplicates": c["not_stored"],  # kept for compatibility: returns / invalid / already uploaded
                 }
             except Exception:
                 pass
@@ -1303,6 +1331,7 @@ class EnterpriseServices:
                     "predicted_interval_days": q.get("predicted_interval_days") or q.get("estimated_days_of_supply"),
                     "last_purchase_date": q.get("last_purchase_date"),
                     "expected_refill_date": q.get("expected_refill_date") or q.get("target_send_date"),
+                    "target_send_date": q.get("target_send_date"),
                     "stage_offset": q.get("stage_offset", 0),
                     "dos_days": q.get("estimated_days_of_supply"),
                 })
@@ -1314,7 +1343,7 @@ class EnterpriseServices:
 
             if decisions_db:
                 for d in decisions_db:
-                    if not is_chronic_medication(str(d.item_name or "")):
+                    if d.path != "PHARMACIST_ADDED" and not is_chronic_medication(str(d.item_name or "")):
                         continue
                     records.append({
                         "customer_id": d.customer_id,
@@ -1642,20 +1671,11 @@ class EnterpriseServices:
 # --------------------------------------------------------------------------
     # 10. WHATSAPP & XINNO MESSAGING GATEWAY SERVICES
     # --------------------------------------------------------------------------
-    def get_whatsapp_outreach_candidates(
-        self,
-        target_date: Optional[date] = None,
-        target_month: Optional[str] = None,
-        tier: str = "ALL",
-        sync_window: int = 0,
-        mobile_status: str = "All",
-        search: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Load and cluster candidates for WhatsApp outreach matching Streamlit live gateway."""
+    def _outreach_bundles(self, target_date: Optional[date] = None, target_month: Optional[str] = None,
+                          tier: str = "ALL", sync_window: int = 0):
+        """Med-Sync bundles for a day / month (ONE builder for the candidate list, send summary and send)."""
         from refillcare.engine.med_sync import MedSyncEngine
         from refillcare.engine.persistence import RefillPersistenceManager
-        from refillcare.data.medication_classifier import is_chronic_medication
-        from refillcare.data.monthly_ingestion import determine_mobile_status
 
         target_month = validate_month_key(target_month, allow_all=True)
         pm = self._pm()
@@ -1696,6 +1716,7 @@ class EnterpriseServices:
                 "predicted_interval_days": q.get("predicted_interval_days") or q.get("estimated_days_of_supply"),
                 "last_purchase_date": q.get("last_purchase_date"),
                 "expected_refill_date": q.get("expected_refill_date") or q.get("target_send_date"),
+                "target_send_date": q.get("target_send_date"),
                 "stage_offset": q.get("stage_offset", 0),
                 "dos_days": q.get("estimated_days_of_supply"),
             })
@@ -1713,6 +1734,23 @@ class EnterpriseServices:
             filtered_b = [b for b in all_bundles if getattr(b, "lifecycle_tier", "DUE") == "LAPSED" or getattr(b, "refill_function", "DUE_REFILL") == "LAPSED_REENGAGEMENT"]
         else:
             filtered_b = all_bundles
+
+        return filtered_b, target_label, target_date_str, target_month_str
+
+    def get_whatsapp_outreach_candidates(
+        self,
+        target_date: Optional[date] = None,
+        target_month: Optional[str] = None,
+        tier: str = "ALL",
+        sync_window: int = 0,
+        mobile_status: str = "All",
+        search: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Load and cluster candidates for WhatsApp outreach matching Streamlit live gateway."""
+        from refillcare.data.monthly_ingestion import determine_mobile_status
+
+        filtered_b, target_label, target_date_str, target_month_str = self._outreach_bundles(
+            target_date, target_month, tier, sync_window)
 
         from refillcare.whatsapp.consent import load_opt_out_index
 
@@ -1759,6 +1797,7 @@ class EnterpriseServices:
                 "target_send_date": cand_target_send,
                 "stage_offset": 0 if tier_val == "DUE" else (5 if tier_val == "FOLLOWUP" else 45),
                 "tier": tier_val,
+                "stage_display": "DUE" if tier_val == "DUE" else ("FOLLOW" if tier_val == "FOLLOWUP" else "LAPSED"),
                 "refill_function": getattr(b, "refill_function", "DUE_REFILL"),
                 "status": "PENDING",
                 "items_count": len(b.synced_items) if b.synced_items else 1,

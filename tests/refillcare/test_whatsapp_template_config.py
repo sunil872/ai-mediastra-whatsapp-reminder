@@ -39,7 +39,7 @@ def test_template_variable_count_and_ordering():
 
 def test_template_body_text_content():
     """Verify that template body matches the approved wording and variable placeholders."""
-    assert "Dear *{{1}}*," in WHATSAPP_TEMPLATE_BODY
+    assert "Dear *{{1}}* Garu," in WHATSAPP_TEMPLATE_BODY
     assert "This is a friendly reminder from *{{2}}* regarding your regular medicine refill." in WHATSAPP_TEMPLATE_BODY
     assert "{{3}}" in WHATSAPP_TEMPLATE_BODY
     assert "💊 Medicines:\n{{4}}" in WHATSAPP_TEMPLATE_BODY

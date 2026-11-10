@@ -1,8 +1,10 @@
 """Who is the patient, and which therapy is the medicine? (trajectory keys for scoring and ML)
 
-Patient identity (``REFILLCARE_PATIENT_IDENTITY``)
+Patient identity (``REFILLCARE_PATIENT_IDENTITY``, default ``name_mobile`` since 10 Nov 2026)
     ``name``         legacy: the billing name is the patient ("LAXMI" = every Laxmi in the store).
-    ``name_mobile``  name + last 10 mobile digits ("LAXMI_9876543210"). Two Laxmis with different
+                     Unsafe: another person with the same name could cancel a patient's reminders and
+                     move them to his own phone (scenario test, CHANDRA MOHAN with 5 phones).
+    ``name_mobile``  DEFAULT. name + last 10 mobile digits ("LAXMI_9876543210"). Two Laxmis with different
                      phones are two patients; a family sharing one phone stays split by name.
                      A purchase without a valid mobile borrows the phone only when that name has
                      exactly one phone in the whole history; otherwise it stays name-only.
@@ -51,8 +53,8 @@ def identity_mode() -> str:
     ensure_dotenv()
     from refillcare.stores import store_setting
 
-    m = (store_setting("REFILLCARE_PATIENT_IDENTITY", "name") or "name").strip().lower()
-    return m if m in IDENTITY_MODES else "name"
+    m = (store_setting("REFILLCARE_PATIENT_IDENTITY", "name_mobile") or "name_mobile").strip().lower()
+    return m if m in IDENTITY_MODES else "name_mobile"
 
 
 def grouping_mode() -> str:

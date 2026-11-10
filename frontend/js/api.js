@@ -5,19 +5,62 @@
 const API_BASE_URL = window.location.origin;
 
 /**
- * Every /api call sends `X-API-Key` (localStorage `refillcare_api_key`) and the store it works on,
- * `X-Store-Id` (localStorage `refillcare_store_id`; empty = the server's default store).
- * Not needed when the browser runs on the server machine and REFILLCARE_API_KEY is unset.
+ * Store / tenant: a `?store_id=` (and `?tenant_id=`) in the page URL wins and is remembered in
+ * localStorage (`refillcare_store_id` / `refillcare_tenant_id`); otherwise the saved value is used.
+ * Empty = the server's default store.
+ */
+function initStoreFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const store = (params.get("store_id") || "").trim();
+    const tenant = (params.get("tenant_id") || "").trim();
+    if (store) localStorage.setItem("refillcare_store_id", store.toLowerCase());
+    if (tenant) localStorage.setItem("refillcare_tenant_id", tenant);
+  } catch (e) { /* storage blocked: fall back to the URL value below */ }
+}
+initStoreFromUrl();
+
+export function currentStoreId() {
+  try {
+    const fromUrl = (new URLSearchParams(window.location.search).get("store_id") || "").trim().toLowerCase();
+    return fromUrl || localStorage.getItem("refillcare_store_id") || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+export function currentTenantId() {
+  try {
+    const fromUrl = (new URLSearchParams(window.location.search).get("tenant_id") || "").trim();
+    return fromUrl || localStorage.getItem("refillcare_tenant_id") || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+/**
+ * Every /api call sends `X-API-Key` (localStorage `refillcare_api_key`), the store it works on
+ * (`X-Store-Id`) and, when set, the tenant (`X-Tenant-Id`).
+ * The key is not needed when the browser runs on the server machine and REFILLCARE_API_KEY is unset.
  */
 export function authHeaders() {
   const h = {};
   try {
     const key = localStorage.getItem("refillcare_api_key");
     if (key) h["X-API-Key"] = key;
-    const store = localStorage.getItem("refillcare_store_id");
-    if (store) h["X-Store-Id"] = store;
   } catch (e) { /* ignore */ }
+  const store = currentStoreId();
+  if (store) h["X-Store-Id"] = store;
+  const tenant = currentTenantId();
+  if (tenant) h["X-Tenant-Id"] = tenant;
   return h;
+}
+
+/** Append the store to a download URL (downloads cannot send headers). */
+function withStore(url) {
+  const store = currentStoreId();
+  if (!store) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}store=${encodeURIComponent(store)}`;
 }
 
 async function apiFetch(url, options = {}) {
@@ -180,7 +223,7 @@ export const ApiClient = {
     } else if (targetDate) {
       url += `?target_date=${encodeURIComponent(targetDate)}`;
     }
-    return url;
+    return withStore(url);
   },
 
   getExportJsonUrl(targetDate, targetMonth = null) {
@@ -190,7 +233,7 @@ export const ApiClient = {
     } else if (targetDate) {
       url += `?target_date=${encodeURIComponent(targetDate)}`;
     }
-    return url;
+    return withStore(url);
   },
 
   async getReminderMonths() {
@@ -242,22 +285,92 @@ export const ApiClient = {
     return await res.json();
   },
 
-  // 6. WhatsApp
-  async dispatchWhatsApp(reminderDate, dryRun = true, batchSize = 50) {
-    const res = await apiFetch(`${API_BASE_URL}/api/v1/whatsapp/dispatch`, {
+  // 6. Pharmacy Overview + Patients Needing Review (same data as the Streamlit app)
+  async getOverview() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/overview`);
+    return await jsonOrThrow(res, "Failed to load the pharmacy overview");
+  },
+
+  async getReviewCandidates(day) {
+    const q = new URLSearchParams({ start: day, end: day });
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/reminders/review-candidates?${q}`);
+    return await jsonOrThrow(res, "Failed to load patients not getting reminders");
+  },
+
+  async getReviewOther(category, day) {
+    const q = new URLSearchParams({ category, day });
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/reminders/review-other?${q}`);
+    return await jsonOrThrow(res, "Failed to load the review list");
+  },
+
+  async pharmacistAdd(body) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/reminders/pharmacist-add`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        reminder_date: reminderDate,
-        dry_run: dryRun,
-        batch_size: batchSize,
-      }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "WhatsApp dispatch failed");
-    }
-    return await res.json();
+    return await jsonOrThrow(res, "Could not add the patient to reminders");
+  },
+
+  async pharmacistAddBulk(keys, note = null) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/reminders/pharmacist-add-bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_item_keys: keys, note }),
+    });
+    return await jsonOrThrow(res, "Could not add the selected patients to reminders");
+  },
+
+  async pharmacistRemove(key) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/reminders/pharmacist-remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_item_key: key }),
+    });
+    return await jsonOrThrow(res, "Could not remove the patient from reminders");
+  },
+
+  async getPharmacistAdded() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/reminders/pharmacist-added`);
+    return await jsonOrThrow(res, "Failed to load patients added by a pharmacist");
+  },
+
+  // 6.1 WhatsApp sending (live: only today's reminders, after the Yes/No confirmation)
+  async getWhatsAppSendSummary(day) {
+    const q = day ? `?target_date=${encodeURIComponent(day)}` : "";
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/whatsapp/send-summary${q}`);
+    return await jsonOrThrow(res, "Failed to load the WhatsApp send summary");
+  },
+
+  async sendWhatsAppToday(overrideReason = null) {
+    const body = overrideReason ? { override_reason: overrideReason } : {};
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/whatsapp/send-today`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await jsonOrThrow(res, "Sending WhatsApp messages failed");
+  },
+
+  async searchCustomers(q, limit = 25) {
+    const qs = new URLSearchParams({ q, limit: String(limit) });
+    const res = await apiFetch(`${API_BASE_URL}/api/customers/search?${qs}`);
+    return await jsonOrThrow(res, "Patient search failed");
+  },
+
+  async setWhatsAppMessages(allowed, customerId = null, mobile = null) {
+    const qs = new URLSearchParams({ allowed: allowed ? "true" : "false" });
+    if (customerId) qs.append("customer_id", customerId);
+    if (mobile) qs.append("mobile_number", mobile);
+    const res = await apiFetch(`${API_BASE_URL}/api/customers/whatsapp-messages?${qs}`, { method: "POST" });
+    return await jsonOrThrow(res, allowed ? "Could not resume WhatsApp messages" : "Could not stop WhatsApp messages");
+  },
+
+  async getDeliveryLog(day, status = "ALL") {
+    const qs = new URLSearchParams({ status });
+    if (day) qs.append("day", day);
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/whatsapp/delivery-log?${qs}`);
+    return await jsonOrThrow(res, "Failed to load the messages sent");
   },
 
   // 7. V1 Refill Decisions & Review Queue
@@ -303,19 +416,6 @@ export const ApiClient = {
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "Rejection failed");
-    }
-    return await res.json();
-  },
-
-  async dispatchReminder(reminderId, isDryRun = true) {
-    const res = await apiFetch(`${API_BASE_URL}/api/reminders/${reminderId}/dispatch`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_dry_run: isDryRun }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Dispatch failed");
     }
     return await res.json();
   },
@@ -417,19 +517,6 @@ export const ApiClient = {
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "Failed to generate WhatsApp preview");
-    }
-    return await res.json();
-  },
-
-  async sendSingleWhatsApp(data) {
-    const res = await apiFetch(`${API_BASE_URL}/api/v1/whatsapp/send-single`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Failed to dispatch test message");
     }
     return await res.json();
   },
@@ -549,7 +636,9 @@ async function jsonOrThrow(res, fallbackMessage) {
     else if (d && d.message) detail = `${d.message} ${(d.decision?.failed_checks || []).join(", ")}`.trim();
   } catch (e) { /* keep fallback */ }
   if (res.status === 401 || res.status === 403) detail += " (set the write API key in Settings)";
-  throw new Error(detail);
+  const e = new Error(detail);
+  e.status = res.status;  // e.g. 409 = sales data stale (send-today)
+  throw e;
 }
 
 

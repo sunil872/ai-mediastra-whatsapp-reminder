@@ -189,6 +189,57 @@ def _boot_indices(n: int, rng: np.random.Generator, n_boot: int, groups: Optiona
     return out
 
 
+# Reminder stages that remind before a refill (the +45 win-back stage is excluded).
+_REMINDER_OFFSETS = None
+
+
+def _reminder_offsets() -> List[int]:
+    global _REMINDER_OFFSETS
+    if _REMINDER_OFFSETS is None:
+        from refillcare.engine.decision_types import STAGE_OFFSETS
+
+        _REMINDER_OFFSETS = sorted(int(o) for o in STAGE_OFFSETS if int(o) < 30)
+    return _REMINDER_OFFSETS
+
+
+def reminder_coverage(pred: np.ndarray, actual: np.ndarray) -> Dict[str, float]:
+    """Share of refills where the reminder schedule reached the patient in time (business metric).
+
+    With the stage offsets (-7, -3, -1, 0, +2, +5 days around the predicted date) and the patient
+    buying ``d = actual - pred`` days after the predicted date:
+    - ``reminder_before_purchase_pct``: at least one reminder went out on or before the purchase day;
+    - ``reminder_0_7_days_before_pct``: a reminder went out 0-7 days before the purchase (well timed).
+    """
+    offs = np.array(_reminder_offsets(), dtype=float)
+    if len(pred) == 0 or len(offs) == 0:
+        return {}
+    d = (np.asarray(actual, float) - np.asarray(pred, float))[:, None]
+    before = (offs[None, :] <= d)
+    timely = before & (d - offs[None, :] <= 7)
+    return {
+        "reminder_before_purchase_pct": round(float(before.any(axis=1).mean() * 100), 2),
+        "reminder_0_7_days_before_pct": round(float(timely.any(axis=1).mean() * 100), 2),
+    }
+
+
+# Purchase kinds (C2 / C3): a refill far longer than usual is a lapse / gap (bought elsewhere,
+# hospital stay, stopped); far shorter is an early top-up / stock-up. They are not timing errors of a
+# regular refill, so the business view reports them separately (the gate metrics are unchanged).
+LAPSE_RATIO = 2.0
+STOCK_UP_RATIO = 0.5
+
+
+def purchase_kind(actual_days: Optional[float], usual_days: Optional[float]) -> str:
+    if actual_days is None or not usual_days or usual_days <= 0:
+        return "unknown"
+    r = float(actual_days) / float(usual_days)
+    if r > LAPSE_RATIO:
+        return "lapse_or_gap"
+    if r < STOCK_UP_RATIO:
+        return "early_top_up"
+    return "regular"
+
+
 def _metrics(pred: np.ndarray, actual: np.ndarray, rng: Optional[np.random.Generator] = None, n_boot: int = 300,
              groups: Optional[np.ndarray] = None) -> Dict[str, Any]:
     n = int(len(pred))
@@ -207,6 +258,9 @@ def _metrics(pred: np.ndarray, actual: np.ndarray, rng: Optional[np.random.Gener
         "within_7_days_pct": round(float(w7.mean() * 100), 2),
         "early_pct": round(float((err < -7).mean() * 100), 2),
         "late_pct": round(float((err > 7).mean() * 100), 2),
+        # Business view (C1): what the patient experiences with the reminder schedule
+        "within_14_days_pct": round(float((ae <= 14).mean() * 100), 2),
+        **reminder_coverage(pred, actual),
     }
     if rng is not None and n >= 20:
         idx = _boot_indices(n, rng, n_boot, groups)
@@ -299,6 +353,7 @@ def run_backtest(
             "depth": _depth_bucket(ev["history_len"]),
             "therapy": "insulin" if is_insulin_product(ev["item_name"], ev["packings"][-1], ev.get("salt")) else "other",
             BASELINE_METHOD: predict_historical_median(ev),
+            "purchase_kind": purchase_kind(ev["actual_days"], predict_historical_median(ev)),
             DOS_METHOD: predict_days_of_supply(ev, ref_engine),
         }
         for name, eng in engine_variants.items():
@@ -339,7 +394,7 @@ def run_backtest(
     # Segments on the paired set (per candidate engine's own path / stability / source)
     segments: Dict[str, Dict[str, Any]] = {}
     if len(actual):
-        seg_cols = {"depth": "depth", "therapy": "therapy"}
+        seg_cols = {"depth": "depth", "therapy": "therapy", "purchase_kind": "purchase_kind"}
         if candidate_method in engine_variants:
             seg_cols.update({
                 "path": f"{candidate_method}::path",
@@ -354,6 +409,8 @@ def run_backtest(
                     "n": int(len(g)),
                     "methods": {m: _metrics(g[m].to_numpy(float), a) for m in methods},
                 }
+
+    business_view = build_business_view(paired, candidate_method, engine_variants) if len(actual) else {}
 
     report = {
         "run_id": run_id or f"EVAL-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
@@ -375,6 +432,7 @@ def run_backtest(
         "coverage": coverage,
         "paired_comparison": {"n_events": int(len(paired)), "methods": paired_methods, "diffs": diffs},
         "segments": segments,
+        "business_view": business_view,
         "notes": [
             "Metrics are computed only on events where every method produced a prediction (paired).",
             "Censored events (next purchase not yet observed) and lapses beyond max_target_days are excluded; see event_counts.",
@@ -386,3 +444,41 @@ def run_backtest(
             "Evaluation window ends close to the last sales date: many late refills are censored, which biases metrics toward short intervals."
         )
     return report
+
+
+def build_business_view(paired: pd.DataFrame, candidate_method: str, engine_variants: Dict[str, Any]) -> Dict[str, Any]:
+    """Client-facing view of the candidate method (C1-C3). Does not change any gate metric.
+
+    - ``all_refills``: every paired refill (the gate population);
+    - ``regular_refills``: timing accuracy without lapses / gaps and early top-ups, which are tracked
+      as their own counts (a lapse is a win-back case, not a mistimed reminder);
+    - groups: regular patients (12+ purchases), short history (PATH_B), ML-served predictions.
+    """
+    m = candidate_method
+    if m not in paired.columns:
+        return {}
+    a = paired["actual"].to_numpy(float)
+    kinds = paired["purchase_kind"].value_counts().to_dict() if "purchase_kind" in paired.columns else {}
+    n = len(paired)
+    out: Dict[str, Any] = {
+        "method": m,
+        "all_refills": _metrics(paired[m].to_numpy(float), a),
+        "purchase_kinds_pct": {k: round(100.0 * v / n, 2) for k, v in kinds.items()},
+        "notes": [
+            "regular_refills excludes lapses / gaps (refill > 2x the usual interval) and early top-ups "
+            "(< 0.5x); those are reported as shares, not hidden. Promotion-gate metrics use all refills.",
+            "reminder_0_7_days_before_pct = the patient received a reminder 0-7 days before buying "
+            "(stages -7, -3, -1, 0, +2, +5 around the predicted date).",
+        ],
+    }
+    groups = {"regular_refills": paired["purchase_kind"] == "regular" if "purchase_kind" in paired.columns else None,
+              "patients_12_plus_purchases": paired["depth"] == "12+ purchases" if "depth" in paired.columns else None}
+    if m in engine_variants:
+        groups["short_history_path_b"] = paired[f"{m}::path"] == "PATH_B"
+        groups["ml_served"] = paired[f"{m}::source"] == "ML"
+    for name, mask in groups.items():
+        if mask is None or not bool(mask.any()):
+            continue
+        g = paired[mask]
+        out[name] = _metrics(g[m].to_numpy(float), g["actual"].to_numpy(float))
+    return out

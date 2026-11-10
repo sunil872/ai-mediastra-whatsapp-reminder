@@ -5,8 +5,8 @@ Provides deterministic message composition across:
 - REFILL_FOLLOW_UP (Stages +2d, +5d): "We’re following up regarding your regular medicine refill."
 - LAPSED_REENGAGEMENT (Stage +45d): "We’re checking in regarding your regular medicine refill."
 
-Template Structure:
-Dear *{{1}}*,
+Template Structure (single source: refillcare.config.whatsapp_template.WHATSAPP_TEMPLATE_BODY):
+Dear *{{1}}* Garu,
 
 This is a friendly reminder from *{{2}}* regarding your regular medicine refill.
 
@@ -181,22 +181,27 @@ def format_full_message_preview(
     func = get_refill_function(stage_offset) if stage_offset is not None else get_function_from_tier(tier)
     tier_msg = REFILL_FUNCTION_MESSAGES.get(func, REFILL_FUNCTION_MESSAGES[REFILL_FUNCTION_DUE])
 
-    tier_badge = (
-        "DUE_REFILL" if func == REFILL_FUNCTION_DUE
-        else ("REFILL_FOLLOW_UP" if func == REFILL_FUNCTION_FOLLOWUP else "LAPSED_REENGAGEMENT")
-    )
+    # Exactly the text the patient receives: the approved template body with its 6 variables filled.
+    return render_template_body([clean_cust, clean_store, tier_msg, med_list_str, clean_contact, clean_store])
 
-    return (
-        f"[WhatsApp Template: refillcare_medicine_reminder — {tier_badge}]\n"
-        f"────────────────────────────────────────────────────────────\n"
-        f"Dear *{clean_cust}*,\n\n"
-        f"This is a friendly reminder from *{clean_store}* regarding your regular medicine refill.\n\n"
-        f"{tier_msg}\n\n"
-        f"💊 Medicines:\n"
-        f"{med_list_str}\n\n"
-        f"If you need a refill, please contact us or place your order with our pharmacy.\n\n"
-        f"📞 Contact: {clean_contact}\n\n"
-        f"Thank you for choosing *{clean_store}*.\n"
-        f"🙏 We are happy to serve you.\n"
-        f"────────────────────────────────────────────────────────────"
-    )
+
+def render_template_body(values: List[str]) -> str:
+    """Fill {{1}}..{{6}} of the approved template body (single source: refillcare.config)."""
+    from refillcare.config.whatsapp_template import WHATSAPP_TEMPLATE_BODY
+
+    text = WHATSAPP_TEMPLATE_BODY
+    for i, val in enumerate(values, start=1):
+        text = text.replace("{{" + str(i) + "}}", str(val))
+    return text
+
+
+def whatsapp_text_to_html(text: str) -> str:
+    """Render WhatsApp formatting for a UI preview: *bold*, _italic_, ~strike~; HTML-escaped."""
+    import html
+    import re
+
+    out = html.escape(str(text))
+    out = re.sub(r"\*(?!\s)([^*\n]+?)(?<!\s)\*", r"<b>\1</b>", out)
+    out = re.sub(r"(?<![\w])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w])", r"<i>\1</i>", out)
+    out = re.sub(r"~(?!\s)([^~\n]+?)(?<!\s)~", r"<s>\1</s>", out)
+    return out

@@ -37,6 +37,15 @@ def enqueue(kind: str, params: Optional[Dict[str, Any]] = None, store_id: Option
         return to_dict(job)
 
 
+def count_jobs(dedupe_key: str, statuses: tuple, store_id: Optional[str] = None) -> int:
+    """How many jobs with this dedupe key are in the given statuses (e.g. ("done",))."""
+    sid = store_id or current_store_id()
+    with ControlSession() as s:
+        return (s.query(JobModel)
+                .filter(JobModel.store_id == sid, JobModel.dedupe_key == dedupe_key, JobModel.status.in_(statuses))
+                .count())
+
+
 def claim_next() -> Optional[Dict[str, Any]]:
     """Atomically move the oldest queued job to running and return it (None when idle)."""
     with ControlSession() as s:

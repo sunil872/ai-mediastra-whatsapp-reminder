@@ -133,7 +133,7 @@ def value_score(fld: str, series: pd.Series) -> Optional[float]:
         return _share(vals, lambda v: bool(_LETTERS.search(v)) and len(v) >= 3 and not _is_number(v))
     if fld == "packing":
         return _share(vals, lambda v: bool(_PACK_RE.search(v)))
-    if fld in ("quantity", "freeQuantity"):
+    if fld in ("quantity", "freeQuantity", "daysSupply"):
         return _share(vals, _is_number)
     if fld == "MOBILE_NO":
         return _share(vals, _is_mobile)

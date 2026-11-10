@@ -41,6 +41,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from database.connection import get_db, init_db
 from api.schemas import (
+    PharmacistAddRequest,
+    PharmacistBulkAddRequest,
+    WhatsAppSendTodayRequest,
+    PharmacistRemoveRequest,
     ColumnMappingSaveRequest,
     StoreRegisterRequest,
     SalesPreviewResponse,
@@ -64,6 +68,7 @@ from api.schemas import (
     TransactionChannelSummary,
     ConsensusRegimenAnalyticsSummary,
     MedicationRuleListResponse,
+    PharmacyOverviewResponse,
     AddMedicationRuleRequest,
     ClassifyMedicationRequest,
     ClassifyMedicationResponse,
@@ -155,7 +160,7 @@ async def refillcare_request_context(request: Request, call_next):
                 request.state.actor = check_api_key(request)
             except HTTPException as e:
                 return JSONResponse(status_code=e.status_code, content={"detail": e.detail, "request_id": rid})
-        raw_store = request.headers.get("X-Store-Id") or request.query_params.get("store")
+        raw_store = request.headers.get("X-Store-Id") or request.query_params.get("store") or request.query_params.get("store_id")
         if not raw_store and is_production() and not path.startswith("/api/v1/stores"):
             return JSONResponse(status_code=400, content={"detail": "X-Store-Id header is required.", "request_id": rid})
         try:
@@ -755,6 +760,7 @@ def dispatch_whatsapp(
             tier_filter=getattr(req, "tier_filter", None) or "ALL",
             dry_run=req.dry_run,
             batch_size=req.batch_size,
+            approve_before_send=req.approve_before_send,
             override_stale_data=req.override_stale_data,
             override_reason=req.override_reason,
             actor=actor,
@@ -763,6 +769,30 @@ def dispatch_whatsapp(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
+
+
+@app.get("/api/v1/whatsapp/send-summary", tags=["WhatsApp Gateway"])
+def whatsapp_send_summary(
+    target_date: Optional[date] = Query(None, description="Day to send (default today; only today can be sent)"),
+    db: Session = Depends(get_db),
+):
+    """Counts for the "Send WhatsApp reminders" Yes/No confirmation: to_send, medicines, no_valid_mobile,
+    opted_out, already_sent, holdout (control group), plus can_send / whatsapp_configured / sales_data_stale."""
+    return EnterpriseServices(db).get_whatsapp_send_summary(target_date)
+
+
+@app.post("/api/v1/whatsapp/send-today", tags=["WhatsApp Gateway"])
+def whatsapp_send_today(req: WhatsAppSendTodayRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """The pharmacist confirmed "Yes, send": approve and send ALL of today's reminders (live, no dry run).
+
+    Opt-outs, invalid mobiles, the control group and already-sent reminders are skipped. Returns 409 when
+    the sales data is stale unless ``override_reason`` is given (logged)."""
+    try:
+        return EnterpriseServices(db).send_whatsapp_today(override_reason=req.override_reason, actor=actor)
+    except StaleSalesData as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.post("/api/v1/whatsapp/webhook", response_model=WhatsAppWebhookResponse, tags=["WhatsApp Gateway"])
@@ -812,6 +842,84 @@ def get_refill_decision(decision_id: str, db: Session = Depends(get_db)):
     if not dec:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Decision '{decision_id}' not found.")
     return dec
+
+
+@app.get("/api/v1/reminders/review-candidates", tags=["V1 Pharmacist Review Queue"])
+def pharmacist_review_candidates(
+    start: Optional[date] = Query(None, description="Estimated refill due from (default: today)"),
+    end: Optional[date] = Query(None, description="Estimated refill due until (default: same as start)"),
+    all_dates: bool = Query(False, description="Ignore the date window"),
+    db: Session = Depends(get_db),
+):
+    """Patients NOT getting reminders whose medicine is chronic or not yet classified (never known non-chronic)."""
+    from refillcare.engine.pharmacist_overrides import review_candidates
+
+    if all_dates:
+        return review_candidates(db)
+    day_from = start or date.today()
+    return review_candidates(db, day_from, end or day_from)
+
+
+@app.get("/api/v1/reminders/review-other", tags=["V1 Pharmacist Review Queue"])
+def pharmacist_review_other(
+    category: str = Query(..., description="missing_mobile | unstable | b2b"),
+    day: Optional[date] = Query(None, description="Expected refill date (default today; ignored for b2b)"),
+    db: Session = Depends(get_db),
+):
+    """Other Patients Needing Review lists (same rows as the Streamlit Review tab)."""
+    from refillcare.engine.review_lists import review_other
+
+    try:
+        return review_other(db, category, day or date.today())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/v1/overview", response_model=PharmacyOverviewResponse, tags=["Analytics"])
+def pharmacy_overview(db: Session = Depends(get_db)):
+    """Pharmacy Overview for this store and this calendar month (same numbers as the Streamlit overview)."""
+    from refillcare.engine.overview_kpis import overview_kpis
+
+    return overview_kpis(db)
+
+
+@app.post("/api/v1/reminders/pharmacist-add", tags=["V1 Pharmacist Review Queue"])
+def pharmacist_add_to_reminders(req: PharmacistAddRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Add a left-out patient-medicine to reminders (kept through every re-scoring)."""
+    from refillcare.engine.pharmacist_overrides import add_to_reminders
+
+    try:
+        return add_to_reminders(db, req.customer_item_key, interval_days=req.interval_days,
+                                next_refill_date=req.next_refill_date, added_by=actor, note=req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/api/v1/reminders/pharmacist-add-bulk", tags=["V1 Pharmacist Review Queue"])
+def pharmacist_bulk_add_to_reminders(req: PharmacistBulkAddRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Add many left-out patient-medicines at once (each keeps its own usual gap and due date)."""
+    from refillcare.engine.pharmacist_overrides import add_many_to_reminders
+
+    return add_many_to_reminders(db, req.customer_item_keys, added_by=actor, note=req.note)
+
+
+@app.post("/api/v1/reminders/pharmacist-remove", tags=["V1 Pharmacist Review Queue"])
+def pharmacist_remove_from_reminders(req: PharmacistRemoveRequest, actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Undo a pharmacist addition (cancels its pending reminders)."""
+    from refillcare.engine.pharmacist_overrides import remove_from_reminders
+
+    try:
+        return remove_from_reminders(db, req.customer_item_key, removed_by=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/api/v1/reminders/pharmacist-added", tags=["V1 Pharmacist Review Queue"])
+def pharmacist_added_reminders(db: Session = Depends(get_db)):
+    """Patient-medicines currently in reminders because a pharmacist added them."""
+    from refillcare.engine.pharmacist_overrides import list_pharmacist_added
+
+    return list_pharmacist_added(db)
 
 
 @app.get("/api/reminders/today", response_model=List[ReminderQueueItem], tags=["V1 Pharmacist Review Queue"])
@@ -949,6 +1057,48 @@ def opt_in_customer(
     """Manually re-enable automated WhatsApp reminders for a patient."""
     srv = EnterpriseServices(db)
     return srv.set_customer_opt_in(customer_id=customer_id, opt_in=True)
+
+
+@app.get("/api/customers/search", tags=["V1 Refill Decisions"])
+def search_customers_for_consent(
+    q: str = Query(..., min_length=2, description="Patient name or mobile number (at least 4 digits)"),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Find patients by name or mobile, with whether they receive WhatsApp reminders (pharmacist screen)."""
+    from refillcare.whatsapp.pharmacist_views import search_patients
+
+    return search_patients(db, q, limit=limit)
+
+
+@app.post("/api/customers/whatsapp-messages", tags=["V1 Refill Decisions"])
+def set_customer_whatsapp_messages(
+    allowed: bool = Query(..., description="false = stop reminders, true = resume"),
+    mobile_number: Optional[str] = Query(None, description="Preferred: covers every record sharing this number"),
+    customer_id: Optional[str] = Query(None, description="Used when the patient has no mobile number"),
+    actor: str = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Stop or resume WhatsApp reminders for a patient (same logic as the Streamlit consent section)."""
+    from refillcare.whatsapp.pharmacist_views import set_messages_allowed
+
+    try:
+        ids = set_messages_allowed(db, allowed=allowed, mobile_number=mobile_number, customer_id=customer_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return {"allowed": allowed, "customer_ids": ids}
+
+
+@app.get("/api/v1/whatsapp/delivery-log", tags=["WhatsApp Gateway"])
+def whatsapp_delivery_log(
+    day: Optional[date] = Query(None, description="India-time day (default: today)"),
+    status_filter: str = Query("ALL", alias="status", description="ALL, SENT or FAILED"),
+    db: Session = Depends(get_db),
+):
+    """Live messages sent on one day: time, patient, mobile, Sent/Failed and a plain failure reason."""
+    from refillcare.whatsapp.pharmacist_views import delivery_log_rows
+
+    return delivery_log_rows(db, day=day, status=status_filter)
 
 
 # ------------------------------------------------------------------------------
