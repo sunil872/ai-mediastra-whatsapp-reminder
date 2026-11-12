@@ -83,6 +83,14 @@ def validate_month_key(target_month: Optional[str], allow_all: bool = False) -> 
     return tm[:7]
 
 
+
+def _records(df: Optional[pd.DataFrame], limit: int = 5000) -> List[Dict[str, Any]]:
+    """DataFrame -> JSON-safe rows (NaN -> None)."""
+    if df is None or len(df) == 0:
+        return []
+    out = df.head(limit).astype(object).where(pd.notna(df.head(limit)), None)
+    return out.to_dict(orient="records")
+
 class EnterpriseServices:
     """Centralized enterprise service orchestrator (v1: single store)."""
 
@@ -276,6 +284,12 @@ class EnterpriseServices:
             "latest_sales_date": str(m["latest_sales_date"]),
             "date_range": m.get("file_date_range", ""),
             "records_requiring_review": m["records_requiring_review"],
+            "return_lines": m.get("return_lines", 0),
+            "return_lines_saved": m.get("return_lines_saved", 0),
+            "returns_applied": m.get("returns_applied", 0),
+            "returns_waiting": m.get("returns_waiting", 0),
+            "earlier_returns_applied_now": m.get("earlier_returns_applied_now", 0),
+            "skipped_rows": _records(res.get("skipped_rows_df")),
             "online_sync": res.get("online_sync") or {},
             "ml_data_freshness": self._ml_freshness(None),
             "column_mapping": mres.to_dict(),
@@ -283,6 +297,18 @@ class EnterpriseServices:
             "data_warnings": res.get("data_warnings") or {},
             "message": "Sales data ingested; only the new lines were added and their patients re-scored.",
         }
+
+    def waiting_returns(self, limit: int = 200) -> Dict[str, Any]:
+        """Return lines saved but still waiting for their sale (same list as the Streamlit Upload tab)."""
+        from refillcare.data import history_store as hs
+
+        return hs.waiting_returns(self.db, limit=limit)
+
+    def recheck_returns(self) -> Dict[str, Any]:
+        """Apply waiting returns that now match a sale (after the return window changed / a missed day)."""
+        from refillcare.data.incremental_ingest import recheck_returns
+
+        return recheck_returns(self.db)
 
     def _ml_freshness(self, history_df: Optional[pd.DataFrame]) -> Optional[Dict[str, Any]]:
         """Re-plan the ML windows from the sales dates only (no full-history load)."""
@@ -1228,6 +1254,7 @@ class EnterpriseServices:
         if self.db is not None and hs.history_count(self.db) > 0:
             try:
                 c = hs.channel_counts(self.db)
+                text = hs.return_breakdown_text(c)
                 return {
                     "total_transactions": c["stored"],
                     "customer_sales": c["customer_sales"],
@@ -1238,9 +1265,13 @@ class EnterpriseServices:
                     "raw_total_transactions": c["received"],
                     "cleaned_transactions": c["stored"],
                     "purged_duplicates": c["not_stored"],  # kept for compatibility: returns / invalid / already uploaded
-                    **{k: c[k] for k in ("return_lines", "returns_netted", "returns_unmatched", "invalid_rows",
+                    **{k: c[k] for k in ("sales_lines", "return_lines", "return_lines_stored", "return_lines_not_stored",
+                                         "returns_netted", "returns_unmatched", "returns_waiting", "returns_unmatched_old", "invalid_rows",
                                          "sales_fully_returned", "returned_corrections", "returned_late",
                                          "return_window_days", "return_correction_days")},
+                    "breakdown_summary": text["summary"],
+                    "breakdown_detail": text["detail"],
+                    "breakdown_audit": text["audit"],
                 }
             except Exception:
                 pass

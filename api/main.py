@@ -496,6 +496,23 @@ def get_store_job(job_id: int):
     return job
 
 
+@app.get("/api/v1/sales/returns/waiting", tags=["Sales Ingestion"])
+def list_waiting_returns(limit: int = Query(200, ge=1, le=2000), db: Session = Depends(get_db)):
+    """Return lines saved but still waiting for their sale (no sale of that patient + medicine within the
+    return window yet). They are applied automatically when the sale is uploaded."""
+    return EnterpriseServices(db).waiting_returns(limit=limit)
+
+
+@app.post("/api/v1/sales/returns/recheck", tags=["Sales Ingestion"])
+def recheck_waiting_returns(actor: str = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Apply every waiting return that now matches a sale (e.g. after REFILLCARE_RETURN_WINDOW_DAYS was widened)
+    and update the affected patients' reminders - no re-upload needed."""
+    try:
+        return EnterpriseServices(db).recheck_returns()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_client_error(e))
+
+
 @app.get("/api/v1/sales/batches", response_model=List[ImportBatchResponse], tags=["Sales Ingestion"])
 def list_batches(db: Session = Depends(get_db)):
     """Retrieve all historical import batches."""

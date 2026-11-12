@@ -723,7 +723,7 @@ def rescore_affected_medication(keyword: str, rule_type: str) -> Dict[str, Any]:
                 return {"status": "success", "rescored": 0, "cycles_created": 0}
 
             touched_custs = [r[0] for r in tx_q.with_entities(SalesTransactionModel.customer_id).distinct().all()]
-            full_cust_tx = db.query(SalesTransactionModel).filter(
+            full_cust_tx = db.query(SalesTransactionModel).filter(SalesTransactionModel.transaction_type != "CUSTOMER_RETURN",
                 SalesTransactionModel.customer_id.in_(touched_custs)
             ).all()
 

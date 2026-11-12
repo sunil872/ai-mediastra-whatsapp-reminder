@@ -576,6 +576,57 @@ async function loadReminders(forceFetch = false) {
   }
 }
 
+function showUploadResult(res) {
+  const area = document.getElementById("upload-result-area");
+  if (!area) return;
+  area.style.display = "";
+  setText("res-sales", fmtNum(res.records_inserted));
+  setText("res-sales-sub", `${fmtNum(res.records_skipped)} already stored (skipped)`);
+  setText("res-returns", fmtNum(res.return_lines_saved || 0));
+  let sub = `${fmtNum(res.returns_applied || 0)} applied · ${fmtNum(res.returns_waiting || 0)} waiting for their sale`;
+  if (res.earlier_returns_applied_now) sub += ` · ${fmtNum(res.earlier_returns_applied_now)} earlier returns applied now`;
+  setText("res-returns-sub", sub);
+  const rows = res.skipped_rows || [];
+  setText("res-skipped", fmtNum(rows.length));
+  const link = document.getElementById("res-skipped-download");
+  const wrap = document.getElementById("res-skipped-table-wrap");
+  const tbody = document.querySelector("#res-skipped-table tbody");
+  if (!rows.length) {
+    if (link) link.style.display = "none";
+    if (wrap) wrap.style.display = "none";
+    return;
+  }
+  const cols = ["row", "bill_date", "bill_no", "customer", "mobile", "medicine", "quantity", "reason"];
+  const csvCell = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const csv = [cols.join(","), ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(","))].join("\n");
+  if (link) {
+    link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    link.download = `rows_not_saved_${res.import_batch_id || "upload"}.csv`;
+    link.style.display = "";
+  }
+  if (tbody) tbody.innerHTML = rows.slice(0, 20).map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c] == null ? "" : r[c])}</td>`).join("")}</tr>`).join("");
+  if (wrap) wrap.style.display = "";
+}
+
+async function loadWaitingReturns() {
+  const area = document.getElementById("waiting-returns-area");
+  if (!area) return;
+  try {
+    const info = await ApiClient.getWaitingReturns(200);
+    if (!info.total) { area.style.display = "none"; return; }
+    area.style.display = "";
+    setText("waiting-returns-title", `↩️ ${fmtNum(info.total)} return lines waiting for their sale`);
+    setText("waiting-returns-note", `These returns match no sale of the same patient + medicine in the ${info.return_window_days} days before. `
+      + "They are saved and applied automatically when that sale is uploaded.");
+    const dmy = (iso) => (iso ? iso.split("-").reverse().join("-") : "–");
+    document.querySelector("#waiting-returns-table tbody").innerHTML = info.rows.map((r) =>
+      `<tr><td>${dmy(r.return_date)}</td><td>${esc(r.bill_no || "")}</td><td>${esc(r.customer || "")}</td>`
+      + `<td>${esc(r.mobile || "")}</td><td>${esc(r.medicine || "")}</td><td>${fmtNum(r.quantity)}</td></tr>`).join("");
+  } catch (err) {
+    console.error("Error loading waiting returns:", err);
+  }
+}
+
 async function loadStoreSummary() {
   // Same store summary as the overview / Streamlit Upload tab (GET /api/v1/overview)
   try {
@@ -585,14 +636,11 @@ async function loadStoreSummary() {
     setText("up-lines-stored", fmtNum(ov.sales_lines_stored));
     // Same return / invalid-row breakdown as the Streamlit card (GET /api/v1/analytics/transaction-types)
     ApiClient.getTransactionTypes().then((t) => {
-      if (t.return_lines == null) return;
-      setText("up-lines-breakdown", `${fmtNum(t.return_lines)} return lines · ${fmtNum(t.invalid_rows)} invalid rows not stored`);
+      if (t.breakdown_summary == null) return;
+      // same wording as Streamlit (refillcare.data.history_store.return_breakdown_text)
+      setText("up-lines-breakdown", t.breakdown_summary);
       const card = document.getElementById("up-lines-card");
-      if (card) card.title = `Return lines are never stored as rows: ${fmtNum(t.returns_netted)} were subtracted from the sale they follow `
-        + `(within ${t.return_window_days} days), ${fmtNum(t.returns_unmatched)} matched no sale. ${fmtNum(t.sales_fully_returned)} sales were `
-        + `fully returned (${fmtNum(t.returned_corrections)} billing corrections within ${t.return_correction_days} days, `
-        + `${fmtNum(t.returned_late)} later returns -> reminders paused, pharmacist review); they stay stored but do not count. `
-        + `${fmtNum(t.invalid_rows)} rows had no date / customer / medicine / quantity.`;
+      if (card) card.title = t.breakdown_detail || "";
     }).catch((err) => console.error("Error loading return breakdown:", err));
     const activeLabel = ov.active_patients_label || "Active patients (last 12 months)";
     const activeCount = ov.active_patients !== undefined ? ov.active_patients : ov.customers_monitored;
@@ -608,6 +656,7 @@ async function loadStoreSummary() {
 
 async function loadDataStatus() {
   loadStoreSummary();
+  loadWaitingReturns();
   const box = document.getElementById("data-status-banner");
   if (!box) return;
   try {
@@ -1056,8 +1105,12 @@ function setupActionListeners() {
   // Confirm Ingest
   document.getElementById("btn-confirm-ingest")?.addEventListener("click", async () => {
     if (!activeFile) return;
+    const saveBtn = document.getElementById("btn-confirm-ingest");
+    const saveLabel = saveBtn.textContent;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving and updating reminders... (about a minute)";
     try {
-      showToast("Ingesting sales records...", "info");
+      showToast("Saving the sales lines and updating refill dates and reminders...", "info");
       let res;
       try {
         res = await ApiClient.ingestSalesFile(activeFile, activeColumnMapping);
@@ -1065,7 +1118,9 @@ function setupActionListeners() {
         if (err.status !== 409 || !confirm(`${err.message}\n\nUpload it again anyway? Only lines not stored yet are added.`)) throw err;
         res = await ApiClient.ingestSalesFile(activeFile, activeColumnMapping, true);
       }
-      showToast(`Batch ${esc(res.import_batch_id)}: ${Number(res.records_inserted).toLocaleString()} new lines, ${Number(res.records_skipped).toLocaleString()} already stored.`, "success");
+      const sync = res.online_sync || {};
+      showToast(`Saved: ${Number(res.records_inserted).toLocaleString()} new lines (${Number(res.records_skipped).toLocaleString()} already stored). `
+        + `Reminders updated for ${Number(sync.customer_items_rescored || 0).toLocaleString()} patient-medicines.`, "success");
       const w = res.data_warnings || {};
       if (w.gap_before_file) showToast(`No sales uploaded for ${w.gap_before_file} - upload those days so reminders stay correct.`, "warning");
       await loadDataStatus();
@@ -1076,11 +1131,31 @@ function setupActionListeners() {
         showToast("New sales data moved evaluation windows: model retrain recommended.", "info");
       }
       document.getElementById("upload-preview-area").style.display = "none";
+      showUploadResult(res);
       await loadBatches();
       await loadColumnMappings();
       await loadInitialData();
     } catch (err) {
       showToast(err.message, "error");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = saveLabel;
+    }
+  });
+
+  // Re-check returns waiting for their sale (after the return window changed / a missed day was uploaded)
+  document.getElementById("btn-recheck-returns")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-recheck-returns");
+    btn.disabled = true;
+    try {
+      const r = await ApiClient.recheckReturns();
+      showToast(`${fmtNum(r.returns_applied)} returns applied, ${fmtNum(r.returns_still_waiting)} still waiting.`, "success");
+      await loadWaitingReturns();
+      loadStoreSummary();
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      btn.disabled = false;
     }
   });
 

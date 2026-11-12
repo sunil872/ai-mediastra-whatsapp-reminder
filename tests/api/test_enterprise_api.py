@@ -272,3 +272,31 @@ def test_manual_opt_out_and_opt_in_endpoints():
 def test_ml_plan_endpoint_reports_freshness():
     data = client.get("/api/v1/ml/plan").json()
     assert "retrain_recommended" in data
+
+
+def test_return_lines_saved_waiting_list_recheck_and_skipped_rows():
+    """12 Nov 2026: returns are saved as rows, a return without its sale waits (listed), the upload lists
+    rows not saved with a reason, and the channel summary carries the shared breakdown wording."""
+    csv_content = (
+        "invoice_date,customerId,customerName,itemId,itemName,quantity,packing,MOBILE_NO\n"
+        "02-08-2026,C777,Return Patient,I777,Telma 40,2,10 Tabs,9876500000\n"
+        "05-08-2026,C778,Waiting Patient,I778,Glycomet,-1,10 Tabs,9876500001\n"
+        "05-08-2026,,,I779,Ecosprin,1,10 Tabs,\n"
+    )
+    files = {"file": ("returns.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")}
+    res = client.post("/api/v1/sales/ingest", files=files)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["return_lines"] == 1 and body["return_lines_saved"] == 1 and body["returns_waiting"] == 1
+    assert len(body["skipped_rows"]) == 1 and body["skipped_rows"][0]["reason"]
+
+    waiting = client.get("/api/v1/sales/returns/waiting").json()
+    assert waiting["total"] == 1 and waiting["rows"][0]["quantity"] == -1
+
+    rc = client.post("/api/v1/sales/returns/recheck")
+    assert rc.status_code == 200 and rc.json()["returns_still_waiting"] == 1
+
+    t = client.get("/api/v1/analytics/transaction-types").json()
+    assert t["return_lines_stored"] == 1 and "return lines saved" in t["breakdown_summary"]
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/sales/returns/waiting" in paths and "/api/v1/sales/returns/recheck" in paths

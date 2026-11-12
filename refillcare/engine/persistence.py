@@ -129,6 +129,31 @@ class RefillPersistenceManager:
         db.commit()
         return len(stages)
 
+    def restore_purchases(self, db: Session, restored: Dict[str, Set[date]]) -> Dict[str, int]:
+        """The reverse of :meth:`revert_rolled_back_purchases`: purchases that count again (their return was
+        rolled back) get their cycle back - re-activated, ROLLED_BACK stages PENDING again (past send dates
+        are then expired). Later purchases still supersede it in the usual way on the re-score."""
+        metrics = {"cycles_restored": 0, "stages_restored": 0}
+        if not restored:
+            return metrics
+        now = datetime.utcnow()
+        keys = list(restored.keys())
+        for i in range(0, len(keys), 500):
+            chunk = keys[i : i + 500]
+            for c in db.query(ReminderCycleModel).filter(ReminderCycleModel.customer_item_key.in_(chunk)).all():
+                if c.is_active or c.last_purchase_date not in restored.get(str(c.customer_item_key), set()):
+                    continue
+                if not any(st.status == STATUS_ROLLED_BACK for st in c.stages):
+                    continue
+                c.is_active, c.superseded_at, c.superseded_by_purchase_date = True, None, None
+                metrics["cycles_restored"] += 1
+                for st in c.stages:
+                    if st.status == STATUS_ROLLED_BACK:
+                        st.status, st.failure_reason, st.updated_at = STATUS_PENDING, None, now
+                        metrics["stages_restored"] += 1
+        db.commit()
+        return metrics
+
     def revert_rolled_back_purchases(self, db: Session, removed: Dict[str, Set[date]]) -> Dict[str, int]:
         """Undo the decision / cycle / stage effects of purchases removed by a sales-batch rollback.
 

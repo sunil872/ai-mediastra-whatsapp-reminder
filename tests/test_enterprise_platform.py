@@ -109,8 +109,10 @@ def test_returns_are_netted_against_the_sale(store_db):
     ret = _day_file(date(2026, 9, 3), rows=(("RAVI", "9848012345", "4060", "TELMA 40 TAB", -2),), start_no=50)
     r = ingest_sales_batch(store_db, ret, "return.csv")
     assert r["data_warnings"]["returns_netted"]["sales_fully_returned"] == 1
-    line = store_db.query(SalesTransactionModel).one()
+    line = store_db.query(SalesTransactionModel).filter(SalesTransactionModel.transaction_type == "CUSTOMER_SALE").one()
     assert line.quantity == 0 and line.refillcare_eligible is False
+    ret_row = store_db.query(SalesTransactionModel).filter(SalesTransactionModel.transaction_type == "CUSTOMER_RETURN").one()
+    assert ret_row.quantity == -2 and ret_row.exclusion_reason == f"RETURN_APPLIED:{line.id}:2"
 
 
 def test_rollback_deletes_only_the_batch_and_rescores(store_db):

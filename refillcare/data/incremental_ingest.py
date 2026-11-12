@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterator, List, Optional
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from database.models import ImportBatchModel, StoreCacheModel
@@ -121,6 +121,60 @@ def b2b_lines_to_store(review_df: pd.DataFrame) -> pd.DataFrame:
     return b2b
 
 
+SKIPPED_REASON_TEXT = {
+    "MISSING_CUSTOMER": "No customer name / id",
+    "MISSING_ITEM": "No medicine name / code",
+    "MISSING_DATE": "No bill date",
+    "INVALID_DATE": "Bill date could not be read",
+    "IMPLAUSIBLE_DATE": "Bill date is in the future or too old",
+    "INVALID_QUANTITY": "Quantity missing or zero",
+    "VALIDATION_FAILED": "Missing customer, medicine, date or quantity",
+}
+
+
+def merge_netting(*parts: Dict[str, Any]) -> Dict[str, Any]:
+    """Combine netting results (new returns of this upload + earlier returns that found their sale now)."""
+    out: Dict[str, Any] = {"returns_netted": 0, "sales_fully_returned": 0, "late_full_returns": 0, "returned_sales": []}
+    for p in parts:
+        for k in ("returns_netted", "sales_fully_returned", "late_full_returns"):
+            out[k] += int((p or {}).get(k) or 0)
+        out["returned_sales"].extend((p or {}).get("returned_sales") or [])
+    return out
+
+
+def skipped_rows(review_df: pd.DataFrame) -> pd.DataFrame:
+    """Rows of an upload that were not saved (not a sale, not a B2B transfer, not a return), with the reason
+    in plain words, so the pharmacist can correct them in billing. Empty frame when none."""
+    cols = ["row", "bill_date", "bill_no", "customer", "mobile", "medicine", "quantity", "reason"]
+    if review_df is None or review_df.empty:
+        return pd.DataFrame(columns=cols)
+    q = pd.to_numeric(review_df.get("quantity"), errors="coerce")
+    d = pd.to_datetime(review_df.get("invoice_date"), errors="coerce")
+    tt = review_df["transaction_type"] if "transaction_type" in review_df.columns else pd.Series("", index=review_df.index)
+    has_cust = review_df.get("customerId", pd.Series(index=review_df.index)).notna()
+    is_return = (q < 0) & has_cust
+    is_b2b = (tt == "B2B_INTER_STORE") & (q > 0) & d.notna()
+    bad = review_df[~is_return & ~is_b2b]
+    if bad.empty:
+        return pd.DataFrame(columns=cols)
+
+    def col(name):
+        return bad[name] if name in bad.columns else pd.Series("", index=bad.index)
+
+    reason = col("exclusion_reason").fillna("VALIDATION_FAILED").astype(str)
+    out = pd.DataFrame({
+        "row": [int(i) + 2 for i in bad.index] if pd.api.types.is_integer_dtype(bad.index) else list(bad.index),  # +2: header row, 1-based
+        "bill_date": pd.to_datetime(col("invoice_date"), errors="coerce").dt.strftime("%d-%m-%Y").fillna(""),
+        "bill_no": col("invoice_number").fillna("").astype(str),
+        "customer": col("customerName").fillna(col("customerId")).fillna("").astype(str),
+        "mobile": col("MOBILE_NO").fillna("").astype(str),
+        "medicine": col("itemName").fillna(col("itemId")).fillna("").astype(str),
+        "quantity": col("quantity"),
+        "reason": [SKIPPED_REASON_TEXT.get(r.split(":")[0], r.replace("_", " ").capitalize()) for r in reason],
+    })
+    return out.reset_index(drop=True)
+
+
 def ingest_sales_batch(
     db: Session,
     sales_df: pd.DataFrame,
@@ -190,10 +244,21 @@ def ingest_sales_batch(
         b2b = b2b_lines_to_store(review_df)
         if not b2b.empty:  # counted on the dashboard, never used for reminders (refillcare_eligible False)
             counts["inserted"] += hs.append_lines(db, b2b, batch_id)["inserted"]
-        netting = hs.net_returns(db, returns) if not returns.empty else {}
+        # Return lines are kept as rows (never a purchase); each new one is subtracted from its sale. Returns
+        # of earlier uploads still waiting for their sale are applied when that sale arrives in this file.
+        new_returns = hs.store_returns(db, returns, batch_id)
+        counts["inserted_returns"] = int(new_returns.get("stored") or 0)
+        waiting = hs.recheck_waiting_returns(db, cust_ids) if cust_ids else {}
+        netting = merge_netting(new_returns, waiting)
         warnings.update(_gap_warnings(db, new_min, new_max, prev_max))
-        if netting.get("returns_netted"):
-            warnings["returns_netted"] = {k: v for k, v in netting.items() if k != "returned_sales"}
+        warnings["returns_stored"] = True
+        warnings["returns_netted"] = {
+            "returns_seen": int(len(returns)), "returns_netted": int(new_returns.get("returns_netted") or 0),
+            "returns_waiting": int(new_returns.get("stored") or 0) - int(new_returns.get("returns_netted") or 0),
+            "already_stored": int(new_returns.get("already_stored") or 0),
+            "earlier_returns_applied_now": int(waiting.get("returns_netted") or 0),
+            "sales_fully_returned": netting["sales_fully_returned"], "late_full_returns": netting["late_full_returns"],
+        }
         batch.records_inserted = counts["inserted"]
         batch.records_skipped = counts["skipped"]
         batch.data_warnings = warnings or None
@@ -213,6 +278,11 @@ def ingest_sales_batch(
             "new_medicines": len(set(item_ids) - known_i),
             "latest_sales_date": latest.strftime("%d-%m-%Y") if latest else "N/A",
             "records_requiring_review": int(len(review_df)),
+            "return_lines": int(len(returns)),
+            "return_lines_saved": counts.get("inserted_returns", 0),
+            "returns_applied": int(warnings["returns_netted"]["returns_netted"]),
+            "returns_waiting": int(warnings["returns_netted"]["returns_waiting"]),
+            "earlier_returns_applied_now": int(warnings["returns_netted"]["earlier_returns_applied_now"]),
             "detected_date_range": metrics.get("file_date_range", "-"),
             "file_date_range": metrics.get("file_date_range", "-"),
             "ignored_columns": metrics.get("ignored_columns", []),
@@ -220,12 +290,13 @@ def ingest_sales_batch(
         "data_warnings": warnings,
         "column_mapping": metrics.get("column_mapping"),
         "review_records_df": review_df,
+        "skipped_rows_df": skipped_rows(review_df),
     }
     if sync and counts["inserted"] > 0:
         result["online_sync"] = sync_batch(db, batch_id)
         if netting.get("returned_sales"):
             result["online_sync"]["returns_reverted"] = revert_returned_sales(db, netting)
-        if netting.get("returns_netted"):  # returns of patients who bought nothing else in this file
+        if netting.get("returns_netted") and not returns.empty:  # returns of patients who bought nothing else in this file
             others = sorted(set(returns["customerId"].dropna().astype(str).str.strip()) - set(cust_ids))
             if others:
                 result["online_sync"]["returns_rescored"] = rescore_customers(db, others).get("customer_items_rescored", 0)
@@ -405,20 +476,52 @@ def rollback_batch(db: Session, batch_id: str) -> Dict[str, Any]:
         lines = hs.batch_lines(db, batch_id)
         customers = lines["customerId"].dropna().astype(str).unique().tolist() if not lines.empty else []
         removed = removed_purchase_keys(db, lines, customers)
+        # its returns give their quantity back; other uploads' returns applied to its sales wait again
+        returns_undone = hs.undo_batch_returns(db, batch_id)
+        customers = sorted(set(customers) | set(returns_undone["customers"]))
         n = hs.delete_batch(db, batch_id)
         batch.processing_status, batch.is_active = "ROLLED_BACK", False
         db.commit()
     hs.clear_cache()
     pm = RefillPersistenceManager()
     reverted = pm.revert_rolled_back_purchases(db, removed) if removed else {}
+    if returns_undone["restored_sales"]:  # sales that count again: their cycle comes back
+        back = removed_purchase_keys(db, pd.DataFrame(returns_undone["restored_sales"]))
+        reverted["purchases_restored"] = pm.restore_purchases(db, back)
     _, latest = hs.date_bounds(db)
     reverted["stages_expired"] = pm.expire_past_due_stages(db, today=(latest + timedelta(days=1)) if latest else date.today())
     # Only the medicines the batch touched (not every medicine of these patients - a common name
     # can cover thousands of trajectories under the name-only identity)
-    rescored = rescore_customers(db, customers, raw_lines=lines) if customers else {}
+    if returns_undone["customers"]:  # then re-score all their medicines
+        rescore_customers(db, returns_undone["customers"])
+    rescored = rescore_customers(db, customers, raw_lines=lines) if not lines.empty else {}
+    reverted["returns_undone"] = {k: v for k, v in returns_undone.items() if k not in ("customers", "restored_sales")}
     return {"status": "success", "rolled_back_batch_id": batch_id, "records_removed": n,
             "restored_latest_sales_date": latest.strftime("%d-%m-%Y") if latest else "N/A",
             "reminder_state_reverted": reverted, "rescored": rescored}
+
+
+def recheck_returns(db: Session, window_days: Optional[int] = None) -> Dict[str, Any]:
+    """Apply every stored return still waiting for its sale (after the return window was widened or a missed
+    day was uploaded), then update the affected patients' reminders. Same follow-up as an upload."""
+    with store_write_lock(db):
+        netting = hs.recheck_waiting_returns(db, None, window_days=window_days)
+        db.commit()
+    hs.clear_cache()
+    out: Dict[str, Any] = {"returns_checked": int(netting.get("returns_seen") or 0),
+                           "returns_applied": int(netting.get("returns_netted") or 0),
+                           "sales_fully_returned": int(netting.get("sales_fully_returned") or 0)}
+    if netting.get("returned_sales"):
+        out["returns_reverted"] = revert_returned_sales(db, netting)
+    if netting.get("returns_netted"):
+        from database.models import SalesTransactionModel as Line
+
+        ids = [int(i) for i in netting["applied"]]
+        custs = sorted({str(c) for (c,) in db.query(Line.customer_id).filter(Line.id.in_(ids)).all()}) if ids else []
+        out["customer_items_rescored"] = rescore_customers(db, custs).get("customer_items_rescored", 0) if custs else 0
+    out["returns_still_waiting"] = int(db.query(func.count(hs.Line.id)).filter(
+        hs.Line.transaction_type == hs.RETURN_TYPE, hs.Line.exclusion_reason == hs.RETURN_WAITING).scalar() or 0)
+    return out
 
 
 def data_status(db: Session, today: Optional[date] = None) -> Dict[str, Any]:

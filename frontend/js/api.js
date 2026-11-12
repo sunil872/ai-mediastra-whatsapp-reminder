@@ -145,6 +145,21 @@ export const ApiClient = {
     return await res.json();
   },
 
+  async getWaitingReturns(limit = 200) {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/returns/waiting?limit=${limit}`);
+    if (!res.ok) throw new Error("Failed to load waiting returns");
+    return await res.json();
+  },
+
+  async recheckReturns() {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/returns/recheck`, { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Could not re-check the waiting returns");
+    }
+    return await res.json();
+  },
+
   async getBatches() {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/sales/batches`);
     if (!res.ok) throw new Error("Failed to fetch import batches");

@@ -54,6 +54,12 @@ class SalesIngestionResponse(BaseModel):
     latest_sales_date: str
     date_range: str
     records_requiring_review: int
+    return_lines: int = Field(0, description="Return lines (negative quantity) in the file")
+    return_lines_saved: int = Field(0, description="Return lines saved as their own rows (never a purchase); already-saved ones are skipped and not subtracted twice")
+    returns_applied: int = Field(0, description="New return lines subtracted from the sale they follow")
+    returns_waiting: int = Field(0, description="New return lines with no matching sale yet: applied automatically when that sale is uploaded")
+    earlier_returns_applied_now: int = Field(0, description="Returns of earlier uploads that found their sale in this file")
+    skipped_rows: List[Dict[str, Any]] = Field(default_factory=list, description="Rows not saved (no customer / medicine / date / quantity) with the reason: row, bill_date, bill_no, customer, mobile, medicine, quantity, reason")
     online_sync: Dict[str, Any] = Field(default_factory=dict)
     ml_data_freshness: Optional[Dict[str, Any]] = None
     ml_retrain_queued: bool = False
@@ -399,16 +405,24 @@ class TransactionChannelSummary(BaseModel):
     refillcare_eligible: int
     raw_total_transactions: Optional[int] = None
     cleaned_transactions: Optional[int] = None
-    purged_duplicates: Optional[int] = Field(None, description="Lines received but not stored: returns netted against their sale, invalid rows, lines already uploaded. Bill lines of the same medicine (batches / repeat scans) are NOT removed - their strips are added up per bill.")
-    return_lines: Optional[int] = Field(None, description="Return lines received (never stored as their own rows)")
+    purged_duplicates: Optional[int] = Field(None, description="Lines received but not stored: invalid rows, return lines of uploads before 12-11-2026, lines already uploaded. Bill lines of the same medicine (batches / repeat scans) are NOT removed - their strips are added up per bill.")
+    sales_lines: Optional[int] = Field(None, description="Stored sales lines (patient sales + B2B), without return lines")
+    return_lines: Optional[int] = Field(None, description="Return lines received")
+    return_lines_stored: Optional[int] = Field(None, description="Return lines saved as their own rows (uploads from 12-11-2026; never a purchase)")
+    return_lines_not_stored: Optional[int] = Field(None, description="Return lines of older uploads: applied, but only counted")
     returns_netted: Optional[int] = Field(None, description="Returns subtracted from the sale they follow, within return_window_days")
-    returns_unmatched: Optional[int] = Field(None, description="Returns that matched no earlier sale within the window")
+    returns_unmatched: Optional[int] = Field(None, description="Returns waiting for a matching sale within the window (applied automatically when it is uploaded)")
+    returns_waiting: Optional[int] = Field(None, description="Saved return lines waiting for their sale (applied automatically when it is uploaded)")
+    returns_unmatched_old: Optional[int] = Field(None, description="Returns of uploads before 12-11-2026 that matched no sale (not saved, cannot be re-applied)")
     invalid_rows: Optional[int] = Field(None, description="Rows without date / customer / medicine / quantity (not stored)")
     sales_fully_returned: Optional[int] = Field(None, description="Stored sales fully returned (do not count): corrections + late")
     returned_corrections: Optional[int] = Field(None, description="Full returns within return_correction_days (billing corrections)")
     returned_late: Optional[int] = Field(None, description="Full returns after return_correction_days: reminders paused, pharmacist review")
     return_window_days: Optional[int] = None
     return_correction_days: Optional[int] = None
+    breakdown_summary: Optional[str] = Field(None, description="One-line breakdown under 'Sales lines stored' (same text as Streamlit)")
+    breakdown_detail: Optional[str] = Field(None, description="Full return / invalid-row explanation (card tooltip)")
+    breakdown_audit: Optional[str] = Field(None, description="Reconciliation sentence: received = saved sales + saved returns + not saved")
 
 
 # ------------------------------------------------------------------------------

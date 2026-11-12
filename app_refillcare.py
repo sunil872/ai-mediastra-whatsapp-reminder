@@ -380,14 +380,12 @@ def get_enterprise_channel_distribution_cached() -> Dict[str, int]:
                 c = hs.channel_counts(db)  # same function as the API
                 return {
                     "raw_tx_cnt": c["received"],
-                    "tot_clean": c["stored"],
+                    "tot_clean": c["sales_lines"],
                     "cust_sales": c["customer_sales"],
                     "b2b_sales": c["b2b_inter_store"],
                     "refill_el": c["refillcare_eligible"],
                     "purged_cnt": c["not_stored"],
-                    "returns": {k: c[k] for k in ("return_lines", "returns_netted", "returns_unmatched", "invalid_rows",
-                                                  "sales_fully_returned", "returned_corrections", "returned_late",
-                                                  "return_window_days", "return_correction_days")},
+                    "returns": {**c, "text": hs.return_breakdown_text(c)},
                 }
     except Exception:
         pass
@@ -1358,6 +1356,32 @@ def render_data_status_panel() -> None:
                 st.error(f"Retry failed: {res['error']}")
             else:
                 st.rerun()
+
+
+def render_waiting_returns() -> None:
+    """Return lines still waiting for their sale (same data as GET /api/v1/sales/returns/waiting), with a
+    re-check (POST /api/v1/sales/returns/recheck) after the return window changed or a missed day was uploaded."""
+    from database.connection import SessionLocal
+    from refillcare.data import history_store as hs
+    from refillcare.data.incremental_ingest import recheck_returns
+
+    try:
+        with SessionLocal() as db:
+            info = hs.waiting_returns(db, limit=200)
+    except Exception:
+        return
+    if not info["total"]:
+        return
+    with st.expander(f"↩️ {info['total']:,} return lines waiting for their sale", expanded=False):
+        st.caption(f"These returns match no sale of the same patient + medicine in the {info['return_window_days']} days before. "
+                   "They are saved and applied automatically when that sale is uploaded.")
+        st.dataframe(pd.DataFrame(info["rows"]), width="stretch", hide_index=True)
+        if st.button("Re-check waiting returns now", key="btn_recheck_returns"):
+            with st.spinner("Applying returns that now match a sale..."):
+                with SessionLocal() as db:
+                    res = recheck_returns(db)
+            st.cache_data.clear()
+            st.success(f"{res['returns_applied']:,} returns applied, {res['returns_still_waiting']:,} still waiting.")
 
 
 def render_saved_column_mappings() -> None:
@@ -2342,15 +2366,9 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             st.metric(
                 "Sales Lines Stored",
                 f"{clean_tx_cnt:,}",
-                (f"{rt.get('return_lines', 0):,} return lines · {rt.get('invalid_rows', 0):,} invalid rows not stored"
-                 if rt else f"-{purged_cnt:,} not stored"),
+                (rt["text"]["summary"] if rt.get("text") else f"-{purged_cnt:,} not stored"),
                 delta_color="off",
-                help=(f"Return lines are never stored as rows: {rt.get('returns_netted', 0):,} were subtracted from the sale they "
-                      f"follow (within {rt.get('return_window_days', 90)} days), {rt.get('returns_unmatched', 0):,} matched no sale. "
-                      f"{rt.get('sales_fully_returned', 0):,} sales were fully returned ({rt.get('returned_corrections', 0):,} billing "
-                      f"corrections within {rt.get('return_correction_days', 7)} days, {rt.get('returned_late', 0):,} later returns "
-                      "-> reminders paused, pharmacist review); they stay stored but do not count. "
-                      f"{rt.get('invalid_rows', 0):,} rows had no date / customer / medicine / quantity.") if rt else None,
+                help=rt["text"]["detail"] if rt.get("text") else None,
             )
         with tc3:
             st.metric(
@@ -2372,13 +2390,8 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             )
 
         st.caption(
-            f"**Transaction Reconciliation Audit:** This store's uploads contain **{raw_tx_cnt:,}** bill lines (through **{latest_sales_date_str}**). "
-            f"**{purged_cnt:,}** rows were not stored: **{rt.get('return_lines', 0):,}** return lines "
-            f"(**{rt.get('returns_netted', 0):,}** subtracted from their sale within {rt.get('return_window_days', 90)} days, "
-            f"{rt.get('returns_unmatched', 0):,} unmatched) and **{rt.get('invalid_rows', 0):,}** invalid rows. "
-            f"Stored: **{clean_tx_cnt:,}** lines (**{cust_sales:,}** patient sales + **{b2b_sales:,}** B2B transfers); "
-            f"**{rt.get('sales_fully_returned', 0):,}** of them were fully returned ({rt.get('returned_corrections', 0):,} billing corrections, "
-            f"{rt.get('returned_late', 0):,} later returns with reminders paused) and do not count."
+            f"**Transaction Reconciliation Audit** (through **{latest_sales_date_str}**): "
+            + (rt["text"]["audit"] if rt.get("text") else f"{raw_tx_cnt:,} lines received, {clean_tx_cnt:,} stored.")
         )
 
         st.markdown("---")
@@ -2479,12 +2492,14 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                 with c6:
                     st.metric("Missing Mobile Numbers", f"{upload_metrics['missing_mobile_numbers']:,}")
                 with c7:
-                    st.metric("Duplicate Records", f"{upload_metrics['duplicate_records']:,}")
+                    st.metric("Repeated Bill Lines", f"{upload_metrics['duplicate_records']:,}",
+                              help="Identical lines (same bill, medicine, quantity) - e.g. the same batch scanned twice. "
+                                   "They are KEPT: all strips of one bill are added up into one purchase.")
                 with c8:
                     st.metric("Invalid/Negative Qty", f"{upload_metrics['invalid_quantities']:,}")
 
                 st.markdown("---")
-                st.markdown("#### Data Preview (First 10 Records)")
+                st.markdown("#### 👀 Data Preview (first 10 lines)")
                 if parsed_sales_df is not None and not parsed_sales_df.empty:
                     preview_df = parsed_sales_df.copy()
                     if "invoice_date" in preview_df.columns:
@@ -2495,57 +2510,46 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                     st.dataframe(preview_df[preview_cols].head(10), width="stretch", hide_index=True)
 
                 st.markdown("---")
-                st.markdown("#### Ingestion Workflow Actions")
-
-                st.caption(
-                    "**Data Retention Policy:** Customers with missing or invalid mobile numbers are **never deleted**. "
-                    "They remain in historical sales records for refill interval tracking and are only filtered when exporting delivery-ready reminder files."
-                )
+                st.markdown("#### ✅ Check & Save")
 
                 is_date_blocked = date_diag.get("is_ambiguous", False) or upload_metrics["valid_records"] == 0
-
-                btn_col1, btn_col2, btn_col3 = st.columns([1.3, 1.6, 2.1])
-                with btn_col1:
-                    btn_validate = st.button("Validate File Hygiene", key="btn_validate_sales_data")
-                with btn_col2:
-                    btn_process = st.button(
-                        "Process Sales Ingestion",
-                        key="btn_process_sales_data",
-                        disabled=is_date_blocked,
-                        help="Disabled if date interpretation is ambiguous or no valid records exist." if is_date_blocked else "Ingest verified sales records with traceable batch ID.",
+                # File check, shown automatically (no separate "validate" step)
+                if upload_metrics["valid_records"] > 0:
+                    st.success(
+                        f"**Ready to save:** {upload_metrics['valid_records']:,} of {upload_metrics['records_received']:,} lines are valid. "
+                        "Lines already uploaded before are skipped automatically."
                     )
-                with btn_col3:
-                    btn_gen_pred = st.button("Generate Updated Predictions", key="btn_gen_predictions_upload")
-
-                if is_date_blocked:
-                    st.error("**Processing Blocked:** Date verification failed or contains unresolved ambiguity. Please check the file formatting.")
-
-                # Handle [Validate Data]
-                if btn_validate:
-                    st.session_state["sales_validation_run"] = True
-                    st.session_state["sales_validation_file"] = uploaded_file.name
-
-                if st.session_state.get("sales_validation_run") and st.session_state.get("sales_validation_file") == uploaded_file.name:
-                    st.markdown("##### Validation Report")
-                    if upload_metrics["valid_records"] > 0:
-                        st.success(
-                            f"**Validation Verified:** {upload_metrics['valid_records']:,} out of {upload_metrics['records_received']:,} "
-                            f"records are fully validated and meet operational ingestion criteria."
-                        )
-                    if upload_metrics["records_requiring_review"] > 0:
-                        st.warning(
-                            f"**Review Notice:** {upload_metrics['records_requiring_review']:,} records require review "
-                            f"({upload_metrics['invalid_quantities']:,} non-positive/invalid quantity, "
-                            f"{upload_metrics['missing_customer_info']:,} missing customer identity)."
-                        )
+                if upload_metrics["records_requiring_review"] > 0:
+                    st.warning(
+                        f"**Not sales lines:** {upload_metrics['records_requiring_review']:,} lines "
+                        f"({upload_metrics['invalid_quantities']:,} returns / zero quantity - return lines are saved and subtracted "
+                        f"from the patient's sale, {upload_metrics['missing_customer_info']:,} without a customer). "
+                        "Rows that cannot be saved are listed with the reason after saving."
+                    )
+                if upload_metrics["missing_mobile_numbers"] > 0:
                     st.info(
-                        f"**Customer Mobile Breakdown:** {upload_metrics['unique_customers']:,} total customers in file. "
-                        f"{upload_metrics['missing_mobile_numbers']:,} transactions have missing phone numbers (preserved in history for continuity)."
+                        f"{upload_metrics['missing_mobile_numbers']:,} lines have no mobile number: they are kept for refill tracking, "
+                        "but those patients cannot get WhatsApp reminders until the number is added in billing."
                     )
+                if is_date_blocked:
+                    st.error("**Cannot save:** the dates in this file could not be read reliably, or no line is valid. Please check the file.")
+
+                # ONE click: validate + store the lines + re-score the patients + update their reminders
+                btn_process = st.button(
+                    f"✅  Save & Update Reminders ({upload_metrics['valid_records']:,} lines)",
+                    key="btn_process_sales_data",
+                    type="primary",
+                    width="stretch",
+                    disabled=is_date_blocked,
+                    help="Saves the new sales lines and updates every affected patient's refill dates and WhatsApp reminders in one step.",
+                )
+                st.caption(
+                    "Patients with missing or invalid mobile numbers are **never deleted**: their purchases still count for refill tracking."
+                )
 
                 # Handle [Process Sales Data]
                 if btn_process:
-                    with st.spinner("Adding the new sales lines and re-scoring their patients..."):
+                    with st.spinner("Saving the sales lines and updating refill dates and reminders... (this can take a minute)"):
                         try:
                             from database.connection import SessionLocal
                             from refillcare.data.incremental_ingest import (
@@ -2578,7 +2582,8 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                         st.session_state["last_import_batch_id"] = process_result.get("import_batch_id")
                         st.session_state["online_sync_metrics"] = process_result.get("online_sync") or {}
                         st.session_state["sales_data_warnings"] = process_result.get("data_warnings") or {}
-                        # Clear old predictions so updated ones must be generated explicitly
+                        st.session_state["sales_skipped_rows"] = process_result.get("skipped_rows_df")
+                        # Reminders were updated by the save itself; drop in-session copies so every tab reloads
                         st.session_state.pop("active_eligible_df", None)
                         st.session_state.pop("active_ineligible_df", None)
                         st.session_state.pop("prediction_gen_metrics", None)
@@ -2593,28 +2598,12 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                     else:
                         st.error(f"{process_result.get('message', 'Processing failed.')}")
 
-                # Handle [Generate Updated Predictions] from upload
-                if btn_gen_pred:
-                    with st.spinner("Generating updated refill predictions using existing prediction engine..."):
-                        pred_result = generate_updated_predictions(
-                            history_df=history_data if history_data is not None else pd.DataFrame(),
-                            model_bundle=model_bundle,
-                        )
-                    if pred_result.get("status") == "success":
-                        st.session_state.active_eligible_df = pred_result["eligible_df"]
-                        st.session_state.active_ineligible_df = pred_result["ineligible_df"]
-                        st.session_state["prediction_gen_metrics"] = pred_result["metrics"]
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning(pred_result.get("message", "Prediction generation completed with warnings."))
-
                 # Display Processing Summary if available for current file
                 if st.session_state.get("sales_processed_metrics") and st.session_state.get("sales_processed_file") == uploaded_file.name:
                     p_metrics = st.session_state["sales_processed_metrics"]
                     st.markdown("---")
-                    st.success("**Sales Data Ingested Successfully**")
-                    st.markdown("#### Ingestion Processing Summary")
+                    st.success("**Saved. Refill dates and WhatsApp reminders are updated** for every patient in this file.")
+                    st.markdown("#### What was saved")
                     st.info(f"**Import Batch ID:** `{p_metrics.get('import_batch_id', 'N/A')}`")
 
                     p1, p2, p3, p4 = st.columns(4)
@@ -2627,13 +2616,33 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                     with p4:
                         st.metric("New Customers", f"{p_metrics['new_customers']:,}")
 
-                    p5, p6, p7, _ = st.columns(4)
+                    p5, p6, p7, p8 = st.columns(4)
                     with p5:
                         st.metric("New Medicines", f"{p_metrics['new_medicines']:,}")
                     with p6:
                         st.metric("Latest Sales Date (DD-MM-YYYY)", str(p_metrics['latest_sales_date']))
                     with p7:
-                        st.metric("Records Requiring Review", f"{p_metrics['records_requiring_review']:,}")
+                        st.metric("Return Lines Saved", f"{p_metrics.get('return_lines_saved', 0):,}",
+                                  f"{p_metrics.get('returns_applied', 0):,} applied · {p_metrics.get('returns_waiting', 0):,} waiting",
+                                  delta_color="off",
+                                  help="Return lines are saved as their own rows (never a purchase) and subtracted from the sale "
+                                       "they follow. A return whose sale is not uploaded yet waits and is applied automatically "
+                                       "when that sale arrives.")
+                    _skipped = st.session_state.get("sales_skipped_rows")
+                    _n_skipped = 0 if _skipped is None else len(_skipped)
+                    with p8:
+                        st.metric("Rows Not Saved", f"{_n_skipped:,}",
+                                  help="Rows without customer / medicine / date / quantity. Download the list below to fix them in billing.")
+                    if p_metrics.get("earlier_returns_applied_now"):
+                        st.info(f"{p_metrics['earlier_returns_applied_now']:,} returns from earlier uploads found their sale in this file and were applied.")
+                    if _n_skipped:
+                        st.download_button(
+                            f"⬇️ Download the {_n_skipped:,} rows not saved (with reason)",
+                            data=_skipped.to_csv(index=False).encode("utf-8"),
+                            file_name=f"rows_not_saved_{p_metrics.get('import_batch_id', 'upload')}.csv",
+                            mime="text/csv", key="dl_skipped_rows",
+                        )
+                        st.dataframe(_skipped.head(20), width="stretch", hide_index=True)
 
                     sync_m = st.session_state.get("online_sync_metrics") or {}
                     if sync_m:
@@ -2703,13 +2712,8 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                 with c2:
                     _rt = (get_enterprise_channel_distribution_cached().get("returns") or {})
                     st.metric("Sales Lines Stored", f"{store_sum['sales_lines_stored']:,}",
-                              (f"{_rt.get('return_lines', 0):,} return lines · {_rt.get('invalid_rows', 0):,} invalid rows not stored"
-                               if _rt else None), delta_color="off",
-                              help=(f"Every bill line kept (several lines of one medicine on one bill are added up per bill). "
-                                    f"Returns: {_rt.get('returns_netted', 0):,} subtracted from their sale within "
-                                    f"{_rt.get('return_window_days', 90)} days, {_rt.get('returns_unmatched', 0):,} unmatched; "
-                                    f"{_rt.get('sales_fully_returned', 0):,} sales fully returned ({_rt.get('returned_corrections', 0):,} "
-                                    f"billing corrections, {_rt.get('returned_late', 0):,} later returns -> reminders paused)."))
+                              (_rt["text"]["summary"] if _rt.get("text") else None), delta_color="off",
+                              help=(_rt["text"]["detail"] if _rt.get("text") else None))
                 with c3:
                     active_lbl = store_sum.get("active_patients_label", "Active patients (last 12 months)")
                     active_cnt = store_sum.get("active_patients", store_sum.get("customers_monitored", 0))
@@ -2724,24 +2728,7 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
             else:
                 st.info("No sales data stored for this store yet.")
 
-            # Refill Prediction Updates for active history
-            st.markdown("---")
-            st.markdown("#### Forecast Pipeline Execution")
-            st.write("Generate updated expected refill dates and reminder schedules based on the latest historical purchase records.")
-            if st.button("Generate Updated Predictions", key="btn_generate_updated_predictions_main"):
-                with st.spinner("Generating updated refill predictions using existing prediction engine..."):
-                    pred_result = generate_updated_predictions(
-                        history_df=history_data if history_data is not None else pd.DataFrame(),
-                        model_bundle=model_bundle,
-                    )
-                if pred_result.get("status") == "success":
-                    st.session_state.active_eligible_df = pred_result["eligible_df"]
-                    st.session_state.active_ineligible_df = pred_result["ineligible_df"]
-                    st.session_state["prediction_gen_metrics"] = pred_result["metrics"]
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.warning(pred_result.get("message", "Prediction generation completed with warnings."))
+            render_waiting_returns()
 
             # Rollback active batch from database if one exists
             latest_db_batch = latest_active_batch(storage)

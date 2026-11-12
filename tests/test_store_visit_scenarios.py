@@ -193,7 +193,9 @@ def test_j_sales_lines_card_breaks_down_returns_and_invalid_rows(store):
     c = hs.channel_counts(store)
     assert (c["return_lines"], c["returns_netted"], c["returns_unmatched"]) == (2, 2, 0)
     assert (c["sales_fully_returned"], c["returned_corrections"], c["returned_late"]) == (2, 1, 1)
-    assert c["not_stored"] == c["return_lines"] + c["invalid_rows"] and c["return_window_days"] == 90
+    # 12 Nov 2026: return lines are stored as rows (every uploaded line accounted for)
+    assert c["return_lines_stored"] == 2 and c["not_stored"] == c["invalid_rows"] == 0
+    assert c["stored"] == c["sales_lines"] + c["return_lines_stored"] and c["return_window_days"] == 90
 
 
 def test_k_identity_switch_leaves_one_row_per_patient_medicine(store, monkeypatch):
@@ -240,3 +242,109 @@ def test_m_control_group_is_off_by_default(monkeypatch):
     monkeypatch.delenv("REFILLCARE_HOLDOUT_PCT", raising=False)
     assert holdout_pct() == 0
     assert not any(is_holdout(f"C{i}", f"98480{i:05d}") for i in range(500))
+
+
+# ---- 12 Nov 2026: return lines are kept as rows and re-applied automatically ---------------------------
+
+def _return_rows(db):
+    from database.models import SalesTransactionModel as Line
+    from refillcare.data import history_store as hs
+
+    return db.query(Line).filter(Line.transaction_type == hs.RETURN_TYPE).all()
+
+
+def test_n_return_lines_are_stored_never_counted_as_purchases(store):
+    from refillcare.data import history_store as hs
+
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/940")
+    res = _upload(store, TODAY + timedelta(days=3), [("TELMA 40 TAB", -1)], inv="S0/941")
+    m = res["metrics"]
+    assert (m["return_lines"], m["return_lines_saved"], m["returns_applied"], m["returns_waiting"]) == (1, 1, 1, 0)
+    rows = _return_rows(store)
+    assert len(rows) == 1 and rows[0].quantity == -1 and not rows[0].refillcare_eligible
+    assert rows[0].exclusion_reason.startswith(hs.RETURN_APPLIED + ":")
+    hist = hs.load_all(store)
+    assert (pd.to_numeric(hist["quantity"]) >= 0).all(), "loaders never return a return line"
+    assert hs.store_summary(store)["sales_lines_stored"] == hs.sales_line_count(store)
+
+
+def test_o_same_return_uploaded_twice_is_subtracted_once(store):
+    from database.models import SalesTransactionModel as Line
+
+    _upload(store, TODAY, [("TELMA 40 TAB", 3)], inv="S0/942")
+    _upload(store, TODAY + timedelta(days=3), [("TELMA 40 TAB", -1)], inv="S0/943")
+    again = _upload(store, TODAY + timedelta(days=3), [("TELMA 40 TAB", -1)], inv="S0/943")
+    assert again["data_warnings"]["returns_netted"]["already_stored"] == 1
+    sale = store.query(Line).filter(Line.invoice_number == "S0/942").one()
+    assert sale.quantity == 2, "re-uploading a file must not subtract the return again"
+    assert len(_return_rows(store)) == 1
+
+
+def test_p_return_uploaded_before_its_sale_is_applied_when_the_sale_arrives(store):
+    from database.models import SalesTransactionModel as Line
+    from refillcare.data import history_store as hs
+
+    # missed day: the return file (day +3) is uploaded first, the sale (day 0) afterwards
+    first = _upload(store, TODAY + timedelta(days=3), [("ECOSPRIN AV 75 CAP", -2)], inv="S0/945", name="SITA DEVI", mobile=OTHER_MOB)
+    assert first["metrics"]["returns_waiting"] == 1
+    assert _return_rows(store)[0].exclusion_reason == hs.RETURN_WAITING
+    later = _upload(store, TODAY, [("ECOSPRIN AV 75 CAP", 2)], inv="S0/944", name="SITA DEVI", mobile=OTHER_MOB)
+    assert later["metrics"]["earlier_returns_applied_now"] == 1
+    sale = store.query(Line).filter(Line.invoice_number == "S0/944").one()
+    assert sale.quantity == 0 and not sale.refillcare_eligible
+    assert _return_rows(store)[0].exclusion_reason.startswith(hs.RETURN_APPLIED)
+    assert hs.channel_counts(store)["returns_unmatched"] == 0
+
+
+def test_q_wider_return_window_applies_waiting_returns_without_re_upload(store, monkeypatch):
+    from refillcare.data import history_store as hs
+    from refillcare.data.incremental_ingest import recheck_returns
+
+    monkeypatch.setenv("REFILLCARE_RETURN_WINDOW_DAYS", "5")
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/946")
+    _upload(store, TODAY + timedelta(days=10), [("TELMA 40 TAB", -1)], inv="S0/947")
+    assert _return_rows(store)[0].exclusion_reason == hs.RETURN_WAITING           # outside the 5-day window
+    monkeypatch.setenv("REFILLCARE_RETURN_WINDOW_DAYS", "90")
+    out = recheck_returns(store)
+    assert out["returns_applied"] == 1 and out["returns_still_waiting"] == 0
+    assert _return_rows(store)[0].exclusion_reason.startswith(hs.RETURN_APPLIED)
+
+
+def test_r_rolling_back_a_return_upload_gives_the_strips_back(store):
+    from database.models import SalesTransactionModel as Line
+    from refillcare.data.incremental_ingest import rollback_batch
+
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/948")
+    ret = _upload(store, TODAY + timedelta(days=2), [("TELMA 40 TAB", -2)], inv="S0/949")
+    sale = store.query(Line).filter(Line.invoice_number == "S0/948").one()
+    assert sale.quantity == 0 and not sale.refillcare_eligible
+    res = rollback_batch(store, ret["import_batch_id"])
+    store.expire_all()
+    sale = store.query(Line).filter(Line.invoice_number == "S0/948").one()
+    assert sale.quantity == 2 and sale.refillcare_eligible and sale.exclusion_reason is None
+    assert res["reminder_state_reverted"]["returns_undone"]["sales_restored"] == 1
+    assert _return_rows(store) == []
+    assert _stages(store, "TELMA 40 TAB"), "the purchase counts again -> reminders again"
+
+
+def test_s_rolling_back_the_sale_puts_its_return_back_to_waiting(store):
+    from refillcare.data import history_store as hs
+    from refillcare.data.incremental_ingest import rollback_batch
+
+    sale = _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/950")
+    _upload(store, TODAY + timedelta(days=2), [("TELMA 40 TAB", -1)], inv="S0/951")
+    rollback_batch(store, sale["import_batch_id"])
+    store.expire_all()
+    assert _return_rows(store)[0].exclusion_reason == hs.RETURN_WAITING
+
+
+def test_t_skipped_rows_are_listed_with_a_plain_reason(store):
+    bad = _rows(TODAY, [("TELMA 40 TAB", 2)], inv="S0/952")
+    bad.loc[0, "Party Name"] = ""
+    bad.loc[0, "Mobile"] = ""
+    good = _rows(TODAY, [("ECOSPRIN AV 75 CAP", 2)], inv="S0/953")
+    from refillcare.data.incremental_ingest import ingest_sales_batch
+
+    res = ingest_sales_batch(store, pd.concat([good, bad], ignore_index=True), "mixed.csv", force=True)
+    sk = res["skipped_rows_df"]
+    assert len(sk) == 1 and sk.iloc[0]["medicine"] and sk.iloc[0]["reason"]

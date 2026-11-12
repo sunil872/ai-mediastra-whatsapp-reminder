@@ -112,6 +112,16 @@ def append_lines(db: Session, df: pd.DataFrame, batch_id: str) -> Dict[str, int]
 
 _SELECT_COLS = [getattr(Line, col) for col in COLUMN_MAP.values()]
 
+# Return lines (negative quantity) are stored as their own rows so every uploaded line is kept and can be
+# re-applied later (sale uploaded after its return, return-window change, rollback). They are never a
+# purchase: every loader leaves them out. Status in exclusion_reason:
+#   RETURN_APPLIED:<sale row id>:<quantity subtracted>  - subtracted from that sale
+#   RETURN_WAITING                                       - no sale of that patient + medicine within the window yet
+RETURN_TYPE = "CUSTOMER_RETURN"
+RETURN_APPLIED = "RETURN_APPLIED"
+RETURN_WAITING = "RETURN_WAITING"
+_NOT_RETURN = Line.transaction_type != RETURN_TYPE
+
 
 def _to_frame(rows: Iterable) -> pd.DataFrame:
     """Rows are plain column tuples (``select(*_SELECT_COLS)``) - no ORM objects to build per line."""
@@ -125,12 +135,14 @@ def _to_frame(rows: Iterable) -> pd.DataFrame:
 def channel_counts(db: Session) -> Dict[str, int]:
     """Sales-line counts of the current store from its database (Streamlit overview and API share this).
 
-    received = bill lines in the store's active uploads; stored = lines kept (every line of a bill, incl.
-    repeat scans); not_stored = return lines (never stored as rows) + invalid rows + lines uploaded before.
-    Return breakdown: return_lines received, returns_netted (subtracted from their sale within the return
-    window), returns_unmatched, sales_fully_returned (= returned_corrections + returned_late, still stored
-    as "not counted"), invalid_rows.
+    received = lines in the store's active uploads; stored = every kept line (sales, B2B and return lines);
+    not_stored = invalid rows (+ return lines of uploads made before return lines were stored, and lines
+    uploaded before). Return breakdown: return_lines received, returns_netted (subtracted from their sale
+    within the return window), returns_unmatched (waiting for a matching sale), sales_fully_returned
+    (= returned_corrections + returned_late, still stored as "not counted"), invalid_rows.
     """
+    import json
+
     from database.models import ImportBatchModel
 
     by_type = dict(db.execute(select(Line.transaction_type, func.count(Line.id)).group_by(Line.transaction_type)).all())
@@ -140,38 +152,87 @@ def channel_counts(db: Session) -> Dict[str, int]:
         ImportBatchModel.is_active.is_(True))).scalar() or 0)
     received = max(received, stored)
 
-    # Returns: never stored as their own rows; each is subtracted from the sale it follows (within the
-    # return window). Counts per upload come from its import record; fully returned sales from the lines.
-    import json
-
-    return_lines = netted = review_rows = 0
+    # Returns stored as rows (uploads from 12-11-2026) are counted from the rows; older uploads kept only
+    # the counts in their import record.
+    stored_returns = int(by_type.get(RETURN_TYPE, 0))
+    stored_applied = int(db.execute(select(func.count(Line.id)).where(
+        Line.transaction_type == RETURN_TYPE, Line.exclusion_reason.like(f"{RETURN_APPLIED}%"))).scalar() or 0)
+    old_returns = old_netted = review_rows = 0
     for warn, review in db.execute(select(ImportBatchModel.data_warnings, ImportBatchModel.records_requiring_review)
                                    .where(ImportBatchModel.is_active.is_(True))).all():
-        w = json.loads(warn) if isinstance(warn, str) else (warn or {})
-        rn = (w or {}).get("returns_netted") or {}
-        return_lines += int(rn.get("returns_seen") or 0)
-        netted += int(rn.get("returns_netted") or 0)
+        w = (json.loads(warn) if isinstance(warn, str) else warn) or {}
         review_rows += int(review or 0)
+        if w.get("returns_stored"):
+            continue
+        rn = w.get("returns_netted") or {}
+        old_returns += int(rn.get("returns_seen") or 0)
+        old_netted += int(rn.get("returns_netted") or 0)
+    return_lines, netted = stored_returns + old_returns, stored_applied + old_netted
     corrections = int(db.execute(select(func.count(Line.id)).where(Line.exclusion_reason == RETURN_FULL_CORRECTION)).scalar() or 0)
     late = int(db.execute(select(func.count(Line.id)).where(Line.exclusion_reason.like(f"{RETURN_FULL_LATE}%"))).scalar() or 0)
+    customer_sales = int(by_type.get("CUSTOMER_SALE", 0))
+    b2b = int(by_type.get("B2B_INTER_STORE", 0))
     return {
         "received": received,
         "stored": stored,
         "not_stored": received - stored,
+        "sales_lines": stored - stored_returns,
         "return_lines": return_lines,
+        "return_lines_stored": stored_returns,
+        "return_lines_not_stored": old_returns,
         "returns_netted": netted,
         "returns_unmatched": max(0, return_lines - netted),
+        "returns_waiting": max(0, stored_returns - stored_applied),
+        "returns_unmatched_old": max(0, old_returns - old_netted),
         "invalid_rows": max(0, review_rows - return_lines),
         "sales_fully_returned": corrections + late,
         "returned_corrections": corrections,
         "returned_late": late,
         "return_window_days": return_window_days(),
         "return_correction_days": return_correction_days(),
-        "customer_sales": int(by_type.get("CUSTOMER_SALE", 0)),
-        "b2b_inter_store": int(by_type.get("B2B_INTER_STORE", 0)),
-        "unknown": int(stored - by_type.get("CUSTOMER_SALE", 0) - by_type.get("B2B_INTER_STORE", 0)),
+        "customer_sales": customer_sales,
+        "b2b_inter_store": b2b,
+        "unknown": int(stored - stored_returns - customer_sales - b2b),
         "refillcare_eligible": eligible,
     }
+
+
+def return_breakdown_text(c: Dict[str, Any]) -> Dict[str, str]:
+    """The plain-words return / invalid-row breakdown of :func:`channel_counts` - one wording for the
+    Streamlit cards, the API (``breakdown_summary`` / ``breakdown_detail`` / ``breakdown_audit``) and the web UI."""
+    saved_ret, old_ret, invalid = c.get("return_lines_stored", 0), c.get("return_lines_not_stored", 0), c.get("invalid_rows", 0)
+    parts = []
+    if saved_ret:
+        parts.append(f"+ {saved_ret:,} return lines saved")
+    if old_ret:
+        parts.append(f"{old_ret:,} older return lines not saved")
+    parts.append(f"{invalid:,} invalid rows not saved")
+    unmatched_old = (f", {c.get('returns_unmatched_old', 0):,} of older uploads matched no sale"
+                     if c.get("returns_unmatched_old") else "")
+    old_note = (f" {old_ret:,} return lines of uploads before 12-11-2026 were applied but not saved as rows."
+                if old_ret else "")
+    detail = (
+        f"Every bill line is kept (several lines of one medicine on one bill are added up). "
+        f"Returns ({c.get('return_lines', 0):,}): {c.get('returns_netted', 0):,} subtracted from the sale they follow "
+        f"(within {c.get('return_window_days', 90)} days), {c.get('returns_waiting', 0):,} waiting for a matching sale "
+        f"(applied automatically when that sale is uploaded){unmatched_old}. Return lines are saved as their own rows and "
+        f"never count as a purchase.{old_note} {c.get('sales_fully_returned', 0):,} sales were fully returned "
+        f"({c.get('returned_corrections', 0):,} billing corrections within {c.get('return_correction_days', 7)} days, "
+        f"{c.get('returned_late', 0):,} later returns -> reminders paused, pharmacist review); they stay saved but do not count. "
+        f"{invalid:,} rows had no date / customer / medicine / quantity and were not saved (listed in each upload result)."
+    )
+    audit = (
+        f"Received {c.get('received', 0):,} lines. Saved: {c.get('sales_lines', 0):,} sales lines "
+        f"({c.get('customer_sales', 0):,} patient sales + {c.get('b2b_inter_store', 0):,} B2B transfers) + "
+        f"{saved_ret:,} return lines. Not saved: {invalid:,} invalid rows"
+        + (f" + {old_ret:,} older return lines." if old_ret else ".")
+        + f" Returns: {c.get('returns_netted', 0):,} applied, {c.get('returns_waiting', 0):,} waiting for their sale"
+        + (f", {c.get('returns_unmatched_old', 0):,} of older uploads matched no sale" if c.get("returns_unmatched_old") else "")
+        + "; "
+        + f"{c.get('sales_fully_returned', 0):,} sales fully returned ({c.get('returned_corrections', 0):,} billing corrections, "
+        f"{c.get('returned_late', 0):,} later returns with reminders paused) do not count."
+    )
+    return {"summary": " · ".join(parts), "detail": detail, "audit": audit}
 
 
 def store_summary(db: Session) -> Dict[str, Any]:
@@ -242,7 +303,7 @@ def store_summary(db: Session) -> Dict[str, Any]:
     return {
         "first_sales_date": lo.isoformat() if lo else None,
         "latest_sales_date": hi.isoformat() if hi else None,
-        "sales_lines_stored": history_count(db),
+        "sales_lines_stored": sales_line_count(db),
         "customers_monitored": cached_info["active_patients"],
         "all_time_customers": cached_info["all_time_customers"],
         "active_patients": cached_info["active_patients"],
@@ -258,6 +319,11 @@ def history_count(db: Session) -> int:
     return int(db.execute(select(func.count(Line.id))).scalar() or 0)
 
 
+def sales_line_count(db: Session) -> int:
+    """Stored sales lines (customer sales + B2B), without the stored return lines."""
+    return int(db.execute(select(func.count(Line.id)).where(_NOT_RETURN)).scalar() or 0)
+
+
 def history_version(db: Session) -> Tuple[int, int]:
     """Changes whenever rows are added or removed (cache key)."""
     n, mx = db.execute(select(func.count(Line.id), func.max(Line.id))).one()
@@ -269,7 +335,7 @@ def load_customers(db: Session, customer_ids: Iterable[str]) -> pd.DataFrame:
     ids = sorted({str(c).strip() for c in customer_ids if c is not None and str(c).strip()})
     parts = []
     for i in range(0, len(ids), _CHUNK):
-        parts.append(_to_frame(db.execute(select(*_SELECT_COLS).where(Line.customer_id.in_(ids[i:i + _CHUNK])))))
+        parts.append(_to_frame(db.execute(select(*_SELECT_COLS).where(Line.customer_id.in_(ids[i:i + _CHUNK]), _NOT_RETURN))))
     return pd.concat(parts, ignore_index=True) if parts else _to_frame([])
 
 
@@ -297,7 +363,7 @@ def load_all(db: Session, store_id: Optional[str] = None, with_history_columns: 
                 ImportBatchModel.import_batch_id == "LEGACY_HISTORY",
                 ImportBatchModel.processing_status == "ACTIVE")).scalar()
             legacy_lines = int(db.execute(select(func.count(Line.id)).where(
-                Line.import_batch_id == "LEGACY_HISTORY")).scalar() or 0)
+                Line.import_batch_id == "LEGACY_HISTORY", _NOT_RETURN)).scalar() or 0)
             df_base = pd.read_parquet(base_parquet) if legacy_active and legacy_lines else None
             if df_base is not None and len(df_base) != legacy_lines:
                 logger.info("History parquet (%d rows) differs from the database legacy rows (%d); reading the database",
@@ -313,7 +379,7 @@ def load_all(db: Session, store_id: Optional[str] = None, with_history_columns: 
             ).all()]
             if batch_ids:
                 delta_rows = db.execute(
-                    select(*_SELECT_COLS).where(Line.import_batch_id.in_(batch_ids)).order_by(Line.invoice_date, Line.id)
+                    select(*_SELECT_COLS).where(Line.import_batch_id.in_(batch_ids), _NOT_RETURN).order_by(Line.invoice_date, Line.id)
                 )
                 df_delta = _to_frame(delta_rows)
                 df = pd.concat([df_base, df_delta], ignore_index=True) if not df_delta.empty else df_base
@@ -334,7 +400,7 @@ def load_all(db: Session, store_id: Optional[str] = None, with_history_columns: 
         except Exception as e:
             logger.warning("Fast baseline parquet load failed, falling back to full table scan: %s", e)
 
-    rows = db.execute(select(*_SELECT_COLS).order_by(Line.invoice_date, Line.id))
+    rows = db.execute(select(*_SELECT_COLS).where(_NOT_RETURN).order_by(Line.invoice_date, Line.id))
     df = _to_frame(rows)
     if with_history_columns and not df.empty:
         from refillcare.data.history import create_purchase_history
@@ -353,8 +419,8 @@ def sales_dates(db: Session) -> pd.Series:
 
 def date_bounds(db: Session) -> Tuple[Optional[date], Optional[date]]:
     # Two queries on purpose: SQLite answers a lone MIN or MAX from the index, but MIN+MAX together scan the table
-    lo = db.execute(select(func.min(Line.invoice_date))).scalar()
-    hi = db.execute(select(func.max(Line.invoice_date))).scalar()
+    lo = db.execute(select(func.min(Line.invoice_date)).where(_NOT_RETURN)).scalar()
+    hi = db.execute(select(func.max(Line.invoice_date)).where(_NOT_RETURN)).scalar()
     as_date = lambda v: (v.date() if isinstance(v, datetime) else v) if v is not None else None  # noqa: E731
     return as_date(lo), as_date(hi)
 
@@ -385,7 +451,8 @@ def known_items(db: Session, item_ids: Iterable[str]) -> set:
 
 
 def batch_lines(db: Session, batch_id: str) -> pd.DataFrame:
-    return _to_frame(db.execute(select(*_SELECT_COLS).where(Line.import_batch_id == batch_id)))
+    """The sales lines of one upload (its stored return lines are handled by the return functions)."""
+    return _to_frame(db.execute(select(*_SELECT_COLS).where(Line.import_batch_id == batch_id, _NOT_RETURN)))
 
 
 def delete_batch(db: Session, batch_id: str) -> int:
@@ -434,10 +501,10 @@ def net_returns(db: Session, returns: pd.DataFrame, window_days: Optional[int] =
     window_days = window_days or return_window_days()
     correction_days = return_correction_days()
     out = {"returns_seen": int(len(returns)), "returns_netted": 0, "sales_fully_returned": 0,
-           "late_full_returns": 0, "returned_sales": []}
+           "late_full_returns": 0, "returned_sales": [], "applied": {}}
     if returns.empty:
         return out
-    for rec in returns.to_dict(orient="records"):
+    for idx, rec in zip(returns.index, returns.to_dict(orient="records")):
         d = pd.to_datetime(rec.get("invoice_date"), errors="coerce")
         qty = abs(float(pd.to_numeric(rec.get("quantity"), errors="coerce") or 0))
         if pd.isna(d) or qty <= 0:
@@ -449,7 +516,9 @@ def net_returns(db: Session, returns: pd.DataFrame, window_days: Optional[int] =
                 .order_by(Line.invoice_date.desc(), Line.id.desc()).first())
         if sale is None:
             continue
-        sale.quantity = max(0.0, float(sale.quantity) - qty)
+        before = float(sale.quantity)
+        sale.quantity = max(0.0, before - qty)
+        out["applied"][idx] = (int(sale.id), round(before - float(sale.quantity), 3))  # return row -> sale it hit
         out["returns_netted"] += 1
         if sale.quantity <= 0:
             lag = int((d.normalize() - pd.Timestamp(sale.invoice_date).normalize()).days)
@@ -464,6 +533,101 @@ def net_returns(db: Session, returns: pd.DataFrame, window_days: Optional[int] =
                                           "invoice_date": pd.Timestamp(sale.invoice_date), "MOBILE_NO": sale.mobile_no,
                                           "returned_on": d.normalize(), "days_after_sale": lag, "late": late})
     return out
+
+
+def _return_status(applied: Optional[Tuple[int, float]]) -> str:
+    return f"{RETURN_APPLIED}:{applied[0]}:{applied[1]:g}" if applied else RETURN_WAITING
+
+
+def store_returns(db: Session, returns: pd.DataFrame, batch_id: str) -> Dict[str, Any]:
+    """Keep an upload's return lines as rows and subtract each NEW one from its sale (caller commits).
+
+    A return line already stored (same file uploaded again, overlapping file) is skipped and NOT subtracted
+    twice. Returns the netting result of the new lines plus ``stored`` / ``already_stored`` counts.
+    """
+    if returns is None or returns.empty:
+        return {"returns_seen": 0, "returns_netted": 0, "stored": 0, "already_stored": 0, "returned_sales": [], "applied": {}}
+    work = returns.copy()
+    work["line_key"] = compute_line_keys(work)
+    work = work.drop_duplicates(subset=["line_key"])
+    existing = _existing_keys(db, work["line_key"].tolist())
+    new = work[~work["line_key"].isin(existing)].drop(columns=["line_key"])
+    netting = net_returns(db, new)
+    if not new.empty:
+        new = new.copy()
+        new["transaction_type"] = RETURN_TYPE
+        new["refillcare_eligible"] = False
+        new["exclusion_reason"] = [_return_status(netting["applied"].get(i)) for i in new.index]
+        keep = [c for c in COLUMN_MAP if c in new.columns]
+        append_lines(db, new[keep], batch_id)
+    netting["stored"] = int(len(new))
+    netting["already_stored"] = int(len(returns) - len(new))
+    return netting
+
+
+def recheck_waiting_returns(db: Session, customer_ids: Optional[Iterable[str]] = None,
+                            window_days: Optional[int] = None) -> Dict[str, Any]:
+    """Apply stored returns still waiting for their sale (the sale was uploaded later, or the return window
+    was widened). Limited to ``customer_ids`` after an upload; all waiting returns when None (caller commits)."""
+    empty = {"returns_seen": 0, "returns_netted": 0, "sales_fully_returned": 0, "returned_sales": [], "applied": {}}
+    q = select(Line.id, *_SELECT_COLS).where(Line.transaction_type == RETURN_TYPE, Line.exclusion_reason == RETURN_WAITING)
+    if customer_ids is not None:
+        ids = sorted({str(c).strip() for c in customer_ids if c is not None and str(c).strip()})
+        rows = []
+        for i in range(0, len(ids), _CHUNK):
+            rows.extend(db.execute(q.where(Line.customer_id.in_(ids[i:i + _CHUNK]))).all())
+    else:
+        rows = db.execute(q).all()
+    if not rows:
+        return empty
+    frame = pd.DataFrame.from_records([tuple(r[1:]) for r in rows], columns=list(COLUMN_MAP.keys()),
+                                      index=[int(r[0]) for r in rows])
+    frame = frame.sort_values("invoice_date", kind="stable")
+    netting = net_returns(db, frame, window_days=window_days)
+    for row_id, applied in netting["applied"].items():
+        db.query(Line).filter(Line.id == int(row_id)).update({"exclusion_reason": _return_status(applied)},
+                                                             synchronize_session=False)
+    return netting
+
+
+def undo_batch_returns(db: Session, batch_id: str) -> Dict[str, Any]:
+    """Before an upload is rolled back (caller commits):
+    - its applied return lines give their quantity back to the sale they were subtracted from (a sale that
+      was fully returned counts again);
+    - returns from OTHER uploads that were applied to this upload's sales go back to "waiting".
+    Returns the affected (raw) customer ids so the caller re-scores them."""
+    customers: set = set()
+    restored = rewaited = 0
+    restored_sales: List[Dict[str, Any]] = []
+    own = db.query(Line).filter(Line.import_batch_id == batch_id, Line.transaction_type == RETURN_TYPE,
+                                Line.exclusion_reason.like(f"{RETURN_APPLIED}:%")).all()
+    for ret in own:
+        try:
+            _, sale_id, qty = str(ret.exclusion_reason).split(":")
+            sale = db.get(Line, int(sale_id))
+        except (ValueError, TypeError):
+            continue
+        if sale is None or sale.import_batch_id == batch_id:
+            continue
+        sale.quantity = float(sale.quantity or 0) + float(qty)
+        if (sale.exclusion_reason or "").startswith((RETURN_FULL_CORRECTION, RETURN_FULL_LATE)) and sale.quantity > 0:
+            sale.refillcare_eligible, sale.exclusion_reason = True, None
+        customers.add(str(sale.customer_id))
+        restored_sales.append({"customerId": sale.customer_id, "itemId": sale.item_id, "MOBILE_NO": sale.mobile_no,
+                               "invoice_date": pd.Timestamp(sale.invoice_date)})
+        restored += 1
+    sale_ids = [i for (i,) in db.execute(select(Line.id).where(Line.import_batch_id == batch_id, _NOT_RETURN))]
+    if sale_ids:
+        wanted = {str(i) for i in sale_ids}
+        for ret in db.query(Line).filter(Line.transaction_type == RETURN_TYPE, Line.import_batch_id != batch_id,
+                                         Line.exclusion_reason.like(f"{RETURN_APPLIED}:%")).all():
+            parts = str(ret.exclusion_reason).split(":")
+            if len(parts) == 3 and parts[1] in wanted:
+                ret.exclusion_reason = RETURN_WAITING
+                customers.add(str(ret.customer_id))
+                rewaited += 1
+    return {"sales_restored": restored, "returns_waiting_again": rewaited, "customers": sorted(customers),
+            "restored_sales": restored_sales}
 
 
 def import_frame(db: Session, df: pd.DataFrame, batch_id: str = "LEGACY_HISTORY", source: str = "legacy history") -> Dict[str, int]:
@@ -505,3 +669,14 @@ def clear_cache() -> None:
     with _cache_lock:
         _full_cache.clear()
         _patients_cache.clear()
+
+
+def waiting_returns(db: Session, limit: int = 200) -> Dict[str, Any]:
+    """Stored return lines still waiting for their sale (newest first) - pharmacist / auditor view."""
+    base = db.query(Line).filter(Line.transaction_type == RETURN_TYPE, Line.exclusion_reason == RETURN_WAITING)
+    total = base.count()
+    rows = base.order_by(Line.invoice_date.desc(), Line.id.desc()).limit(max(1, min(int(limit), 2000))).all()
+    return {"total": int(total), "return_window_days": return_window_days(), "rows": [
+        {"return_date": r.invoice_date.date().isoformat() if r.invoice_date else None, "bill_no": r.invoice_number,
+         "customer": r.customer_name or r.customer_id, "mobile": r.mobile_no, "medicine": r.item_name or r.item_id,
+         "quantity": float(r.quantity or 0)} for r in rows]}

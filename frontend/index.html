@@ -191,7 +191,7 @@
 
           <!-- Preview & Validation Card -->
           <div id="upload-preview-area" style="display: none; margin-top: 1.5rem;">
-            <h4 style="margin-bottom: 0.75rem; color: var(--primary);"> Ingestion Pre-flight Diagnostics</h4>
+            <h4 style="margin-bottom: 0.75rem; color: var(--primary);">👀 Data Preview &amp; Check</h4>
 
             <!-- Column mapping: auto-detected / saved per store; editable, required before first import of a new layout -->
             <div id="column-mapping-panel" style="margin-bottom: 1.25rem;">
@@ -230,9 +230,34 @@
             </div>
 
             <div style="display: flex; gap: 1rem;">
-              <button class="btn btn-primary" id="btn-confirm-ingest"> Process & Commit Sales Data</button>
+              <button class="btn btn-primary" id="btn-confirm-ingest" style="font-size: 1.05rem; padding: 0.7rem 1.4rem;">✅ Save &amp; Update Reminders</button>
               <button class="btn btn-outline" id="btn-cancel-ingest">Cancel</button>
             </div>
+          </div>
+
+          <!-- Result of the last save: returns saved / applied / waiting, rows not saved (with reason) -->
+          <div id="upload-result-area" style="display: none; margin-top: 1.5rem;">
+            <h4 style="margin-bottom: 0.75rem; color: var(--primary);">What was saved</h4>
+            <div class="kpi-grid" style="margin-bottom: 0.75rem;">
+              <div class="kpi-card"><div class="kpi-title">New Sales Lines</div><div class="kpi-value-row"><div class="kpi-value" id="res-sales">–</div></div><div class="kpi-subtext" id="res-sales-sub"></div></div>
+              <div class="kpi-card" title="Return lines are saved as their own rows (never a purchase) and subtracted from the sale they follow. A return whose sale is not uploaded yet waits and is applied automatically when that sale arrives."><div class="kpi-title">Return Lines Saved</div><div class="kpi-value-row"><div class="kpi-value" id="res-returns">–</div></div><div class="kpi-subtext" id="res-returns-sub"></div></div>
+              <div class="kpi-card" title="Rows without customer / medicine / date / quantity. Download the list to fix them in billing."><div class="kpi-title">Rows Not Saved</div><div class="kpi-value-row"><div class="kpi-value" id="res-skipped">–</div></div><div class="kpi-subtext"><a href="#" id="res-skipped-download" style="display:none;">⬇️ Download list (CSV)</a></div></div>
+            </div>
+            <div class="table-responsive" id="res-skipped-table-wrap" style="display:none;">
+              <table class="data-table" id="res-skipped-table"><thead><tr><th>Row</th><th>Bill Date</th><th>Bill No</th><th>Customer</th><th>Mobile</th><th>Medicine</th><th>Qty</th><th>Reason</th></tr></thead><tbody></tbody></table>
+            </div>
+          </div>
+
+          <!-- Return lines waiting for their sale (GET /api/v1/sales/returns/waiting) -->
+          <div id="waiting-returns-area" style="display: none; margin-top: 1.5rem;">
+            <details>
+              <summary style="cursor:pointer; font-weight:600;" id="waiting-returns-title">↩️ Return lines waiting for their sale</summary>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.5rem 0;" id="waiting-returns-note"></p>
+              <div class="table-responsive">
+                <table class="data-table" id="waiting-returns-table"><thead><tr><th>Return Date</th><th>Bill No</th><th>Customer</th><th>Mobile</th><th>Medicine</th><th>Qty</th></tr></thead><tbody></tbody></table>
+              </div>
+              <button class="btn btn-outline" id="btn-recheck-returns" style="margin-top: 0.75rem;">Re-check waiting returns now</button>
+            </details>
           </div>
         </div>
 
