@@ -8,7 +8,10 @@ per reminder id). This module:
 1. finds active cycles whose (customer, item) key no longer exists under the new keys,
 2. supersedes them and their unsent stages (reason IDENTITY_REKEY),
 3. re-scores every patient under the new keys and creates the new cycles,
-4. cancels the new stages whose stage was already SENT under the old key for the same purchase.
+4. cancels the new stages whose stage was already SENT under the old key for the same purchase,
+5. retires the decisions that no longer stand (``retire_stale_decisions``): decisions on keys that no
+   longer exist, or newer than their key's latest real purchase. Left in place they appear as
+   duplicates wherever "the latest decision per patient-medicine" is read (review list, overview).
 
 Dry run by default: nothing is written until ``apply=True``.
 """
@@ -25,6 +28,7 @@ from database.models import ReminderCycleModel, ReminderStageModel
 from refillcare.engine.decision_types import STATUS_APPROVED, STATUS_CANCELLED, STATUS_DUE, STATUS_PENDING, STATUS_SENT, STATUS_SUPERSEDED
 
 logger = logging.getLogger("refillcare.engine.rekey")
+SUPERSEDED_OUTCOME = "SUPERSEDED"  # outcome of a retired decision: never counted in live accuracy
 REKEY_REASON = "IDENTITY_REKEY: patient / therapy key changed (name+mobile, salt group)"
 
 
@@ -137,8 +141,75 @@ def rekey_reminder_cycles(db: Session, history_df: pd.DataFrame, apply: bool = F
             s.updated_at = now
             cancelled += 1
     db.commit()
+    report["stale_decisions"] = retire_stale_decisions(db, keyed)
     report.update({"applied": True, "old_stages_superseded": stages_superseded, "decisions_rescored": len(decisions),
                    "cycles_created": sync.get("cycles_created", 0), "stages_created": sync.get("stages_created", 0),
                    "new_stages_cancelled_already_sent": cancelled})
     logger.info("Identity re-key applied: %s", report)
     return report
+
+
+def _latest_purchase_per_key(keyed: pd.DataFrame) -> Dict[str, date]:
+    """{customer_item_key: latest purchase that counts} from a history already keyed by the engine's identity."""
+    df = keyed
+    if "refillcare_eligible" in df.columns:
+        df = df[df["refillcare_eligible"].fillna(True).astype(bool)]
+    if "transaction_type" in df.columns:
+        df = df[df["transaction_type"].fillna("CUSTOMER_SALE") == "CUSTOMER_SALE"]
+    if df.empty:
+        return {}
+    keys = df["customerId"].astype(str).str.strip() + "_" + df["itemId"].astype(str).str.strip()
+    dts = pd.to_datetime(df["invoice_date"], errors="coerce").dt.date
+    return pd.Series(dts.values, index=keys.values).groupby(level=0).max().to_dict()
+
+
+def retire_stale_decisions(db: Session, keyed_history: Optional[pd.DataFrame] = None,
+                           only_keys: Optional[Set[str]] = None) -> Dict[str, int]:
+    """Delete decisions that no longer stand, so every patient-medicine has ONE current decision.
+
+    Stale = its key no longer exists under the current identity (e.g. ``NAME_ITEM`` after the switch to
+    ``NAME_MOBILE_ITEM``), or it is newer than the key's latest purchase that counts (a purchase that was
+    rolled back or fully returned). Old reminder cycles keep their history (their link is cleared);
+    measured outcomes are kept, open ones become ``SUPERSEDED`` (never counted). Active cycles are never
+    touched: a decision an active cycle still uses is kept.
+
+    ``only_keys``: limit to these keys (after a re-score of some patients); default: the whole store.
+    """
+    from database.models import RefillDecisionModel as R, RefillDecisionOutcomeModel as O
+
+    if keyed_history is None:
+        from refillcare.data import history_store as hs
+        from refillcare.data.identity import normalise_trajectory_keys
+
+        keyed_history = normalise_trajectory_keys(hs.load_all(db))
+    latest = _latest_purchase_per_key(keyed_history)
+    q = db.query(R.decision_id, R.customer_item_key, R.last_purchase_date)
+    if only_keys is not None:
+        keys = sorted(only_keys)
+        rows = []
+        for i in range(0, len(keys), 500):
+            rows.extend(q.filter(R.customer_item_key.in_(keys[i:i + 500])).all())
+    else:
+        rows = q.all()
+    stale = [did for did, key, lpd in rows if key not in latest or (lpd is not None and lpd > latest[key])]
+    out = {"decisions_checked": len(rows), "stale": len(stale), "deleted": 0, "kept_active_cycle": 0,
+           "cycles_unlinked": 0, "open_outcomes_superseded": 0}
+    if not stale:
+        return out
+    active = set()
+    for i in range(0, len(stale), 500):
+        chunk = stale[i:i + 500]
+        active.update(d for (d,) in db.query(ReminderCycleModel.decision_id).filter(
+            ReminderCycleModel.decision_id.in_(chunk), ReminderCycleModel.is_active.is_(True)).all())
+    gone = [d for d in stale if d not in active]
+    out["kept_active_cycle"] = len(stale) - len(gone)
+    for i in range(0, len(gone), 500):
+        chunk = gone[i:i + 500]
+        out["cycles_unlinked"] += db.query(ReminderCycleModel).filter(ReminderCycleModel.decision_id.in_(chunk)).update(
+            {ReminderCycleModel.decision_id: None}, synchronize_session=False)
+        out["open_outcomes_superseded"] += db.query(O).filter(O.decision_id.in_(chunk), O.outcome_category == "OPEN").update(
+            {O.outcome_category: SUPERSEDED_OUTCOME}, synchronize_session=False)
+        out["deleted"] += db.query(R).filter(R.decision_id.in_(chunk)).delete(synchronize_session=False)
+        db.commit()
+    logger.info("Stale decisions retired: %s", out)
+    return out

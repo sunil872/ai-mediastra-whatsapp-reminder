@@ -1238,6 +1238,9 @@ class EnterpriseServices:
                     "raw_total_transactions": c["received"],
                     "cleaned_transactions": c["stored"],
                     "purged_duplicates": c["not_stored"],  # kept for compatibility: returns / invalid / already uploaded
+                    **{k: c[k] for k in ("return_lines", "returns_netted", "returns_unmatched", "invalid_rows",
+                                         "sales_fully_returned", "returned_corrections", "returned_late",
+                                         "return_window_days", "return_correction_days")},
                 }
             except Exception:
                 pass

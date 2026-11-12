@@ -55,84 +55,6 @@ def mirror_import_batch(db: Session, result: Dict[str, Any], filename: str, chec
     db.commit()
 
 
-def _affected_keys(result: Dict[str, Any]) -> set:
-    added = result.get("records_appended_df")
-    if added is None or added.empty:
-        added = result.get("valid_records_df")
-    if added is None or added.empty:
-        return set()
-    return set(zip(added["customerId"].astype(str).str.strip(), added["itemId"].astype(str).str.strip()))
-
-
-def _keyed_history(updated_df: pd.DataFrame, raw_keys: set) -> tuple:
-    """Re-key the full history (patient = name + mobile, therapy = salt group, per env) and map the
-    upload's raw (name, item) keys onto the new keys."""
-    from refillcare.data.identity import BRAND_ITEM_COL, SOURCE_CUSTOMER_COL, normalise_trajectory_keys
-
-    keyed = normalise_trajectory_keys(updated_df)
-    src = list(zip(keyed[SOURCE_CUSTOMER_COL].astype(str).str.strip(), keyed[BRAND_ITEM_COL].astype(str).str.strip()))
-    mask = [k in raw_keys for k in src]
-    touched = keyed.loc[mask]
-    keys = set(zip(touched["customerId"].astype(str).str.strip(), touched["itemId"].astype(str).str.strip()))
-    return keyed, keys
-
-
-def _affected_patient_rows(updated_df: pd.DataFrame, keys: set) -> pd.DataFrame:
-    """All purchases (every medicine) of the patients touched by the upload - visit features need them."""
-    customers = {c for c, _ in keys}
-    return updated_df[updated_df["customerId"].astype(str).str.strip().isin(customers)]
-
-
-def sync_after_ingest(db: Session, result: Dict[str, Any]) -> Dict[str, Any]:
-    """Incremental re-scoring + cycle sync for one ingested batch. Returns the online-sync metrics."""
-    from refillcare.engine.persistence import RefillPersistenceManager
-    from refillcare.engine.unified_engine import UnifiedRefillDecisionEngine
-    from refillcare.ml.model_provider import ModelProvider
-    from refillcare.ml.outcomes import refresh_outcomes
-
-    m = result["metrics"]
-    updated_df = result.get("updated_history_df")
-    latest = latest_sales_date_from_metrics(m)
-    eval_as_of = latest + timedelta(days=1)  # T_max + 1
-    if updated_df is None or updated_df.empty or m.get("new_records_added", 0) <= 0:
-        return {}
-
-    from refillcare.features.context import PopulationStats
-    from refillcare.ml.evaluation import prepare_purchase_events
-
-    updated_df, keys = _keyed_history(updated_df, _affected_keys(result))
-    provider = ModelProvider.from_registry(db)
-    # Salt priors from the whole store history (not just the touched patients)
-    salt_stats = PopulationStats.from_events(prepare_purchase_events(updated_df), as_of=latest)
-    engine = UnifiedRefillDecisionEngine(model_provider=provider, population_stats=salt_stats)
-    _, decisions = engine.evaluate_all_customer_items(
-        _affected_patient_rows(updated_df, keys), as_of_date=eval_as_of, only_keys=keys
-    )
-
-    pm = RefillPersistenceManager()
-    pm.save_refill_decisions(db, decisions)
-    sync_res = pm.sync_reminder_cycles(db, decisions)
-    expired = pm.expire_past_due_stages(db, today=eval_as_of)
-    outcome_counts = refresh_outcomes(db, updated_df, as_of=latest)
-    logger.info(
-        "Batch %s: re-scored %d customer-items, %d cycles created, %d superseded.",
-        result.get("import_batch_id"), len(decisions), sync_res.get("cycles_created", 0), sync_res.get("cycles_superseded", 0),
-    )
-    return {
-        "evaluation_as_of_date": str(eval_as_of),
-        "target_prediction_month": eval_as_of.strftime("%Y-%m"),
-        "serving_model": provider.describe(),
-        "customer_items_rescored": len(decisions),
-        "decisions_evaluated": len(decisions),
-        "cycles_created": sync_res.get("cycles_created", 0),
-        "cycles_superseded": sync_res.get("cycles_superseded", 0),
-        "stages_created": sync_res.get("stages_created", 0),
-        "stages_superseded": sync_res.get("stages_superseded", 0),
-        "stages_expired": expired,
-        "outcomes_updated": outcome_counts.get("evaluated", 0),
-    }
-
-
 def ml_freshness_after_ingest(db: Session, history_df: Optional[pd.DataFrame]) -> Optional[Dict[str, Any]]:
     """Re-plan the ML windows on the updated data; informational only, never fails an ingest."""
     if history_df is None or history_df.empty:
@@ -153,6 +75,7 @@ def revert_after_rollback(db: Session, rollback_result: Dict[str, Any], batch_id
     are now past due and marks the SQL batch row ROLLED_BACK.
     """
     from refillcare.engine.persistence import RefillPersistenceManager
+    from refillcare.engine.rekey import retire_stale_decisions
 
     db_revert: Dict[str, Any] = {}
     removed_df = rollback_result.get("removed_records_df")
@@ -167,6 +90,8 @@ def revert_after_rollback(db: Session, rollback_result: Dict[str, Any], batch_id
         restored = rollback_result.get("restored_latest_sales_date")
         today = latest_sales_date_from_metrics({"latest_sales_date": restored}) + timedelta(days=1) if restored else date.today()
         db_revert["stages_expired"] = pm.expire_past_due_stages(db, today=today)
+        # Clean up any stale decisions left by the removed purchases (fallback consistency)
+        retire_stale_decisions(db, only_keys=set(removed.keys()))
 
     batch = db.query(ImportBatchModel).filter_by(import_batch_id=batch_id).first()
     if batch is not None:

@@ -136,3 +136,67 @@ def test_rekey_supersedes_old_cycles_and_never_resends(monkeypatch, tmp_path):
     assert by_off[first.stage_offset] == STATUS_CANCELLED  # already sent under the old key
     assert all(st == STATUS_PENDING for off, st in by_off.items() if off != first.stage_offset)
     db.close()
+
+
+def test_check_identity_setting_warning(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from database.models import Base, ReminderCycleModel
+    from refillcare.data.identity import check_identity_setting_warning
+
+    eng = create_engine(f"sqlite:///{(tmp_path / 'warn.db').as_posix()}")
+    Base.metadata.create_all(eng)
+    db = sessionmaker(bind=eng)()
+
+    # Empty DB: returns None
+    assert check_identity_setting_warning(db) is None
+
+    # Populate 25 cycles with name_mobile keys
+    for i in range(25):
+        db.add(ReminderCycleModel(
+            cycle_id=f"RC-LAXMI_{9848000000+i}-T40-20260101",
+            customer_item_key=f"LAXMI_{9848000000+i}_T40",
+            customer_id=f"LAXMI_{9848000000+i}",
+            item_id="T40",
+            is_active=True,
+            last_purchase_date=date(2026, 1, 1),
+            expected_refill_date=date(2026, 2, 1),
+        ))
+    db.commit()
+
+    # In name_mobile mode: consistent -> None
+    monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name_mobile")
+    assert check_identity_setting_warning(db) is None
+
+    # In name mode: mismatch -> warning
+    monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name")
+    warn = check_identity_setting_warning(db)
+    assert warn is not None
+    assert "REFILLCARE_PATIENT_IDENTITY is 'name', but active reminder cycles use 'name_mobile' keys" in warn
+
+    # Replace cycles with name-only keys
+    db.query(ReminderCycleModel).delete()
+    for i in range(25):
+        db.add(ReminderCycleModel(
+            cycle_id=f"RC-LAXMI{i}-T40-20260101",
+            customer_item_key=f"LAXMI{i}_T40",
+            customer_id=f"LAXMI{i}",
+            item_id="T40",
+            is_active=True,
+            last_purchase_date=date(2026, 1, 1),
+            expected_refill_date=date(2026, 2, 1),
+        ))
+    db.commit()
+
+    # In name mode: consistent -> None
+    monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name")
+    assert check_identity_setting_warning(db) is None
+
+    # In name_mobile mode: mismatch -> warning
+    monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name_mobile")
+    warn2 = check_identity_setting_warning(db)
+    assert warn2 is not None
+    assert "REFILLCARE_PATIENT_IDENTITY is 'name_mobile', but active reminder cycles use legacy 'name' keys" in warn2
+
+    db.close()
+

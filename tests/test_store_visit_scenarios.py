@@ -137,3 +137,106 @@ def test_e_two_bills_same_day_are_one_purchase(store):
     _upload(store, TODAY, [("TELMA 40 TAB", 1, "S0/904"), ("TELMA 40 TAB", 1, "S0/905")])
     d = _decision(store, "TELMA 40 TAB")
     assert d.units_purchased == 30 and d.purchase_count == 9  # 8 earlier + 1 (not 2) purchases of 2 strips
+
+
+# --------------------------------------------------------------------------- returns (11 Nov 2026)
+def _review(db, day):
+    from refillcare.engine.pharmacist_overrides import review_candidates
+
+    return [r for r in review_candidates(db, day, day) if r["customer_item_key"] == f"{PKEY}_{MEDS['TELMA 40 TAB']}"]
+
+
+def test_f_full_return_after_15_days_pauses_reminders_and_asks_pharmacist(store):
+    """Lakshmi Devi case: bought, returned ALL strips 15 days later -> doctor stopped / changed the medicine?"""
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/910")
+    ret_day = TODAY + timedelta(days=15)  # before today (future dates are rejected by the upload)
+    _upload(store, ret_day, [("TELMA 40 TAB", -2)], inv="S0/911")
+    assert _stages(store, "TELMA 40 TAB") == [], "no reminders (not even +45 re-engagement) for a returned medicine"
+    rev = _review(store, ret_day)
+    assert len(rev) == 1 and "Returned all strips" in rev[0]["reason_not_in_reminders"]
+    # pharmacist confirms the patient still takes it -> back in reminders
+    from refillcare.engine.pharmacist_overrides import add_to_reminders
+
+    add_to_reminders(store, rev[0]["customer_item_key"], next_refill_date=ret_day + timedelta(days=3), today=ret_day)
+    assert _stages(store, "TELMA 40 TAB"), "pharmacist addition overrides the pause"
+
+
+def test_g_full_return_within_7_days_is_a_billing_correction(store):
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/912")
+    _upload(store, TODAY + timedelta(days=2), [("TELMA 40 TAB", -2)], inv="S0/913")
+    assert _stages(store, "TELMA 40 TAB")[0].target_send_date <= TODAY + timedelta(days=5), "earlier schedule resumes"
+    assert _review(store, TODAY + timedelta(days=2)) == []
+
+
+def test_h_buying_again_after_a_late_return_resumes_normal_reminders(store):
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/914")
+    _upload(store, TODAY + timedelta(days=10), [("TELMA 40 TAB", -2)], inv="S0/915")   # (dates stay before today:
+    assert _stages(store, "TELMA 40 TAB") == []                                         #  future dates are rejected)
+    _upload(store, TODAY + timedelta(days=15), [("TELMA 40 TAB", 2)], inv="S0/916")
+    assert _stages(store, "TELMA 40 TAB"), "new purchase -> reminders again"
+
+
+def test_i_partial_return_late_only_reduces_the_strips(store):
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/917")
+    res = _upload(store, TODAY + timedelta(days=10), [("TELMA 40 TAB", -1)], inv="S0/918")
+    assert res["data_warnings"]["returns_netted"]["returns_netted"] == 1
+    assert res["data_warnings"]["returns_netted"]["sales_fully_returned"] == 0
+    assert _stages(store, "TELMA 40 TAB"), "still takes it: reminders continue, earlier (1 strip left)"
+
+
+def test_j_sales_lines_card_breaks_down_returns_and_invalid_rows(store):
+    from refillcare.data import history_store as hs
+
+    _upload(store, TODAY, [("TELMA 40 TAB", 2), ("GLYCOMET GP 1 TAB", 2)], inv="S0/920")
+    _upload(store, TODAY + timedelta(days=2), [("GLYCOMET GP 1 TAB", -2)], inv="S0/921")   # correction (2 days)
+    _upload(store, TODAY + timedelta(days=15), [("TELMA 40 TAB", -2)], inv="S0/922")       # late (15 days)
+    c = hs.channel_counts(store)
+    assert (c["return_lines"], c["returns_netted"], c["returns_unmatched"]) == (2, 2, 0)
+    assert (c["sales_fully_returned"], c["returned_corrections"], c["returned_late"]) == (2, 1, 1)
+    assert c["not_stored"] == c["return_lines"] + c["invalid_rows"] and c["return_window_days"] == 90
+
+
+def test_k_identity_switch_leaves_one_row_per_patient_medicine(store, monkeypatch):
+    """11 Nov 2026: after name -> name + mobile, old name-only decisions stayed and the review list showed every
+    patient-medicine twice (A SUDHEER KUMAR_1678 and A SUDHEER KUMAR_8555914289_1678)."""
+    from database.models import RefillDecisionModel as R
+    from refillcare.data.incremental_ingest import rescore_customers
+    from refillcare.engine.pharmacist_overrides import review_candidates
+    from refillcare.engine.rekey import retire_stale_decisions
+    from refillcare.whatsapp.pharmacist_views import search_patients
+
+    monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name")                    # history scored the old way
+    rescore_customers(store, [RAVI])
+    assert store.query(R).filter(R.customer_item_key == f"{RAVI}_{MEDS['TELMA 40 TAB']}").count() > 0
+    monkeypatch.setenv("REFILLCARE_PATIENT_IDENTITY", "name_mobile")             # switch: the identity re-key
+    from refillcare.data import history_store as hs
+    from refillcare.engine.rekey import rekey_reminder_cycles
+
+    rep = rekey_reminder_cycles(store, hs.load_all(store), apply=True)            # retires old cycles + decisions
+    assert rep["stale_decisions"]["deleted"] == 3 and rep["stale_decisions"]["kept_active_cycle"] == 0
+    assert retire_stale_decisions(store)["stale"] == 0                            # nothing left
+    assert store.query(R).filter(R.customer_item_key == f"{RAVI}_{MEDS['TELMA 40 TAB']}").count() == 0
+    keys = [r["customer_item_key"] for r in review_candidates(store)]
+    assert len(keys) == len(set(keys)) and not any(k.startswith(f"{RAVI}_") and RAVI_MOB not in k for k in keys)
+    hits = search_patients(store, RAVI)
+    assert len(hits) == 1 and hits[0]["customer_id"] == PKEY                        # one row per person
+
+
+def test_l_rolled_back_or_returned_purchase_leaves_no_stale_decision(store):
+    from database.models import RefillDecisionModel as R
+
+    _upload(store, TODAY, [("TELMA 40 TAB", 2)], inv="S0/930")
+    _upload(store, TODAY + timedelta(days=15), [("TELMA 40 TAB", -2)], inv="S0/931")   # late full return
+    key = f"{PKEY}_{MEDS['TELMA 40 TAB']}"
+    assert store.query(R).filter(R.customer_item_key == key, R.last_purchase_date == TODAY).count() == 0
+    latest = store.query(R).filter(R.customer_item_key == key).order_by(R.last_purchase_date.desc()).first()
+    assert not latest.is_eligible and "Returned all strips" in latest.decision_reason   # still paused + reviewable
+
+
+def test_m_control_group_is_off_by_default(monkeypatch):
+    """11 Nov 2026: the client wants every patient reminded - no no-reminder control group unless configured."""
+    from refillcare.whatsapp.holdout import holdout_pct, is_holdout
+
+    monkeypatch.delenv("REFILLCARE_HOLDOUT_PCT", raising=False)
+    assert holdout_pct() == 0
+    assert not any(is_holdout(f"C{i}", f"98480{i:05d}") for i in range(500))

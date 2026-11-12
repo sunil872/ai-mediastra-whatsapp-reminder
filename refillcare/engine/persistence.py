@@ -194,8 +194,9 @@ class RefillPersistenceManager:
         """
         if not decisions:
             return 0
-        from refillcare.engine.pharmacist_overrides import apply_pharmacist_overrides
+        from refillcare.engine.pharmacist_overrides import apply_pharmacist_overrides, apply_return_stops
 
+        apply_return_stops(db, decisions)  # late full return -> reminders paused, review (before pharmacist adds)
         apply_pharmacist_overrides(db, decisions)  # keep pharmacist-added patients in reminders
 
         now = datetime.utcnow()
@@ -307,8 +308,9 @@ class RefillPersistenceManager:
         Returns:
             Dict with counts of cycles_created, stages_created, cycles_superseded, stages_superseded.
         """
-        from refillcare.engine.pharmacist_overrides import apply_pharmacist_overrides
+        from refillcare.engine.pharmacist_overrides import apply_pharmacist_overrides, apply_return_stops
 
+        apply_return_stops(db, decisions)  # late full return -> reminders paused, review (before pharmacist adds)
         apply_pharmacist_overrides(db, decisions)  # idempotent; same result as in save_refill_decisions
         metrics = {
             "cycles_created": 0,

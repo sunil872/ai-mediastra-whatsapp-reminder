@@ -125,6 +125,17 @@ if os.getenv("REFILLCARE_ENV", "").lower() != "test" and os.getenv("REFILLCARE_W
 
     _threading.Thread(target=_warm_rules, name="refillcare-rules-warmup", daemon=True).start()
 
+# Startup sanity check: verify patient identity setting matches stored database keys
+if os.getenv("REFILLCARE_ENV", "").lower() != "test":
+    try:
+        from refillcare.data.identity import check_identity_setting_warning
+
+        _ident_warn = check_identity_setting_warning()
+        if _ident_warn:
+            logger.warning("Configuration Warning: %s", _ident_warn)
+    except Exception as _e:
+        logger.debug("Identity check at startup skipped: %s", _e)
+
 # CORS: explicit allow-list (comma-separated CORS_ALLOW_ORIGINS); never "*" with credentials
 _cors_origins = [o.strip() for o in os.getenv(
     "CORS_ALLOW_ORIGINS",

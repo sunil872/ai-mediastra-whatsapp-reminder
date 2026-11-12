@@ -7,6 +7,9 @@
   ``pharmacist_reminder_overrides`` and turned into a normal reminder cycle (same 7 stages).
 - ``apply_pharmacist_overrides``: called by the persistence layer on every save / sync, so the
   re-scoring after each upload keeps the patient in reminders (and moves the date after a repurchase).
+- ``apply_return_stops``: a medicine returned in FULL later than the correction window (default 7 days
+  after the sale) stops its reminders until the patient buys it again, and the patient is listed for review
+  ("therapy stopped or changed?"). Adding the patient back to reminders overrides the stop.
 """
 from __future__ import annotations
 
@@ -54,6 +57,68 @@ def estimate_interval_days(dec: Any) -> int:
     return DEFAULT_INTERVAL
 
 
+RETURN_STOP_REASON = ("Returned all strips on {ret} ({days} days after buying on {sale}). Therapy stopped or changed? "
+                      "Reminders paused - add back to reminders if the patient still takes it.")
+
+
+def _key_for_line(customer_id: Any, mobile: Any, item_id: Any) -> str:
+    """customer_item_key of a sales line under the store's patient identity (same keys as the engine)."""
+    from refillcare.data.identity import identity_mode, mobile10, patient_id
+
+    m10 = mobile10(mobile) if identity_mode() == "name_mobile" else None
+    return f"{patient_id(customer_id, m10)}_{str(item_id).strip()}"
+
+
+def return_stops(db: Session) -> Dict[str, Dict[str, date]]:
+    """{patient-medicine key: {"sale": date, "returned_on": date}} of the latest LATE full return per key."""
+    from database.models import SalesTransactionModel as Line
+    from refillcare.data.history_store import RETURN_FULL_LATE
+
+    out: Dict[str, Dict[str, date]] = {}
+    rows = db.query(Line.customer_id, Line.mobile_no, Line.item_id, Line.invoice_date, Line.exclusion_reason).filter(
+        Line.exclusion_reason.like(f"{RETURN_FULL_LATE}%")).all()
+    for cid, mob, iid, sale_dt, reason in rows:
+        sale_d = sale_dt.date() if isinstance(sale_dt, datetime) else sale_dt
+        try:
+            ret_d = date.fromisoformat(str(reason).split(":", 1)[1])
+        except (IndexError, ValueError):
+            ret_d = sale_d
+        key = _key_for_line(cid, mob, iid)
+        cur = out.get(key)
+        if cur is None or sale_d > cur["sale"]:
+            out[key] = {"sale": sale_d, "returned_on": ret_d}
+    return out
+
+
+def apply_return_stops(db: Session, decisions: List[Any]) -> List[Any]:
+    """Pause reminders (in place) for medicines whose latest purchase was returned in full, late.
+
+    Applies only while no purchase is newer than the returned sale; a pharmacist addition (applied after
+    this) brings the patient back. Idempotent.
+    """
+    if not decisions:
+        return decisions
+    try:
+        stops = return_stops(db)
+    except Exception:  # sales table missing on a fresh store
+        logger.debug("Return stops unavailable", exc_info=True)
+        return decisions
+    if not stops:
+        return decisions
+    for i, dec in enumerate(decisions):
+        st = stops.get(getattr(dec, "customer_item_key", None))
+        if st is None or getattr(dec, "path", None) == PATH_PHARMACIST:
+            continue
+        if dec.last_purchase_date is not None and dec.last_purchase_date > st["sale"]:
+            continue  # bought again after the returned sale -> normal reminders
+        days = (st["returned_on"] - st["sale"]).days
+        decisions[i] = dataclasses.replace(
+            dec, is_eligible=False, expected_refill_date=None, predicted_interval_days=None,
+            decision_reason=RETURN_STOP_REASON.format(ret=st["returned_on"].strftime("%d-%m-%Y"), days=days,
+                                                     sale=st["sale"].strftime("%d-%m-%Y")))
+    return decisions
+
+
 def _active_override_map(db: Session) -> Dict[str, PharmacistReminderOverrideModel]:
     return {o.customer_item_key: o for o in db.query(PharmacistReminderOverrideModel).filter(
         PharmacistReminderOverrideModel.is_active == True).all()}  # noqa: E712
@@ -84,6 +149,7 @@ def review_candidates(db: Session, start: Optional[date] = None, end: Optional[d
             latest[row.customer_item_key] = row
 
     active_keys = {k for (k,) in db.query(ReminderCycleModel.customer_item_key).filter(ReminderCycleModel.is_active == True).all()}  # noqa: E712
+    stops = return_stops(db)
     due_by_id: Dict[str, Any] = {}
     for key, row in latest.items():
         if row.path == PATH_PHARMACIST or (end is not None and row.last_purchase_date > end):
@@ -96,6 +162,9 @@ def review_candidates(db: Session, start: Optional[date] = None, end: Optional[d
         interval = estimate_interval_days(row)
         due = (row.expected_refill_date if engine_scheduled and row.expected_refill_date
                else row.last_purchase_date + timedelta(days=interval))
+        st = stops.get(key)
+        if st is not None and not row.is_eligible and row.last_purchase_date <= st["sale"]:
+            due = st["returned_on"]  # reminders paused by a late full return: review on the return day
         if (start is not None and due < start) or (end is not None and due > end):
             continue  # date check before the (slower) medicine classification
         due_by_id[row.decision_id] = (interval, due)

@@ -176,7 +176,7 @@
           <!-- Current store data (same numbers as the Streamlit Upload tab and the overview) -->
           <div class="kpi-grid" id="upload-store-summary" style="margin-bottom: 1rem;">
             <div class="kpi-card"><div class="kpi-title">Sales Date Range (DD-MM-YYYY)</div><div class="kpi-value-row"><div class="kpi-value" id="up-date-range" style="font-size:1.2rem;">–</div></div></div>
-            <div class="kpi-card" title="Every bill line kept (several lines of one medicine on one bill are added up per bill)."><div class="kpi-title">Sales Lines Stored</div><div class="kpi-value-row"><div class="kpi-value" id="up-lines-stored">–</div></div></div>
+            <div class="kpi-card" id="up-lines-card" title="Every bill line kept (several lines of one medicine on one bill are added up per bill)."><div class="kpi-title">Sales Lines Stored</div><div class="kpi-value-row"><div class="kpi-value" id="up-lines-stored">–</div></div><div class="kpi-subtext" id="up-lines-breakdown"></div></div>
             <div class="kpi-card" title="Same number as the Pharmacy Overview."><div class="kpi-title" id="up-customers-title">Active patients (last 12 months)</div><div class="kpi-value-row"><div class="kpi-value" id="up-customers">–</div></div><div class="kpi-subtext" id="up-customers-subtext">All-time: –</div></div>
           </div>
           <div class="upload-dropzone" id="sales-dropzone">
@@ -446,7 +446,7 @@
           <div class="filter-row">
             <label class="form-field"><span>Prediction / Review Target Date</span>
               <input type="date" id="review-target-date"></label>
-            <label class="form-field form-field-grow"><span>🔍 Search customer name / mobile number</span>
+            <label class="form-field form-field-grow"><span> Search customer name / mobile number</span>
               <input type="text" id="review-search" placeholder="e.g. Ramesh or 98765 43210"></label>
           </div>
           <div class="filter-row">

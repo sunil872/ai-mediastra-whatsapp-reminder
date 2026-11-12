@@ -34,7 +34,7 @@ from database.connection import SessionLocal  # noqa: E402
 from database.models import ImportBatchModel, SalesTransactionModel as Line  # noqa: E402
 from refillcare.data import history_store as hs  # noqa: E402
 from refillcare.data.cleaning import merge_bill_lines  # noqa: E402
-from refillcare.data.incremental_ingest import b2b_lines_to_store, get_population_stats, rescore_customers  # noqa: E402
+from refillcare.data.incremental_ingest import b2b_lines_to_store, get_population_stats, rescore_customers, revert_returned_sales  # noqa: E402
 from refillcare.data.sales_ingestion import _enrich_with_catalog_salt, validate_monthly_sales_data  # noqa: E402
 
 LEGACY = "LEGACY_HISTORY"
@@ -157,6 +157,9 @@ def rescore_everyone(chunk: int = 800) -> dict:
         print(f"  {min(i + chunk, len(customers)):,}/{len(customers):,} customers", flush=True)
     with SessionLocal() as db:
         tot["retired_cycles_of_old_ids"] = retire_orphan_cycles(db)
+        from refillcare.engine.rekey import retire_stale_decisions
+
+        tot["stale_decisions"] = retire_stale_decisions(db)
     hs.clear_cache()
     return tot
 
@@ -169,9 +172,17 @@ def main() -> int:
     ap.add_argument("--no-rescore", action="store_true")
     ap.add_argument("--rescore-only", action="store_true", help="skip the rebuild; only re-score every patient")
     ap.add_argument("--redate-only", action="store_true", help="only move unsent reminders to the corrected dates")
+    ap.add_argument("--retire-stale-only", action="store_true",
+                    help="only delete decisions that no longer stand (old patient keys, rolled back / returned purchases)")
     args = ap.parse_args()
 
     t0 = time.time()
+    if args.retire_stale_only:
+        from refillcare.engine.rekey import retire_stale_decisions
+
+        with SessionLocal() as db:
+            print(json.dumps(retire_stale_decisions(db), indent=2))
+        return 0
     if args.redate_only:
         print(json.dumps(redate_unsent_stages(), indent=2))
         return 0
@@ -238,10 +249,17 @@ def main() -> int:
             batch.records_inserted = int(ins["inserted"] + ins_b2b["inserted"])
             batch.records_skipped = int(len(legacy_raw) - batch.records_inserted)
             batch.records_requiring_review = int(len(review) - len(b2b))
-            batch.data_warnings = {"rebuilt": "09-11-2026", "returns_netted": netting}
+            summary = {k: v for k, v in netting.items() if k != "returned_sales"}  # (timestamps are not JSON)
+            batch.data_warnings = {"rebuilt": "11-11-2026 (returns: 90-day window, late full return = review)",
+                                   "returns_netted": summary}
             db.commit()
         hs.clear_cache()
-        print(f"Stored {ins['inserted']:,} customer lines + {ins_b2b['inserted']:,} B2B lines; returns {netting}; uploads {norm}")
+        # same follow-up as an upload: corrections bring the earlier schedule back, late full returns pause
+        # the medicine (decision of the returned purchase invalidated; the re-score keeps it paused)
+        reverted = revert_returned_sales(db, netting) if netting.get("returned_sales") else {}
+        hs.clear_cache()
+        print(f"Stored {ins['inserted']:,} customer lines + {ins_b2b['inserted']:,} B2B lines; "
+              f"returns {summary}; follow-up {reverted}; uploads {norm}")
 
         if args.no_rescore:
             return 0

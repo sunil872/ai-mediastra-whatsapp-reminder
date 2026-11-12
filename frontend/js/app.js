@@ -583,6 +583,17 @@ async function loadStoreSummary() {
     const dmy = (iso) => (iso ? iso.split("-").reverse().join("-") : "–");
     setText("up-date-range", ov.latest_sales_date ? `${dmy(ov.first_sales_date)} to ${dmy(ov.latest_sales_date)}` : "No sales yet");
     setText("up-lines-stored", fmtNum(ov.sales_lines_stored));
+    // Same return / invalid-row breakdown as the Streamlit card (GET /api/v1/analytics/transaction-types)
+    ApiClient.getTransactionTypes().then((t) => {
+      if (t.return_lines == null) return;
+      setText("up-lines-breakdown", `${fmtNum(t.return_lines)} return lines · ${fmtNum(t.invalid_rows)} invalid rows not stored`);
+      const card = document.getElementById("up-lines-card");
+      if (card) card.title = `Return lines are never stored as rows: ${fmtNum(t.returns_netted)} were subtracted from the sale they follow `
+        + `(within ${t.return_window_days} days), ${fmtNum(t.returns_unmatched)} matched no sale. ${fmtNum(t.sales_fully_returned)} sales were `
+        + `fully returned (${fmtNum(t.returned_corrections)} billing corrections within ${t.return_correction_days} days, `
+        + `${fmtNum(t.returned_late)} later returns -> reminders paused, pharmacist review); they stay stored but do not count. `
+        + `${fmtNum(t.invalid_rows)} rows had no date / customer / medicine / quantity.`;
+    }).catch((err) => console.error("Error loading return breakdown:", err));
     const activeLabel = ov.active_patients_label || "Active patients (last 12 months)";
     const activeCount = ov.active_patients !== undefined ? ov.active_patients : ov.customers_monitored;
     const allTimeCount = ov.all_time_customers !== undefined ? ov.all_time_customers : ov.customers_monitored;

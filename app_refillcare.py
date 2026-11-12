@@ -385,6 +385,9 @@ def get_enterprise_channel_distribution_cached() -> Dict[str, int]:
                     "b2b_sales": c["b2b_inter_store"],
                     "refill_el": c["refillcare_eligible"],
                     "purged_cnt": c["not_stored"],
+                    "returns": {k: c[k] for k in ("return_lines", "returns_netted", "returns_unmatched", "invalid_rows",
+                                                  "sales_fully_returned", "returned_corrections", "returned_late",
+                                                  "return_window_days", "return_correction_days")},
                 }
     except Exception:
         pass
@@ -596,6 +599,8 @@ def filter_schedules(
 def map_reason_client_friendly(reason: str) -> str:
     """Map technical evaluation reasons into clean client-facing terminology."""
     r = str(reason).lower()
+    if "returned all strips" in r:
+        return str(reason)  # late full return: date + "therapy stopped or changed?" are what the pharmacist needs
     if "cold-start" in r or "purchase count is 1" in r or "< 2" in r:
         return "Insufficient purchase history"
     elif "invalid prediction" in r or "low quality" in r:
@@ -2146,6 +2151,12 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
     elif _serving.get("degraded"):
         st.error(f"ML model warning: {_serving.get('warning')}")
 
+    from refillcare.data.identity import check_identity_setting_warning
+
+    _ident_warn = check_identity_setting_warning()
+    if _ident_warn:
+        st.warning(f"⚠️ **Configuration Notice:** {_ident_warn}")
+
     # Load Data & Model
     with st.spinner("Loading RefillCare system data..."):
         model_bundle = load_refill_model()
@@ -2326,14 +2337,20 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                 help=f"Bill lines received in this store's uploads ({raw_tx_cnt:,}). Every line is kept, including the same "
                      "medicine billed on several lines of one bill (batches / repeat scans) - their strips are added up per bill."
             )
+        rt = chan_dist.get("returns") or {}
         with tc2:
             st.metric(
                 "Sales Lines Stored",
                 f"{clean_tx_cnt:,}",
-                f"-{purged_cnt:,} returns / invalid rows",
+                (f"{rt.get('return_lines', 0):,} return lines · {rt.get('invalid_rows', 0):,} invalid rows not stored"
+                 if rt else f"-{purged_cnt:,} not stored"),
                 delta_color="off",
-                help=f"Lines stored ({clean_tx_cnt:,}). Not stored: {purged_cnt:,} return lines (netted against the sale), "
-                     "rows without a date / customer / medicine, and lines already uploaded before."
+                help=(f"Return lines are never stored as rows: {rt.get('returns_netted', 0):,} were subtracted from the sale they "
+                      f"follow (within {rt.get('return_window_days', 90)} days), {rt.get('returns_unmatched', 0):,} matched no sale. "
+                      f"{rt.get('sales_fully_returned', 0):,} sales were fully returned ({rt.get('returned_corrections', 0):,} billing "
+                      f"corrections within {rt.get('return_correction_days', 7)} days, {rt.get('returned_late', 0):,} later returns "
+                      "-> reminders paused, pharmacist review); they stay stored but do not count. "
+                      f"{rt.get('invalid_rows', 0):,} rows had no date / customer / medicine / quantity.") if rt else None,
             )
         with tc3:
             st.metric(
@@ -2356,8 +2373,12 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
 
         st.caption(
             f"**Transaction Reconciliation Audit:** This store's uploads contain **{raw_tx_cnt:,}** bill lines (through **{latest_sales_date_str}**). "
-            f"**{purged_cnt:,}** rows were not stored (returns netted against their sale, invalid rows, lines already uploaded) - {(clean_tx_cnt / raw_tx_cnt * 100) if raw_tx_cnt else 100:.1f}% kept, giving **{clean_tx_cnt:,}** stored lines "
-            f"(**{cust_sales:,}** Retail Patient Sales + **{b2b_sales:,}** B2B Wholesale Transfers)."
+            f"**{purged_cnt:,}** rows were not stored: **{rt.get('return_lines', 0):,}** return lines "
+            f"(**{rt.get('returns_netted', 0):,}** subtracted from their sale within {rt.get('return_window_days', 90)} days, "
+            f"{rt.get('returns_unmatched', 0):,} unmatched) and **{rt.get('invalid_rows', 0):,}** invalid rows. "
+            f"Stored: **{clean_tx_cnt:,}** lines (**{cust_sales:,}** patient sales + **{b2b_sales:,}** B2B transfers); "
+            f"**{rt.get('sales_fully_returned', 0):,}** of them were fully returned ({rt.get('returned_corrections', 0):,} billing corrections, "
+            f"{rt.get('returned_late', 0):,} later returns with reminders paused) and do not count."
         )
 
         st.markdown("---")
@@ -2680,8 +2701,15 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
                 with c1:
                     st.metric("Sales Date Range (DD-MM-YYYY)", curr_range)
                 with c2:
+                    _rt = (get_enterprise_channel_distribution_cached().get("returns") or {})
                     st.metric("Sales Lines Stored", f"{store_sum['sales_lines_stored']:,}",
-                              help="Every bill line kept (several lines of one medicine on one bill are added up per bill).")
+                              (f"{_rt.get('return_lines', 0):,} return lines · {_rt.get('invalid_rows', 0):,} invalid rows not stored"
+                               if _rt else None), delta_color="off",
+                              help=(f"Every bill line kept (several lines of one medicine on one bill are added up per bill). "
+                                    f"Returns: {_rt.get('returns_netted', 0):,} subtracted from their sale within "
+                                    f"{_rt.get('return_window_days', 90)} days, {_rt.get('returns_unmatched', 0):,} unmatched; "
+                                    f"{_rt.get('sales_fully_returned', 0):,} sales fully returned ({_rt.get('returned_corrections', 0):,} "
+                                    f"billing corrections, {_rt.get('returned_late', 0):,} later returns -> reminders paused)."))
                 with c3:
                     active_lbl = store_sum.get("active_patients_label", "Active patients (last 12 months)")
                     active_cnt = store_sum.get("active_patients", store_sum.get("customers_monitored", 0))
@@ -3822,7 +3850,7 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
         with rc1:
             rev_date = st.date_input("Prediction / Review Target Date", value=today_rev, key="review_target_date", format="DD/MM/YYYY")
         with rc2:
-            search_rev_cust = st.text_input("🔍 Search customer name / mobile number", key="review_search_cust",
+            search_rev_cust = st.text_input("Search customer name / mobile number", key="review_search_cust",
                                             placeholder="e.g. Ramesh or 98765 43210")
         # Only the selected day — no ± window
         rev_start = rev_end = rev_date

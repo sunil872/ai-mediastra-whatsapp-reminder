@@ -303,6 +303,10 @@ def rescore_customers(db: Session, customer_ids: List[str], raw_lines: Optional[
     pm.save_refill_decisions(db, decisions)
     sync_res = pm.sync_reminder_cycles(db, decisions)
     expired = pm.expire_past_due_stages(db, today=eval_as_of)
+    # one current decision per patient-medicine: drop decisions of purchases that no longer count
+    from refillcare.engine.rekey import retire_stale_decisions
+
+    stale = retire_stale_decisions(db, keyed, only_keys={f"{c}_{i}" for c, i in keys})
     outcomes = refresh_outcomes(db, keyed, as_of=latest, only_keys={f"{c}_{i}" for c, i in keys})
     return {
         "evaluation_as_of_date": str(eval_as_of),
@@ -314,6 +318,7 @@ def rescore_customers(db: Session, customer_ids: List[str], raw_lines: Optional[
         "stages_created": sync_res.get("stages_created", 0),
         "stages_superseded": sync_res.get("stages_superseded", 0),
         "stages_expired": expired,
+        "stale_decisions_retired": stale.get("deleted", 0),
         "outcomes_updated": outcomes.get("evaluated", 0),
     }
 
@@ -341,14 +346,45 @@ def removed_purchase_keys(db: Session, lines: pd.DataFrame, customers: Optional[
 
 
 def revert_returned_sales(db: Session, netting: Dict[str, Any]) -> Dict[str, Any]:
-    """Fully returned sales: switch their reminder cycles back like a rollback (the earlier cycle resumes)."""
+    """Fully returned sales within the correction window (billing correction): switch their reminder cycles
+    back like a rollback, the earlier cycle resumes. Late full returns are NOT reverted: the re-score stops
+    that medicine's reminders and lists the patient for pharmacist review (``apply_return_stops``)."""
     from refillcare.engine.persistence import RefillPersistenceManager
 
     sales = pd.DataFrame(netting.get("returned_sales") or [])
+    out: Dict[str, Any] = {}
+    if not sales.empty and "late" in sales.columns:
+        late = sales[sales["late"].astype(bool)]
+        if not late.empty:
+            out["late_returns_paused"] = _invalidate_late_returned_purchases(db, late)
+        sales = sales[~sales["late"].astype(bool)]
     if sales.empty:
-        return {}
+        return out
     removed = removed_purchase_keys(db, sales)
-    return RefillPersistenceManager().revert_rolled_back_purchases(db, removed) if removed else {}
+    if removed:
+        out.update(RefillPersistenceManager().revert_rolled_back_purchases(db, removed))
+    return out
+
+
+def _invalidate_late_returned_purchases(db: Session, late: pd.DataFrame) -> int:
+    """The decision of a purchase returned in full (late) no longer stands: mark it not eligible with the
+    review reason, so the review list / "Add to reminders" see the paused medicine (the re-score that follows
+    builds the decision from the earlier purchases and ``apply_return_stops`` keeps it paused)."""
+    from database.models import RefillDecisionModel as R
+    from refillcare.engine.pharmacist_overrides import RETURN_STOP_REASON
+
+    removed = removed_purchase_keys(db, late)
+    n = 0
+    for key, dates in removed.items():
+        for d in dates:
+            row = late[pd.to_datetime(late["invoice_date"]).dt.date == d].iloc[0]
+            reason = RETURN_STOP_REASON.format(ret=pd.Timestamp(row["returned_on"]).strftime("%d-%m-%Y"),
+                                               days=int(row["days_after_sale"]), sale=d.strftime("%d-%m-%Y"))
+            for dec in db.query(R).filter(R.customer_item_key == key, R.last_purchase_date == d).all():
+                dec.is_eligible, dec.expected_refill_date, dec.decision_reason = False, None, reason
+                n += 1
+    db.commit()
+    return n
 
 
 def rollback_batch(db: Session, batch_id: str) -> Dict[str, Any]:

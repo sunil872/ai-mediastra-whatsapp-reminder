@@ -400,6 +400,15 @@ class TransactionChannelSummary(BaseModel):
     raw_total_transactions: Optional[int] = None
     cleaned_transactions: Optional[int] = None
     purged_duplicates: Optional[int] = Field(None, description="Lines received but not stored: returns netted against their sale, invalid rows, lines already uploaded. Bill lines of the same medicine (batches / repeat scans) are NOT removed - their strips are added up per bill.")
+    return_lines: Optional[int] = Field(None, description="Return lines received (never stored as their own rows)")
+    returns_netted: Optional[int] = Field(None, description="Returns subtracted from the sale they follow, within return_window_days")
+    returns_unmatched: Optional[int] = Field(None, description="Returns that matched no earlier sale within the window")
+    invalid_rows: Optional[int] = Field(None, description="Rows without date / customer / medicine / quantity (not stored)")
+    sales_fully_returned: Optional[int] = Field(None, description="Stored sales fully returned (do not count): corrections + late")
+    returned_corrections: Optional[int] = Field(None, description="Full returns within return_correction_days (billing corrections)")
+    returned_late: Optional[int] = Field(None, description="Full returns after return_correction_days: reminders paused, pharmacist review")
+    return_window_days: Optional[int] = None
+    return_correction_days: Optional[int] = None
 
 
 # ------------------------------------------------------------------------------

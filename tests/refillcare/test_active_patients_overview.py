@@ -40,12 +40,19 @@ def test_active_patients_12_months_and_all_time():
     db.commit()
     hs.clear_cache()
 
-    ov = overview_kpis(db, date(2026, 10, 31))
-    assert ov["has_12m_history"] is True
-    assert ov["active_patients_label"] == "Active patients (last 12 months)"
-    assert ov["active_patients"] >= 1
-    assert ov["all_time_customers"] >= ov["active_patients"]
-    assert "All-time:" in ov["active_patients_subtext"]
+    try:
+        ov = overview_kpis(db, date(2026, 10, 31))
+        assert ov["has_12m_history"] is True
+        assert ov["active_patients_label"] == "Active patients (last 12 months)"
+        assert ov["active_patients"] >= 1
+        assert ov["all_time_customers"] >= ov["active_patients"]
+        assert "All-time:" in ov["active_patients_subtext"]
+    finally:
+        # the shared test database must stay empty for later tests (e.g. identity re-key counts patients)
+        db.query(SalesTransactionModel).filter(SalesTransactionModel.import_batch_id == "BATCH_12M_TEST").delete()
+        db.commit()
+        db.close()
+        hs.clear_cache()
 
 
 def test_active_patients_less_than_12_months():

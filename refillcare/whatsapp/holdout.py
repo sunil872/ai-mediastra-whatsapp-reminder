@@ -1,6 +1,6 @@
 """No-reminder control group (holdout) - measures the real effect of reminders (uplift).
 
-A fixed share of patients (``REFILLCARE_HOLDOUT_PCT``, default 10%) is never messaged. Comparing
+A fixed share of patients (``REFILLCARE_HOLDOUT_PCT``, default 0 = off since 11 Nov 2026: the client wants every patient reminded; set e.g. 10 to measure uplift) is never messaged. Comparing
 their refill rate with reminded patients shows how many extra refills the reminders cause - the
 number the client cares about, independent of point-date accuracy.
 
@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from refillcare.whatsapp.consent import phone_key
 
-DEFAULT_HOLDOUT_PCT = 10
+DEFAULT_HOLDOUT_PCT = 0  # off: every patient with a valid mobile is reminded (11 Nov 2026)
 MAX_HOLDOUT_PCT = 50
 
 

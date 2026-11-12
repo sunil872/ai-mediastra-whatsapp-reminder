@@ -165,7 +165,8 @@ def outcome_summary(db: Session, window_days: int = 90, as_of: Optional[date] = 
         latest = db.query(RefillDecisionOutcomeModel.actual_purchase_date).order_by(RefillDecisionOutcomeModel.actual_purchase_date.desc()).first()
         as_of = latest[0] if latest and latest[0] else date.today()
     start = as_of - timedelta(days=window_days)
-    rows = q.filter(RefillDecisionOutcomeModel.predicted_refill_date >= start, RefillDecisionOutcomeModel.predicted_refill_date <= as_of).all()
+    rows = q.filter(RefillDecisionOutcomeModel.predicted_refill_date >= start, RefillDecisionOutcomeModel.predicted_refill_date <= as_of,
+                    RefillDecisionOutcomeModel.outcome_category != "SUPERSEDED").all()  # retired decisions never count
 
     by_version: Dict[str, List[RefillDecisionOutcomeModel]] = {}
     by_source: Dict[str, List[RefillDecisionOutcomeModel]] = {}

@@ -121,7 +121,7 @@ tenant-safe yet** — Part B is required before a second store or any live send 
 |---|---|
 | C7.1 | **Send `days_supply` with every sales line** from Mediastra billing (days the sale should last / prescribed days; 1-365). RefillCare already accepts it (upload field `daysSupply`, column `sales_transactions.days_supply`, auto-added by the additive migration). Research and our error analysis: the strongest missing refill signal. Once ~3 months of data exist, RefillCare adds it as a model feature through the promotion gate |
 | C7.2 | Store mobile numbers in one format (last 10 digits) in every table (`refill_decisions` holds 12 digits with 91, `sales_transactions` 10). RefillCare code already matches on the last 10 digits; ad-hoc SQL / reports must too |
-| C7.3 | Keep `REFILLCARE_HOLDOUT_PCT=10` during the pilot (no-reminder control group) and report `holdout_uplift` from `GET /api/v1/ml/outcomes/summary` to the client monthly |
+| C7.3 | No-reminder control group is OFF (`REFILLCARE_HOLDOUT_PCT=0`, 11 Nov 2026: client wants every patient reminded). To measure uplift later set e.g. 10 and report `holdout_uplift` from `GET /api/v1/ml/outcomes/summary` |
 
 ---
 

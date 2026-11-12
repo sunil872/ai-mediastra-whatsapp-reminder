@@ -40,8 +40,11 @@ def search_patients(db: Session, query: str, limit: int = 25) -> List[Dict[str, 
     )
     opt_outs = load_opt_out_index(db)
     seen, out = set(), []
+    # one row per person: same phone = same patient (current "NAME_MOBILE" id preferred over an older
+    # name-only id); without a phone, one row per id
+    rows = sorted(rows, key=lambda r: (not phone_key(r[2]), not (phone_key(r[2]) and str(r[0]).endswith(phone_key(r[2])))))
     for cid, name, mobile in rows:
-        key = (str(cid), phone_key(mobile))
+        key = ("phone", phone_key(mobile)) if phone_key(mobile) else ("id", str(cid))
         if key in seen:
             continue
         seen.add(key)

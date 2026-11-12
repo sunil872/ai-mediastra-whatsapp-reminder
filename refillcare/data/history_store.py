@@ -126,7 +126,10 @@ def channel_counts(db: Session) -> Dict[str, int]:
     """Sales-line counts of the current store from its database (Streamlit overview and API share this).
 
     received = bill lines in the store's active uploads; stored = lines kept (every line of a bill, incl.
-    repeat scans); not_stored = returns netted against their sale, invalid rows, lines uploaded before.
+    repeat scans); not_stored = return lines (never stored as rows) + invalid rows + lines uploaded before.
+    Return breakdown: return_lines received, returns_netted (subtracted from their sale within the return
+    window), returns_unmatched, sales_fully_returned (= returned_corrections + returned_late, still stored
+    as "not counted"), invalid_rows.
     """
     from database.models import ImportBatchModel
 
@@ -136,10 +139,34 @@ def channel_counts(db: Session) -> Dict[str, int]:
     received = int(db.execute(select(func.sum(func.coalesce(ImportBatchModel.record_count, 0))).where(
         ImportBatchModel.is_active.is_(True))).scalar() or 0)
     received = max(received, stored)
+
+    # Returns: never stored as their own rows; each is subtracted from the sale it follows (within the
+    # return window). Counts per upload come from its import record; fully returned sales from the lines.
+    import json
+
+    return_lines = netted = review_rows = 0
+    for warn, review in db.execute(select(ImportBatchModel.data_warnings, ImportBatchModel.records_requiring_review)
+                                   .where(ImportBatchModel.is_active.is_(True))).all():
+        w = json.loads(warn) if isinstance(warn, str) else (warn or {})
+        rn = (w or {}).get("returns_netted") or {}
+        return_lines += int(rn.get("returns_seen") or 0)
+        netted += int(rn.get("returns_netted") or 0)
+        review_rows += int(review or 0)
+    corrections = int(db.execute(select(func.count(Line.id)).where(Line.exclusion_reason == RETURN_FULL_CORRECTION)).scalar() or 0)
+    late = int(db.execute(select(func.count(Line.id)).where(Line.exclusion_reason.like(f"{RETURN_FULL_LATE}%"))).scalar() or 0)
     return {
         "received": received,
         "stored": stored,
         "not_stored": received - stored,
+        "return_lines": return_lines,
+        "returns_netted": netted,
+        "returns_unmatched": max(0, return_lines - netted),
+        "invalid_rows": max(0, review_rows - return_lines),
+        "sales_fully_returned": corrections + late,
+        "returned_corrections": corrections,
+        "returned_late": late,
+        "return_window_days": return_window_days(),
+        "return_correction_days": return_correction_days(),
         "customer_sales": int(by_type.get("CUSTOMER_SALE", 0)),
         "b2b_inter_store": int(by_type.get("B2B_INTER_STORE", 0)),
         "unknown": int(stored - by_type.get("CUSTOMER_SALE", 0) - by_type.get("B2B_INTER_STORE", 0)),
@@ -367,13 +394,47 @@ def delete_batch(db: Session, batch_id: str) -> int:
     return int(n or 0)
 
 
-def net_returns(db: Session, returns: pd.DataFrame, window_days: int = 14) -> Dict[str, int]:
+RETURN_FULL_CORRECTION = "RETURNED"          # fully returned within the correction window (billing correction)
+RETURN_FULL_LATE = "RETURNED_LATE"            # fully returned later: therapy stopped or changed? -> pharmacist review
+
+
+def return_window_days() -> int:
+    """How long after a sale a return is still subtracted from it (store setting, default 90 days).
+
+    Measured on store-1 (10 Nov 2026): reminder-medicine returns come back a median 10 days after the sale,
+    75% within 29 and 90% within 56 days. A longer window (the client accepts returns until expiry) would
+    subtract old strips from the patient's latest purchase instead of the one they came from.
+    """
+    from refillcare.stores import store_setting
+
+    try:
+        return max(1, int(store_setting("REFILLCARE_RETURN_WINDOW_DAYS", "90") or 90))
+    except ValueError:
+        return 90
+
+
+def return_correction_days() -> int:
+    """A FULL return up to this many days after the sale is a billing correction (default 7)."""
+    from refillcare.stores import store_setting
+
+    try:
+        return max(0, int(store_setting("REFILLCARE_RETURN_CORRECTION_DAYS", "7") or 7))
+    except ValueError:
+        return 7
+
+
+def net_returns(db: Session, returns: pd.DataFrame, window_days: Optional[int] = None) -> Dict[str, int]:
     """Net returned quantity (negative lines) against the patient's latest sale of that item.
 
-    A return within ``window_days`` after a sale reduces that sale's quantity; a fully returned
-    sale stops counting as a refill (``refillcare_eligible`` False, reason RETURNED).
+    A return within ``window_days`` (default :func:`return_window_days`) after a sale reduces that sale's
+    quantity; a fully returned sale stops counting as a purchase (``refillcare_eligible`` False) with reason
+    RETURNED (within :func:`return_correction_days`: billing correction, the earlier schedule resumes) or
+    RETURNED_LATE (later: reminders for that medicine stop and the patient goes to pharmacist review).
     """
-    out = {"returns_seen": int(len(returns)), "returns_netted": 0, "sales_fully_returned": 0, "returned_sales": []}
+    window_days = window_days or return_window_days()
+    correction_days = return_correction_days()
+    out = {"returns_seen": int(len(returns)), "returns_netted": 0, "sales_fully_returned": 0,
+           "late_full_returns": 0, "returned_sales": []}
     if returns.empty:
         return out
     for rec in returns.to_dict(orient="records"):
@@ -391,12 +452,17 @@ def net_returns(db: Session, returns: pd.DataFrame, window_days: int = 14) -> Di
         sale.quantity = max(0.0, float(sale.quantity) - qty)
         out["returns_netted"] += 1
         if sale.quantity <= 0:
+            lag = int((d.normalize() - pd.Timestamp(sale.invoice_date).normalize()).days)
+            late = lag > correction_days
             sale.refillcare_eligible = False
-            sale.exclusion_reason = "RETURNED"
+            # late: the return date is kept with the reason ("RETURNED_LATE:2024-05-08") for review / due date
+            sale.exclusion_reason = f"{RETURN_FULL_LATE}:{d.date().isoformat()}" if late else RETURN_FULL_CORRECTION
             out["sales_fully_returned"] += 1
-            # the purchase no longer counts: its reminder effects are reverted by the caller
+            out["late_full_returns"] += int(late)
+            # the purchase no longer counts: the caller reverts (correction) or stops (late) its reminders
             out["returned_sales"].append({"customerId": sale.customer_id, "itemId": sale.item_id,
-                                          "invoice_date": pd.Timestamp(sale.invoice_date), "MOBILE_NO": sale.mobile_no})
+                                          "invoice_date": pd.Timestamp(sale.invoice_date), "MOBILE_NO": sale.mobile_no,
+                                          "returned_on": d.normalize(), "days_after_sale": lag, "late": late})
     return out
 
 

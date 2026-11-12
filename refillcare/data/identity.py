@@ -167,3 +167,48 @@ def apply_therapy_grouping(df: pd.DataFrame, mode: Optional[str] = None) -> pd.D
 def normalise_trajectory_keys(df: pd.DataFrame) -> pd.DataFrame:
     """Patient identity first (switches are per patient), then therapy grouping."""
     return apply_therapy_grouping(apply_patient_identity(df))
+
+
+def check_identity_setting_warning(db: Optional[Any] = None) -> Optional[str]:
+    """Verify that stored active reminder cycle keys match the configured REFILLCARE_PATIENT_IDENTITY.
+
+    If REFILLCARE_PATIENT_IDENTITY is changed by hand in .env without running the identity re-key,
+    keys in the database will diverge from keys generated during new scoring.
+    Returns a warning string if mismatch detected, else None.
+    """
+    from database.connection import SessionLocal
+    from database.models import ReminderCycleModel, RefillDecisionModel
+
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    try:
+        mode = identity_mode()
+        cycles = db.query(ReminderCycleModel.customer_id).filter(ReminderCycleModel.is_active == True).limit(100).all()
+        if not cycles:
+            # Fallback to recent decisions if no active cycles exist
+            cycles = db.query(RefillDecisionModel.customer_id).limit(100).all()
+            if not cycles:
+                return None
+
+        mobile_suffixed = sum(1 for (cid,) in cycles if re.search(r"_\d{10}$|^\d{10}$", str(cid or "")))
+        ratio = mobile_suffixed / len(cycles)
+
+        if mode == "name" and ratio > 0.1:
+            return (
+                f"REFILLCARE_PATIENT_IDENTITY is 'name', but active reminder cycles use 'name_mobile' keys. "
+                "Run the identity re-key (/api/v1/ml/identity/rekey or scripts/rebuild_legacy_history.py) to synchronize."
+            )
+        elif mode == "name_mobile" and len(cycles) >= 20 and ratio == 0.0:
+            return (
+                f"REFILLCARE_PATIENT_IDENTITY is 'name_mobile', but active reminder cycles use legacy 'name' keys. "
+                "Run the identity re-key (/api/v1/ml/identity/rekey or scripts/rebuild_legacy_history.py) to synchronize."
+            )
+        return None
+    except Exception:
+        return None
+    finally:
+        if close_db:
+            db.close()
+
