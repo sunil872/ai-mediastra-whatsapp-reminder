@@ -2268,14 +2268,15 @@ Enterprise Medication Refill Forecasting & Clinical WhatsApp Adherence Platform
     # their code does not run (set True to bring one back). ML lifecycle stays available through the
     # API (/api/v1/ml/*), scripts/retrain_production.py and the worker's monthly retrain.
     tab_specs = [
-        ("dash", "**Pharmacy Overview**"),
-        ("upload", "**Upload Sales Data**"),
-        ("results", "**Upcoming Refills**"),
-        ("reminders", "**Patient Reminders**"),
-        ("medsync", "**Combined Prescriptions (Med-Sync)**"),
-        ("review", "**Patients Needing Review**"),
-        ("whatsapp", "**WhatsApp Messages**"),
-        ("ml", "**AI Accuracy & Settings**"),
+        # Material icons (same symbols as the web UI sidebar in frontend/index.html)
+        ("dash", ":material/dashboard: **Pharmacy Overview**"),
+        ("upload", ":material/upload_file: **Upload Sales Data**"),
+        ("results", ":material/event_upcoming: **Upcoming Refills**"),
+        ("reminders", ":material/calendar_month: **Patient Reminders**"),
+        ("medsync", ":material/layers: **Combined Prescriptions (Med-Sync)**"),
+        ("review", ":material/warning: **Patients Needing Review**"),
+        ("whatsapp", ":material/chat: **WhatsApp Messages**"),
+        ("ml", ":material/insights: **AI Accuracy & Settings**"),
     ]
     shown = [(key, label) for key, label in tab_specs if TAB_VISIBILITY.get(key, True)]
     tab_objs = dict(zip([k for k, _ in shown], st.tabs([label for _, label in shown])))

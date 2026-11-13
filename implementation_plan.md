@@ -2,14 +2,30 @@
 
 Single store (NGOs Colony, `store-1`, sales Dec 2020 – 15 Oct 2026) in v1; multi-store through the cloud-hosted
 Mediastra web application in v2 (built by the backend team).
-How to run and use the system: [README.md](README.md). What is still needed for live mode (store + backend team):
+How to set up, run and use the system: [README.md](README.md). What is still needed for live mode (store + backend team):
 [future_implementation/GO_LIVE_CHECKLIST.md](future_implementation/GO_LIVE_CHECKLIST.md). Architecture for the backend team:
-[future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md](future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md). Client-facing deployment options:
+[future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md](future_implementation/PLAN_BACKEND_DEVOPS_TENANCY.md). Mediastra full-stack
+integration (NestJS / Angular): [docs/integration/](docs/integration/). Client-facing deployment options:
 [docs/DEPLOYMENT_OPTIONS_LOCAL_VS_CLOUD.md](docs/DEPLOYMENT_OPTIONS_LOCAL_VS_CLOUD.md).
 
-*Last updated: 3 Nov 2026.*
+*Last updated: 13 Nov 2026.*
 
-Status legend: [Done] Completed & Verified · [Configured] Built & Parameterized · ⏳ next
+Status legend: **Done** = built and verified · **Configured** = built, switched by a setting · **Backend team** = owned by Mediastra · ⏳ = next
+
+---
+
+## 0. Current state (13 Nov 2026)
+
+| Area | State |
+|---|---|
+| Store | NGOs Colony, `store-1`, single store on local SQLite (`data/refillcare/processed/enterprise.db`) |
+| Sales data | 24-12-2020 to 15-10-2026: 917,110 lines received = 910,927 sales lines (908,366 patient + 2,561 B2B) + 6,047 return lines saved + 136 not saved (83 invalid rows, 53 returns of the 1-15 Oct 2026 upload kept as counts) |
+| Returns | 4,906 applied to their sale (4,885 original history + 21 October); 1,162 waiting for a sale; 32 older unmatched; 3,733 sales fully returned (2,350 billing corrections, 1,383 late) |
+| Pending upload | 16-31 Oct 2026 (`dummy/October actual dataset 16-10-2026 to 31-10-2026.xlsx`): its batch was rolled back; upload it again |
+| Production model | `hgb-20260518-20261103071906` (gate passed 3 Nov 2026); retrain after the October upload |
+| Surfaces | Streamlit (6 pharmacist tabs), FastAPI (`/docs`), web UI (`/`), all on the same shared services |
+| Tests | 907 passed, 1 skipped (PostgreSQL test needs a server) |
+| Repository | Cleaned 13 Nov 2026 (section 6.7): folder 16.8 GB → 3.3 GB, nothing needed lost |
 
 ---
 
@@ -17,7 +33,7 @@ Status legend: [Done] Completed & Verified · [Configured] Built & Parameterized
 
 | # | Item | Status | Result |
 |---|---|---|---|
-| 1.1 | Sales upload (CSV / Excel), date parsing (day-first, ambiguity blocked), de-duplication, append to master with pre-upload backup, batch rollback | Done | Same code path for Streamlit and FastAPI |
+| 1.1 | Sales upload (CSV / Excel), date parsing (day-first, ambiguity blocked), de-duplication, append to the store database (no file backups since 8.4), batch rollback | Done | Same code path for Streamlit, FastAPI and the web UI (`incremental_ingest.ingest_sales_batch`) |
 | 1.2 | Channel filter: customer sales (`S0/`) kept, B2B transfers (`SB/`) and unknown excluded | Done | 907,080 S0 vs 2,571 SB rows |
 | 1.3 | Chronic / acute medication classifier (Supabase rules + local cache, salt catalogue fallback) | Done | |
 | 1.4 | **Column mapping for any store**: alias config (≈200 names) + value checks, confirm screen only when needed, mapping saved per store and file layout, list / delete | Done | Real 23-column file and a differently named export map with no questions |
@@ -91,12 +107,13 @@ Earlier sandbox results (test month 18 Jul – 16 Aug 2026, 1,740 refills):
 | 4.14 | **One current decision per patient-medicine (11 Nov 2026)**: after the name -> name + mobile switch, 298,654 old keys' decisions (e.g. `A SUDHEER KUMAR_1678` next to `A SUDHEER KUMAR_8555914289_1678`) stayed in `refill_decisions`; every 'latest decision per key' reader showed them: Patients Needing Review listed patients twice (229 rows / 187 patients instead of 126 / 105), Add to reminders could create a second reminder under the old key, Stop / Resume search showed people twice, 4,158 open outcomes would have become false NO_REFILL. `rekey.retire_stale_decisions` deletes decisions on keys that no longer exist or newer than the key's latest real purchase (cycles keep history, open outcomes -> SUPERSEDED, excluded from live accuracy); run by the identity re-key, after every patient re-score and by `scripts/rebuild_legacy_history.py --retire-stale-only` (live store: 319,218 removed). Stop / Resume search: one row per phone | Done |
 | 4.15 | **One-click upload (12 Nov 2026)**: upload -> automatic file summary, check results and Data Preview (first 10 lines) -> ONE button 'Save & Update Reminders' (Streamlit + web UI) that validates, stores the lines, re-scores the patients and updates their reminders (`incremental_ingest.ingest_sales_batch`, which always did all of this). Removed the separate 'Validate File Hygiene' (only re-displayed the automatic check) and both 'Generate Updated Predictions' buttons (legacy in-memory engine, nothing saved). 'Duplicate Records' renamed 'Repeated Bill Lines' (kept and added up per bill) | Done |
 | 4.16 | **Every uploaded line accounted for (12 Nov 2026)**: return lines (negative quantity) are saved as their own rows (`transaction_type` CUSTOMER_RETURN, never a purchase - every loader leaves them out) with their status: `RETURN_APPLIED:<sale id>:<qty>` or `RETURN_WAITING`. Received = saved sales + saved returns + invalid rows. The same return uploaded twice is no longer subtracted twice; a return uploaded before its sale is applied when the sale arrives; rolling back a return upload gives the strips back (and the sale's reminders); rolling back a sale puts its returns back to waiting; widening `REFILLCARE_RETURN_WINDOW_DAYS` + 'Re-check waiting returns' (Streamlit Upload tab, web UI, `POST /api/v1/sales/returns/recheck`) applies them without re-uploading. Waiting list: `GET /api/v1/sales/returns/waiting`. Rows not saved are listed with a plain reason (upload result in Streamlit / web UI with CSV download, `skipped_rows` in `POST /api/v1/sales/ingest`). One wording for the 'Sales lines stored' breakdown everywhere (`history_store.return_breakdown_text`, API `breakdown_summary/detail/audit`). Original history (24-12-2020 to 30-09-2026): its 6,047 return lines were saved from the master CSV with `scripts/rebuild_legacy_history.py --store-returns` WITHOUT changing any sale (netting replayed on the original quantities; 39 patient-medicines whose returns had been applied in an earlier sequence linked from the stored state; check: every sale's original - stored strips = strips its linked returns took off, 0 unexplained): 4,885 linked to their sale, 1,162 waiting. Only the 1-15 Oct 2026 upload (file not on disk) keeps its 53 returns as counts. No new tables | Done |
+| 4.17 | **Tab icons (13 Nov 2026)**: the Streamlit tabs show Material icons (dashboard, upload file, calendar, layers, warning, chat; event-upcoming and insights for the hidden tabs) - the same symbols as the web UI sidebar. No API change. | Done |
 
 ## 5. Interfaces
 
 | # | Item | Status |
 |---|---|---|
-| 5.1 | Streamlit operations app — 6 pharmacist tabs (Upcoming Refills and AI Accuracy & Settings hidden 8 Nov 2026 via `TAB_VISIBILITY`; ML lifecycle via API / scripts / worker), originally 8 tabs incl. column mapping, saved mappings, ML settings, rule A/B, 3-month test, identity cut-over | Done |
+| 5.1 | Streamlit operations app: 6 pharmacist tabs with Material icons (Pharmacy Overview, Upload Sales Data, Patient Reminders, Combined Prescriptions (Med-Sync), Patients Needing Review, WhatsApp Messages). Upcoming Refills and AI Accuracy & Settings hidden 8 Nov 2026 via `TAB_VISIBILITY` (ML lifecycle via API / scripts / worker) | Done |
 | 5.2 | FastAPI + web app with the same features (parity rule: shared services, no inter-dependency) | Done |
 | 5.3 | Write protection (`REFILLCARE_API_KEY`, local-only when unset) | Done |
 | 5.4 | Cache cleared after every mutation in Streamlit | Done |
@@ -110,7 +127,9 @@ Earlier sandbox results (test month 18 Jul – 16 Aug 2026, 1,740 refills):
 | 6.3 | **Repo audit (4 Nov 2026)** — removed from git (history keeps them): legacy `model/`, `preprocessing/`, Path B benchmark (`refillcare/models/path_b_*`), one-off identity audit `experiments/`, dead modules `refillcare/features/pipeline.py`, `reminder/send_message.py`, `reminder/message_logs.py`; one-off scripts `audit_channel_impact`, `backtest_*`, `run_offline_validation`, `build_refillcare_notebooks`, outdated `scripts/README.md`; `notebooks/`; 48 phase reports / old plans in `docs/` (kept: deployment options, WhatsApp template, Postman collection); 7 September phase-report JSONs in `data/refillcare/processed/`. 25 tests of the removed modules went with them (suite: 860 passed, 1 skipped). Every removal checked with an import-reachability scan from the Streamlit, API, worker, campaign and script entry points | Done |
 | 6.4 | `.gitignore`: all `*.joblib` / `*.pkl` / `*.parquet` / Office lock files / store DBs ignored; exceptions only for the 4 legacy models still loaded by code (`refill_model.joblib`, `human_ml_refill_model.joblib`, `chronic_refill_model.joblib`, `refill_model.pkl`); `.env.example`, `.agents/rules/` and `logs/.gitkeep` stay versioned | Done |
 | 6.5 | Production model files are **not** in git (they come from the registry / S3 artifact store) — the backend team must provide them to deployed containers (future_implementation/GO_LIVE_CHECKLIST C1). Untrack the 4 legacy models once deploys fetch artifacts from S3 | Backend team |
-| 6.6 | Patient data in git history (old commits) — purge before the repository is shared outside the team (future_implementation/GO_LIVE_CHECKLIST A8) | ⏳ |
+| 6.6 | Patient data in git history (old commits) and the tracked sales file in `dummy/` — purge before the repository is shared outside the team (future_implementation/GO_LIVE_CHECKLIST A8) | ⏳ |
+| 6.7 | **Storage cleanup (13 Nov 2026)**, each step checked before and after: 48 old Git LFS snapshots of `enterprise.db` / the master CSV removed with `git lfs prune` (13 GB; the repo no longer uses LFS); 5 master-CSV copies in `data/refillcare/backups/` and the September copy (`backup_20260921_120454`: database + parquets) removed after a line-by-line comparison - the 8 sales whose price / tax / batch columns existed only there were saved to `raw_backup/customer_data_fields_raw_extra_rows_from_old_backups.csv` (the sales themselves were already in the master CSV and database); 50 test store folders (`stores/t-*`, `demo-store`, `benchmark_store`), an empty root `enterprise.db`, September exports, an old log and all `__pycache__`. Kept on purpose: `processed/refillcare.db` (opened by the API), `raw_backup/` (only full 23-column copy), `stores/default` (registered store). Verified: 18 kept files byte-identical (checksums), database integrity ok with the same row counts, 907 tests passed, API serves the same numbers. Folder 16.8 → 3.3 GB | Done |
+| 6.8 | **Documentation reorganised (13 Nov 2026)**: the two full-stack integration guides moved from the root to `docs/integration/`; README rewritten as the full setup / operations reference (new-machine setup, screens, upload and returns, prediction, reminders, model lifecycle, complete API list, configuration, data files, layout, scripts, tests, troubleshooting); `.env.example` completed (refill template, Supabase, gate settings); unused `frontend/favicon.png` removed | Done |
 
 ---
 
@@ -118,9 +137,10 @@ Earlier sandbox results (test month 18 Jul – 16 Aug 2026, 1,740 refills):
 
 | Decision | Recommendation |
 |---|---|
-| Turn on `REFILLCARE_RULE_PATH_B_MODE=blend` | Yes — lower error every month, fixes the insulin gate failure |
-| Turn on `REFILLCARE_PATIENT_IDENTITY=name_mobile` and `REFILLCARE_ITEM_GROUPING=salt`, then run the identity cut-over | Yes — correct patient per phone; dry run first |
-| Upload the missing sales 16 Oct – today, then retrain again (`.venv\Scripts\python scripts\retrain_production.py`) | Yes — first retrain done 3 Nov (3.8); the next one learns the latest months and, after the switches above, measures the final setup |
+| Upload the 16-31 Oct 2026 file again (its batch was rolled back), then the November sales, then retrain (`.venv\Scripts\python scripts\retrain_production.py`) | Yes. The last retrain was 3 Nov (3.8); the next one learns the latest months |
+| Turn on `REFILLCARE_RULE_PATH_B_MODE=blend` | Yes. Lower error every month, fixes the insulin gate failure |
+| Turn on `REFILLCARE_ITEM_GROUPING=salt`, then run the identity cut-over (`scripts/rekey_reminders.py`, dry run first) | Yes. Brand / strength switches continue one cycle (+0.7 pp). Patient = name + mobile is already the default (4.12) |
+| 'Re-check waiting returns' would apply 34 of the 1,162 waiting original-history returns (23 old sales, 2021-2025, become fully returned) | Optional; small effect on current reminders. Leave them, or press Re-check once after the October upload |
 
 ## 8. Multi-Store Enterprise Platform & Cloud Readiness (v2 executed)
 
@@ -137,7 +157,7 @@ The cloud-hosted Mediastra web application handles tenant / store logins and orc
 | 8.7 | **S3 model artifact store**: checksum verification, automated pruning keeping newest 3 models per store, one-click rollback | Done | Models decoupled from container filesystem |
 | 8.8 | **API & Security hardening**: `X-API-Key` required on all `/api` routes (503 fail-closed in production); webhook signature check; IP rate limiting; phone numbers masked in all logs | Done | Covered by `tests/test_api_security.py` |
 | 8.9 | **Database storage slimming**: dropped 4 duplicate/low-cardinality indexes (`customer_id`, `invoice_date`, `refillcare_eligible`, `transaction_type`), compacted `line_key` to 24 hex chars (96 bits) | Done | Store DB for 827k lines: 472 MB -> **366 MB**; migration v3 drops the indexes on existing databases. Line keys must not change again once a store has data (re-uploads would duplicate) |
-| 8.10 | **Full test suite**: 885 passed, 1 skipped (PostgreSQL test needs a server) | Done | Early stopping uses the newest 10% of events (`fit(X_val=...)`, scikit-learn >= 1.6) with a logged fallback for older versions |
+| 8.10 | **Full test suite**: 907 passed, 1 skipped on 13 Nov 2026 (PostgreSQL test needs a server; was 885 on 3 Nov) | Done | Early stopping uses the newest 10% of events (`fit(X_val=...)`, scikit-learn >= 1.6) with a logged fallback for older versions |
 | 8.11 | **Streamlit aligned with FastAPI**: incremental upload, shared rollback, data-status panel + sync retry, stale-data guard on live sends, model rollback; no login / store picker (Mediastra handles tenant > store logins) | Done | Works on `REFILLCARE_STORE_ID`; keep it on a private network |
 | 8.12 | **Scoring speed-ups**: engine row loop reads plain arrays (pandas 3 Arrow strings were ~10 s per upload), rows loaded as column tuples, MIN/MAX date queries split, pure-Python medians in visit features | Done | 1-day upload 63 s -> 7.4 s |
 | 8.13 | **Streamlit start-up**: prediction overview read from the stored engine decisions (one query, as FastAPI) instead of re-predicting every history on each load; history cache kept per view; parquet fast path only while it matches the database's legacy rows; one Supabase rules fetch shared by the classifier and the rules screen | Done | First load 251 s -> 35-47 s on the real 835k-line copy (overview 223 s -> 0.2 s); eligible list 0 -> 3,957 (the old on-the-fly path lacked the interval columns) |
@@ -151,8 +171,8 @@ The cloud-hosted Mediastra web application handles tenant / store logins and orc
 
 ## 9. Next Steps
 
-Store / operations (this team): upload 16 Oct – today, retrain, decide the switches (section 7), pilot sign-off
-and dry run — GO_LIVE_CHECKLIST part A.
+Store / operations (this team): set up the office laptop (README section 3), upload 16-31 Oct and November,
+retrain, decide the switches (section 7), pilot sign-off and dry run (GO_LIVE_CHECKLIST part A).
 RefillCare team (code for multi-tenant live): GO_LIVE_CHECKLIST part B = the flaws and work plan in
 [future_implementation/PRODUCTION_READINESS_SCENARIO_1.md](future_implementation/PRODUCTION_READINESS_SCENARIO_1.md)
 (tenant isolation, no local files / legacy models, async upload, per-tenant WhatsApp, IST time zone, job queue).

@@ -3,7 +3,7 @@
 **Every change must reach ALL surfaces in the same task, without the user asking:**
 shared logic (`refillcare/**`) → Streamlit (`app_refillcare.py`) → FastAPI (`api/main.py`, `api/schemas.py`,
 `api/services.py`, visible in `http://127.0.0.1:8000/docs`) → Web UI (`frontend/index.html`, `frontend/js/api.js`,
-`frontend/js/app.js`, `frontend/css/styles.css`, served at `http://127.0.0.1:8000/`) → docs (`implementation_plan.md`, `.env.example`).
+`frontend/js/app.js`, `frontend/css/styles.css`, served at `http://127.0.0.1:8000/`) → docs (`implementation_plan.md`, `README.md`, `.env.example`).
 
 Full checklist: `.agents/rules/every_change_syncs_all_surfaces.md`. Also follow the other files in `.agents/rules/`.
 
