@@ -2136,6 +2136,14 @@ def render_app():
             font-size: 0.95rem !important;
             letter-spacing: -0.01em !important;
         }
+        /* Tab icons: larger and in the brand red so they are clearly visible */
+        button[data-testid="stTab"] [data-testid="stIconMaterial"],
+        div[data-testid="stTabs"] button [data-testid="stIconMaterial"] {
+            font-size: 1.35rem !important;
+            color: #ef4444 !important;
+            margin-right: 0.4rem !important;
+            vertical-align: -0.3em !important;
+        }
 
         div[data-testid="stButton"] button:has(p:contains("Search")) p {
             color: #ffffff !important;

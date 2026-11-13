@@ -252,13 +252,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 
+/* Same tab icons as Streamlit, shown larger so they are clearly visible */
 .nav-svg {
-  width: 18px;
-  height: 18px;
+  width: 21px;
+  height: 21px;
   stroke: currentColor;
   stroke-width: 2;
   fill: none;
